@@ -8,19 +8,12 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 enum {SIM_EMPTY, SIM_PAWN, SIM_KNIGHT, SIM_BISHOP, SIM_ROOK, SIM_QUEEN, SIM_KING};
 byte step_test_board[8][8];
 
-enum {BLACK_MOVE_FAILED, BLACK_MOVE_COMPLETE, BLACK_MOVE_CAPTURE_ASSIST};
-const signed char NO_CAPTURE_SLOT = -1;
-const byte CAPTURE_SIDE_SLOT_COUNT = 8;
 // Board-square centers are x=1..8, so the playing-field edge is x=0.50.
 // Calibration establishes the left limit near x=0.35. x=0.48 is outside
 // the playing field while retaining about 25 full steps from that limit.
 const unsigned int CAPTURE_SIDE_X_STEPS =
     (SQUARE_SIZE * 12UL + 12UL) / 25UL;
-byte capture_side_slots = 0;
-boolean capture_assist_pending = false;
-boolean capture_removed_by_human = false;
-byte pending_capture_file = 0;
-byte pending_capture_rank = 0;
+const unsigned int CAPTURE_DROP_SETTLE_MS = 400;
 
 void setup() {
   pinMode(MAGNET, OUTPUT);
@@ -114,16 +107,8 @@ void loop() {
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) finishHumanTurn();
       break;
 
-    case player_black: {
-      if (capture_assist_pending) {
-        captureAssistLoop();
-        break;
-      }
-      byte move_result = blackPlayerMovement();
-      if (move_result == BLACK_MOVE_CAPTURE_ASSIST) {
-        showCaptureAssist();
-      }
-      else if (move_result == BLACK_MOVE_FAILED) {
+    case player_black:
+      if (!blackPlayerMovement()) {
         sequence = fault_screen;
         showMotionFault();
       }
@@ -136,7 +121,6 @@ void loop() {
         beginHumanTurn();
       }
       break;
-    }
 
     case undo_required:
       scanSensors();
@@ -214,10 +198,6 @@ boolean buttonPressed(byte pin) {
 void returnToMainMenu() {
   setMagnet(false);
   motion_fault = false;
-  capture_assist_pending = false;
-  capture_removed_by_human = false;
-  pending_capture_file = 0;
-  pending_capture_rank = 0;
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -242,7 +222,7 @@ void showCalibration() {
 void showSetupCheck() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("SET BOARD+SIDE"));
+  lcd.print(F("SET START PIECES"));
   lcd.setCursor(0, 1);
   lcd.print(F("A=CHECK B=MENU"));
 }
@@ -273,46 +253,6 @@ void showAiSensorMismatch() {
   lcd.print(F("CHECK AI PIECE"));
   lcd.setCursor(0, 1);
   lcd.print(F("A=RETRY B=MENU"));
-}
-
-void showCaptureAssist() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("MOVE "));
-  lcd.print((char)('a' + pending_capture_file - 1));
-  lcd.print(pending_capture_rank);
-  lcd.print(F(" OFFBOARD"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=READY B=MENU"));
-}
-
-void captureAssistLoop() {
-  if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-    returnToMainMenu();
-    return;
-  }
-  if (!buttonPressed(BUTTON_A_LIMIT_WHITE)) return;
-
-  scanSensors();
-  byte row = 8 - pending_capture_rank;
-  byte column = pending_capture_file - 1;
-  if (reed_sensor_record[row][column] == LOW) {
-    lcd.clear();
-    lcd.print(F("REMOVE PIECE "));
-    lcd.print((char)('a' + pending_capture_file - 1));
-    lcd.print(pending_capture_rank);
-    lcd.setCursor(0, 1);
-    lcd.print(F("A=CHECK B=MENU"));
-    return;
-  }
-
-  capture_assist_pending = false;
-  capture_removed_by_human = true;
-  lcd.clear();
-  lcd.print(F("CAPTURE READY"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("KEEP HANDS CLEAR"));
-  delay(800);
 }
 
 void showPendingMove() {
@@ -494,14 +434,7 @@ boolean startingPositionIsValid() {
       if (reed_sensor_record[row][column] != expected) valid = false;
     }
   }
-  if (valid) {
-    capture_side_slots = 0;
-    capture_assist_pending = false;
-    capture_removed_by_human = false;
-    pending_capture_file = 0;
-    pending_capture_rank = 0;
-    syncSensorState();
-  }
+  if (valid) syncSensorState();
   return valid;
 }
 
@@ -926,32 +859,6 @@ void initializeStepTestBoard() {
     step_test_board[6][file] = SIM_PAWN;
     step_test_board[7][file] = back_rank[file];
   }
-  capture_side_slots = 0;
-}
-
-signed char findCaptureSideSlot(byte rank) {
-  // Exit on a half-rank lane immediately beside the captured square. This
-  // avoids dragging a held piece through occupied squares. Try the lower lane
-  // first (the legacy route), then the upper lane when it is reachable.
-  byte lower_slot = rank - 1;
-  if (!(capture_side_slots & (1U << lower_slot))) return lower_slot;
-  if (rank < 8) {
-    byte upper_slot = rank;
-    if (!(capture_side_slots & (1U << upper_slot))) return upper_slot;
-  }
-  return NO_CAPTURE_SLOT;
-}
-
-boolean parkSimulatedCapture(byte file, byte rank) {
-  signed char slot = findCaptureSideSlot(rank);
-  if (slot == NO_CAPTURE_SLOT) {
-    // No pieces exist during the endurance test, so an automatic virtual tray
-    // clear is safe and prevents test-only prompts during long AI games.
-    capture_side_slots = 0;
-    slot = findCaptureSideSlot(rank);
-  }
-  return slot != NO_CAPTURE_SLOT &&
-         removeCapturedPiecePath(file, rank, false, (byte)slot);
 }
 
 boolean executeSimulatedChessMove(const char *move) {
@@ -970,10 +877,10 @@ boolean executeSimulatedChessMove(const char *move) {
                      abs((int)to_x - from_x) == 2;
 
   if (destination_occupied) {
-    if (!parkSimulatedCapture(to_x, to_y)) return false;
+    if (!removeCapturedPiecePath(to_x, to_y, false)) return false;
   }
   else if (en_passant) {
-    if (!parkSimulatedCapture(to_x, from_y)) return false;
+    if (!removeCapturedPiecePath(to_x, from_y, false)) return false;
   }
 
   if (!moveTrolleyStraightTo(from_x, from_y, SPEED_FAST)) return false;
@@ -1175,33 +1082,31 @@ void setMagnet(boolean enabled) {
 
 // ---------------------------- AI physical movement -----------------------
 
-boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet,
-                                byte side_slot) {
-  if (side_slot >= CAPTURE_SIDE_SLOT_COUNT) return false;
+boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
   if (use_magnet) {
     lcd.clear();
-    lcd.print(F("PARKING CAPTURE"));
+    lcd.print(F("REMOVING CAPTURE"));
     lcd.setCursor(0, 1);
-    lcd.print(F("LEFT SLOT "));
-    lcd.print(side_slot + 1);
-    lcd.print(F("/8"));
+    lcd.print(F("TO LEFT BIN"));
     setMagnet(true);
   }
 
   int end_x = (int)CAPTURE_SIDE_X_STEPS -
               (int)file * (int)SQUARE_SIZE;
-  int target_y = (int)side_slot * (int)SQUARE_SIZE +
-                 (int)SQUARE_SIZE / 2;
-  int end_y = target_y - (int)rank * (int)SQUARE_SIZE;
+  int end_y = -(int)SQUARE_SIZE / 2;
   int control1_x = 0;
   int control1_y = end_y;
   int control2_x = end_x;
   int control2_y = end_y;
   if (!pulseCoreXYCurve(end_x, end_y, control1_x, control1_y,
                         control2_x, control2_y, SPEED_SLOW, true)) return false;
+  // The curve decelerates to the configured start delay before release.
+  // setMagnet(false) keeps the head stationary for the existing pre-release
+  // delay. The extra dwell after power goes low lets the piece fall clear
+  // before the empty head retraces the path.
   setMagnet(false);
-  capture_side_slots |= (1U << side_slot);
+  if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
 
   // Follow the exact same rounded path backwards to restore the known square.
   if (!pulseCoreXYCurve(-end_x, -end_y,
@@ -1213,8 +1118,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet,
   return true;
 }
 
-boolean removeCapturedPiece(byte file, byte rank, byte side_slot) {
-  return removeCapturedPiecePath(file, rank, true, side_slot);
+boolean removeCapturedPiece(byte file, byte rank) {
+  return removeCapturedPiecePath(file, rank, true);
 }
 
 boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
@@ -1240,10 +1145,10 @@ boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
   return moveTrolleyStraightTo(to_x, rank, SPEED_FAST);
 }
 
-byte blackPlayerMovement() {
+boolean blackPlayerMovement() {
   if (!validMoveText(lastM) || !trolley_homed) {
     motion_fault = true;
-    return BLACK_MOVE_FAILED;
+    return false;
   }
 
   byte departure_x = lastM[0] - 'a' + 1;
@@ -1262,52 +1167,29 @@ byte blackPlayerMovement() {
                        displacement_x == 1 && displacement_y == 1 &&
                        reed_sensor_status[8 - (arrival_y + 1)][arrival_column] == LOW;
 
-  boolean has_capture = destination_occupied || en_passant;
-  byte capture_file = arrival_x;
-  byte capture_rank = en_passant ? arrival_y + 1 : arrival_y;
-  if (has_capture) {
-    if (capture_removed_by_human) {
-      if (capture_file != pending_capture_file ||
-          capture_rank != pending_capture_rank) {
-        motion_fault = true;
-        return BLACK_MOVE_FAILED;
-      }
-    }
-    else {
-      signed char side_slot = findCaptureSideSlot(capture_rank);
-      if (side_slot == NO_CAPTURE_SLOT) {
-        // Point to the piece with the magnet safely off. The external rail has
-        // no sensors, so a verified human handoff is safer than driving into a
-        // parking location the firmware already knows is occupied.
-        setMagnet(false);
-        if (!moveTrolleyStraightTo(capture_file, capture_rank, SPEED_FAST))
-          return BLACK_MOVE_FAILED;
-        pending_capture_file = capture_file;
-        pending_capture_rank = capture_rank;
-        capture_assist_pending = true;
-        return BLACK_MOVE_CAPTURE_ASSIST;
-      }
-      if (!removeCapturedPiece(capture_file, capture_rank, (byte)side_slot))
-        return BLACK_MOVE_FAILED;
-    }
+  if (destination_occupied) {
+    if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
+  }
+  else if (en_passant) {
+    if (!removeCapturedPiece(arrival_x, arrival_y + 1)) return false;
   }
 
   if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
-    return BLACK_MOVE_FAILED;
+    return false;
   boolean castling = departure_x == 5 && departure_y == 8 &&
                      arrival_y == 8 && (arrival_x == 3 || arrival_x == 7);
   if (castling) {
     if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
-      return BLACK_MOVE_FAILED;
+      return false;
   }
   else {
     setMagnet(true);
     if (!moveHeldPieceSmooth(departure_x, departure_y, arrival_x, arrival_y))
-      return BLACK_MOVE_FAILED;
+      return false;
   }
 
   setMagnet(false);
-  if (motion_fault) return BLACK_MOVE_FAILED;
+  if (motion_fault) return false;
   trolley_coordinate_X = arrival_x;
   trolley_coordinate_Y = arrival_y;
 
@@ -1327,11 +1209,7 @@ byte blackPlayerMovement() {
       reed_sensor_status[0][3] = LOW;
     }
   }
-  capture_assist_pending = false;
-  capture_removed_by_human = false;
-  pending_capture_file = 0;
-  pending_capture_rank = 0;
-  return BLACK_MOVE_COMPLETE;
+  return true;
 }
 
 // ---------------------------- Persistent service mode --------------------

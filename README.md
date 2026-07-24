@@ -92,26 +92,23 @@ Each curve ends on an exact whole-step destination; interpolation rounding is
 not allowed to accumulate between moves. All paths keep the current tested
 full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
 
-## Captured-piece parking
+## Captured-piece bin
 
-Black's captured pieces are parked along the calibration side of the board.
+Black's captured pieces are released into the bin along the calibration side.
 The calibrated e7 offset places the left limit at approximately `x = 0.35` in
-board-square coordinates; the playing-field edge is `x = 0.50`. Parking uses a
+board-square coordinates; the playing-field edge is `x = 0.50`. Release uses a
 conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
 
-Eight tracked parking slots sit on the half-rank lanes from 0.5 through 7.5.
-For each capture the firmware uses a free lane immediately beside the captured
-square, moves vertically by only half a square, then follows a rounded turn to
-the outside rail. This avoids pulling a held piece through occupied squares.
-The setup screen asks the player to prepare both the board and this side area,
-and the parking map is reset only after the starting position passes its sensor
-check.
+For every capture, the head first moves half a rank toward the lower clearance
+line and then follows a rounded cubic turn to that left-side release point.
+The curve uses the normal carrying speed and decelerates completely at its
+endpoint. The head remains stationary through the magnet's release delay and
+for another 400 ms while the piece falls into the bin, then retraces the same
+rounded route without the piece. Nothing is stored on the travel rail, so later
+captures cannot collide with earlier ones.
 
-There are no reed sensors outside the 8x8 playing field, so the firmware does
-not claim to sense untracked objects on the rail. If both safe exit lanes for a
-capture are already occupied in its tracked parking map, the head moves under
-the captured piece with the magnet off and the LCD asks the player to move that
-piece off-board. Pressing A continues only after the board sensor confirms that
-the indicated square is empty; B safely ends the game. The firmware never
-drives a held piece toward a parking location it already considers blocked.
+The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
+runs this exact same exit curve and empty return route. Its electromagnet and
+release dwell remain disabled because no physical pieces are present, but the
+motor workload and off-board travel are included in the endurance measurement.
