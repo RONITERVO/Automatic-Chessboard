@@ -50,7 +50,15 @@ byte after_calibration = setup_check;
 enum {T_B, B_T, L_R, R_L, LR_BT, RL_TB, LR_TB, RL_BT};
 // T=Top, B=Bottom, L=Left, R=Right.
 
-enum {SERVICE_CALIBRATE, SERVICE_SENSORS, SERVICE_MOVE, SERVICE_MAGNET, SERVICE_EXIT, SERVICE_COUNT};
+enum {
+  SERVICE_CALIBRATE,
+  SERVICE_SENSORS,
+  SERVICE_MOVE,
+  SERVICE_MAGNET,
+  SERVICE_STEP_LOSS,
+  SERVICE_EXIT,
+  SERVICE_COUNT
+};
 byte service_item = SERVICE_CALIBRATE;
 byte service_file = 1;
 byte service_rank = 1;
@@ -76,6 +84,9 @@ const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
 const unsigned int MOTOR_STEP_PULSE_US = 4;
 const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;
 const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
+const unsigned int STEP_TEST_CYCLES = 50;
+const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
+const unsigned int STEP_TEST_LIMIT_RELEASE_STEPS = 16U * MOTOR_MICROSTEPS;
 
 // Reed-sensor multiplexers.
 const byte MUX_ADDR[4] = {A3, A2, A1, A0};

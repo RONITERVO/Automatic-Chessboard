@@ -592,6 +592,96 @@ boolean homeAxis(byte direction, byte limit_pin) {
   return digitalRead(limit_pin) == LOW;
 }
 
+boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
+  unsigned int steps = 0;
+  while (digitalRead(limit_pin) == LOW && steps < STEP_TEST_LIMIT_RELEASE_STEPS) {
+    if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
+    steps++;
+  }
+  return digitalRead(limit_pin) == HIGH;
+}
+
+boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
+                               unsigned int &measured_steps, boolean &aborted) {
+  measured_steps = 0;
+  while (digitalRead(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
+    // The target input is the expected endstop. The other shared button/input
+    // remains available as an abort control while this axis is homing.
+    if (digitalRead(abort_pin) == LOW) {
+      aborted = true;
+      return false;
+    }
+    if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
+    measured_steps++;
+  }
+  return digitalRead(limit_pin) == LOW;
+}
+
+boolean restoreStepTestStart(boolean &aborted) {
+  unsigned int start_x_steps =
+      (unsigned int)(TROLLEY_START_POSITION_X * SQUARE_SIZE + 0.5);
+  unsigned int start_y_steps =
+      (unsigned int)(TROLLEY_START_POSITION_Y * SQUARE_SIZE + 0.5);
+
+  if (start_x_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
+      start_y_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
+
+  // Move off the active black limit before enabling normal E-stop monitoring.
+  if (!pulseMotor(R_L, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
+  if (!pulseMotor(R_L, SPEED_FAST,
+                  start_x_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+    return false;
+  }
+
+  // The white limit was already released by a known number of steps before
+  // the black-axis measurement, so only the remaining distance is required.
+  if (!pulseMotor(T_B, SPEED_FAST,
+                  start_y_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+    return false;
+  }
+
+  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
+
+  trolley_coordinate_X = 5;
+  trolley_coordinate_Y = 7;
+  trolley_homed = true;
+  return true;
+}
+
+boolean measureStepTestReference(unsigned int &white_steps,
+                                 unsigned int &black_steps,
+                                 boolean &aborted) {
+  trolley_homed = false;
+
+  // If the black switch is already active at test startup, release it so it
+  // can serve as the abort input while the white axis is measured.
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW &&
+      !releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
+
+  if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
+                              BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
+
+  // Release the first switch by a known distance. This makes it available as
+  // the abort input while measuring the second axis.
+  if (!pulseMotor(T_B, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
+  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW) return false;
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+    aborted = true;
+    return false;
+  }
+
+  if (!measureAxisForStepTest(L_R, BUTTON_B_LIMIT_BLACK,
+                              BUTTON_A_LIMIT_WHITE, black_steps, aborted)) return false;
+
+  return restoreStepTestStart(aborted);
+}
+
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
@@ -621,6 +711,118 @@ boolean calibrateBoard() {
   trolley_coordinate_Y = 7;
   trolley_homed = true;
   return true;
+}
+
+boolean runStepTestPattern() {
+  const byte waypoint_x[] = {2, 7, 7, 2, 5};
+  const byte waypoint_y[] = {2, 2, 7, 7, 7};
+  const byte waypoint_count = sizeof(waypoint_x) / sizeof(waypoint_x[0]);
+
+  for (byte i = 0; i < waypoint_count; i++) {
+    if (!moveTrolleyTo(waypoint_x[i], waypoint_y[i], SPEED_FAST)) return false;
+  }
+  return true;
+}
+
+void showStepTestDifference(unsigned int cycle, int white_delta, int black_delta) {
+  lcd.clear();
+  lcd.print(F("STEP LOSS C"));
+  if (cycle < 10) lcd.print('0');
+  lcd.print(cycle);
+  lcd.setCursor(0, 1);
+  lcd.print(F("W"));
+  if (white_delta >= 0) lcd.print('+');
+  lcd.print(white_delta);
+  lcd.print(F(" B"));
+  if (black_delta >= 0) lcd.print('+');
+  lcd.print(black_delta);
+}
+
+void runStepLossTest() {
+  setMagnet(false);
+  motion_fault = false;
+  trolley_homed = false;
+
+  lcd.clear();
+  lcd.print(F("STEP TEST CAL"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A/B=E-STOP"));
+
+  boolean aborted = false;
+  unsigned int ignored_white = 0;
+  unsigned int ignored_black = 0;
+  unsigned int baseline_white = 0;
+  unsigned int baseline_black = 0;
+
+  // The first pass calibrates from an unknown position. The second starts at
+  // the known e7 service position and establishes the repeatability baseline.
+  if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
+      !measureStepTestReference(baseline_white, baseline_black, aborted)) {
+    trolley_homed = false;
+    lcd.clear();
+    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("CAL REQUIRED"));
+    delay(2500);
+    showServiceMenu();
+    return;
+  }
+
+  for (unsigned int cycle = 1; cycle <= STEP_TEST_CYCLES; cycle++) {
+    lcd.clear();
+    lcd.print(F("STEP TEST "));
+    if (cycle < 10) lcd.print('0');
+    lcd.print(cycle);
+    lcd.print('/');
+    lcd.print(STEP_TEST_CYCLES);
+    lcd.setCursor(0, 1);
+    lcd.print(F("A/B=E-STOP"));
+
+    if (!runStepTestPattern()) {
+      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      showServiceMenu();
+      return;
+    }
+
+    unsigned int measured_white = 0;
+    unsigned int measured_black = 0;
+    if (!measureStepTestReference(measured_white, measured_black, aborted)) {
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      showServiceMenu();
+      return;
+    }
+
+    int white_delta = (int)measured_white - (int)baseline_white;
+    int black_delta = (int)measured_black - (int)baseline_black;
+    if (abs(white_delta) > (int)STEP_TEST_TOLERANCE ||
+        abs(black_delta) > (int)STEP_TEST_TOLERANCE) {
+      trolley_homed = false;
+      showStepTestDifference(cycle, white_delta, black_delta);
+      delay(4000);
+      showServiceMenu();
+      return;
+    }
+  }
+
+  lcd.clear();
+  lcd.print(F("STEP TEST PASS"));
+  lcd.setCursor(0, 1);
+  lcd.print(STEP_TEST_CYCLES);
+  lcd.print(F(" CYCLES OK"));
+  delay(3000);
+  showServiceMenu();
 }
 
 boolean moveTrolleyTo(byte target_x, byte target_y, unsigned int speed_delay) {
@@ -816,6 +1018,7 @@ void showServiceMenu() {
     case SERVICE_MOVE:      lcd.print(F("MOVE HEAD")); break;
     case SERVICE_MAGNET:    lcd.print(F("MAGNET "));
                             lcd.print(magnet_state ? F("ON") : F("OFF")); break;
+    case SERVICE_STEP_LOSS: lcd.print(F("STEP LOSS")); break;
     case SERVICE_EXIT:      lcd.print(F("EXIT")); break;
   }
   lcd.setCursor(0, 1);
@@ -869,6 +1072,10 @@ void serviceMenuLoop() {
       lcd.print(F("USE MOVE HEAD"));
       delay(1000);
       showServiceMenu();
+      break;
+
+    case SERVICE_STEP_LOSS:
+      runStepLossTest();
       break;
 
     case SERVICE_EXIT:
