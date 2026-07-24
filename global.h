@@ -17,10 +17,15 @@ boolean human_move_ready = false;
 boolean sensor_tracking_error = false;
 boolean pending_move_displayed = false;
 
-const float TROLLEY_START_POSITION_X = 0.78;
-const float TROLLEY_START_POSITION_Y = 4.65;
-byte trolley_coordinate_X = 5;
-byte trolley_coordinate_Y = 7;
+// Every successful reference pass parks at e6. Rank 6 is deliberately clear
+// of the second (black) calibration switch lane, so the next calibration can
+// seek the first (white) switch without travelling toward the corner switch.
+const byte CALIBRATION_PARK_FILE = 5;
+const byte CALIBRATION_PARK_RANK = 6;
+const float CALIBRATION_PARK_BLACK_OFFSET = 1.78;
+const float CALIBRATION_PARK_WHITE_OFFSET = 4.65;
+byte trolley_coordinate_X = CALIBRATION_PARK_FILE;
+byte trolley_coordinate_Y = CALIBRATION_PARK_RANK;
 boolean trolley_homed = false;
 boolean motion_fault = false;
 boolean magnet_state = false;
@@ -31,6 +36,7 @@ char mov[5] = {0, 0, 0, 0, 0};
 enum {
   start_up,
   main_menu,
+  position_recovery,
   calibration,
   setup_check,
   player_white,
@@ -89,7 +95,7 @@ const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
 const unsigned int STEP_TEST_PLIES = 200;
 const byte STEP_TEST_REFERENCE_INTERVAL = 8;
 const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
-const unsigned int STEP_TEST_LIMIT_RELEASE_STEPS = 16U * MOTOR_MICROSTEPS;
+const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = SQUARE_SIZE;
 
 // Reed-sensor multiplexers.
 const byte MUX_ADDR[4] = {A3, A2, A1, A0};

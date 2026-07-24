@@ -50,12 +50,60 @@ board's documentation before using the common `Imax = Vref / (8 * Rsense)`
 calculation; clone boards use different sense-resistor values. Never move a
 driver or motor connection while motor power is applied.
 
+## Calibration approach safety
+
+Calibration always seeks the white switch before the black corner switch. If a
+known trolley position is above rank 6, the unloaded head first moves down to
+rank 6. If the black switch is already active, the head moves one full square
+away to clear that lane. The staging move never travels toward the black switch.
+
+During normal calibration both switches are approached one step at a time. The
+white switch stays pressed while the black switch is found. Capture parking and
+step-loss reference calibrations use the same sequence. After both switches
+establish the corner, the head moves directly to the exact e6 park offset with
+no separate release/backoff stage or switch-specific release-distance setting.
+
+The shared button inputs act only as endstops during calibration, so they cannot
+abort calibration. Use the board's power switch for an emergency stop during
+this sequence. Button emergency stops remain enabled for normal board and test
+movements outside calibration.
+
+Every successful calibration and step-test reference pass parks the head at
+e6. This keeps the normal power-cycle and new-game starting position out of the
+black-switch lane before the next white-switch approach.
+
+## Power-cycle position memory
+
+The firmware journals head positions across 32 EEPROM slots. Before the first
+step of any motor movement it commits an `UNKNOWN` record. A new board-square
+coordinate is committed only after the head reaches that stable endpoint. The
+journal spreads writes across slots and commits each record last, so an
+interrupted EEPROM write leaves the preceding complete record available.
+
+Immediately after power-up the LCD displays `LAST HEAD` and either the saved
+square or `??`. A saved coordinate is used only to stage calibration safely; it
+does not bypass calibration or enable normal movement. For example, a head
+saved at e8 first moves away from the corner to rank 6 before seeking the white
+calibration switch.
+
+Switching power off while the head is stopped preserves its displayed square.
+Switching power off during movement produces `POS UNKNOWN` on the next boot,
+because no coordinate can safely represent a partially completed move. The
+saved square also assumes the unpowered head has not been moved by hand or
+shifted mechanically after the motors lose holding torque.
+
+Calibration is blocked when the position is unknown and the black switch is
+not already active. The LCD asks for the unpowered head to be placed at rank 6
+or below; after the next startup, select calibration and confirm `A=READY`.
+This recovery confirmation is also required on the first boot after installing
+firmware that has no valid position journal yet.
+
 ## Step-loss test
 
 The service menu includes **STEP LOSS**, a long-running motion repeatability
 test. Remove all pieces from the board before starting it. The test:
 
-1. homes both axes and restores the normal e7 service position;
+1. homes both axes and restores the normal e6 service position;
 2. repeats the homing pass to establish a switch-to-position baseline;
 3. lets the Micro-Max chess engine play both sides of a sequence of legal games;
 4. mirrors those games on a separate in-memory board, so captures, en passant,
@@ -68,9 +116,10 @@ test. Remove all pieces from the board before starting it. The test:
 
 A difference greater than four full steps, scaled to the configured microstep
 mode, is reported as step loss. Either shared limit/button input stops regular
-test motion. During a homing approach the target switch is expected to trigger,
-so the other shared input is the abort control. Any abort or homing failure
-invalidates the trolley position and requires calibration before further use.
+test motion. During a homing reference both inputs are endstops and button abort
+handling is disabled; use the board power switch for an emergency stop. Any
+abort during regular test motion or any homing failure invalidates the trolley
+position and requires calibration before further use.
 
 This detects accumulated position drift using the existing switches. It cannot
 prove that no individual step was missed and later cancelled by a missed step
@@ -95,7 +144,7 @@ full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
 ## Captured-piece bin
 
 Black's captured pieces are released into the bin along the calibration side.
-The calibrated e7 offset places the left limit at approximately `x = 0.35` in
+The calibrated e6 park position places the left limit at approximately `x = 0.35` in
 board-square coordinates; the playing-field edge is `x = 0.50`. Release uses a
 conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
@@ -105,12 +154,12 @@ line and then follows a rounded cubic turn to that left-side release point.
 The curve uses the normal carrying speed and decelerates completely at its
 endpoint. The head remains stationary through the magnet's release delay and
 for another 400 ms while the piece falls into the bin. It then immediately
-homes both axes from the nearby calibration side and restores the known e7
+homes both axes from the nearby calibration side and restores the known e6
 position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.
 
 The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
-runs this exact same exit curve followed by an abort-aware two-axis re-home.
+runs this exact same exit curve followed by the same two-axis re-home.
 Its electromagnet and release dwell remain disabled because no physical pieces
 are present, but the motor workload, off-board travel, and capture correction
 are included in the endurance measurement.

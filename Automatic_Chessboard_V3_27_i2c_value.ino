@@ -1,4 +1,5 @@
 #include <Wire.h>
+#include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
 #include "global.h"
 #include "Micro_Max.h"
@@ -14,6 +15,164 @@ byte step_test_board[8][8];
 const unsigned int CAPTURE_SIDE_X_STEPS =
     (SQUARE_SIZE * 12UL + 12UL) / 25UL;
 const unsigned int CAPTURE_DROP_SETTLE_MS = 400;
+
+// Position records are journaled across multiple EEPROM slots. A new UNKNOWN
+// record is committed before the first motor step, and a KNOWN record is
+// committed only after the head reaches a stable logical position.
+const byte POSITION_RECORD_VERSION = 1;
+const byte POSITION_STATE_UNKNOWN = 0x5A;
+const byte POSITION_STATE_KNOWN = 0xA5;
+const byte POSITION_RECORD_COMMIT = 0xC3;
+const byte POSITION_RECORD_SLOTS = 32;
+const byte POSITION_RECORD_SIZE = 8;
+int position_record_slot = -1;
+unsigned int position_record_sequence = 0;
+boolean trolley_position_known = false;
+boolean calibration_lane_confirmed = false;
+
+byte positionRecordChecksum(unsigned int record_sequence, byte state,
+                            byte coordinate_x, byte coordinate_y) {
+  return 0x6D ^ lowByte(record_sequence) ^ highByte(record_sequence) ^
+         POSITION_RECORD_VERSION ^ state ^ coordinate_x ^ coordinate_y;
+}
+
+boolean positionSequenceIsNewer(unsigned int candidate, unsigned int current) {
+  return (int)((signed int)(candidate - current)) > 0;
+}
+
+boolean readPositionRecord(byte slot, unsigned int &record_sequence,
+                           byte &state, byte &coordinate_x,
+                           byte &coordinate_y) {
+  int address = (int)slot * POSITION_RECORD_SIZE;
+  if (EEPROM.read(address + 7) != POSITION_RECORD_COMMIT) return false;
+
+  record_sequence = EEPROM.read(address) |
+                    ((unsigned int)EEPROM.read(address + 1) << 8);
+  byte version = EEPROM.read(address + 2);
+  state = EEPROM.read(address + 3);
+  coordinate_x = EEPROM.read(address + 4);
+  coordinate_y = EEPROM.read(address + 5);
+  byte checksum = EEPROM.read(address + 6);
+
+  if (version != POSITION_RECORD_VERSION ||
+      (state != POSITION_STATE_KNOWN && state != POSITION_STATE_UNKNOWN) ||
+      checksum != positionRecordChecksum(record_sequence, state,
+                                         coordinate_x, coordinate_y)) return false;
+  if (state == POSITION_STATE_KNOWN &&
+      (coordinate_x < 1 || coordinate_x > 8 ||
+       coordinate_y < 1 || coordinate_y > 8)) return false;
+  return true;
+}
+
+void loadPersistedTrolleyPosition() {
+  boolean found = false;
+  byte latest_state = POSITION_STATE_UNKNOWN;
+  byte latest_x = 0;
+  byte latest_y = 0;
+
+  for (byte slot = 0; slot < POSITION_RECORD_SLOTS; slot++) {
+    unsigned int record_sequence;
+    byte state;
+    byte coordinate_x;
+    byte coordinate_y;
+    if (!readPositionRecord(slot, record_sequence, state,
+                            coordinate_x, coordinate_y)) continue;
+    if (!found || positionSequenceIsNewer(record_sequence,
+                                          position_record_sequence)) {
+      found = true;
+      position_record_slot = slot;
+      position_record_sequence = record_sequence;
+      latest_state = state;
+      latest_x = coordinate_x;
+      latest_y = coordinate_y;
+    }
+  }
+
+  trolley_position_known = found && latest_state == POSITION_STATE_KNOWN;
+  trolley_homed = false;
+  if (trolley_position_known) {
+    trolley_coordinate_X = latest_x;
+    trolley_coordinate_Y = latest_y;
+  }
+}
+
+void appendPositionRecord(byte state, byte coordinate_x, byte coordinate_y) {
+  byte next_slot = position_record_slot < 0 ? 0 :
+                   (position_record_slot + 1) % POSITION_RECORD_SLOTS;
+  unsigned int next_sequence = position_record_slot < 0 ? 0 :
+                               position_record_sequence + 1U;
+  int address = (int)next_slot * POSITION_RECORD_SIZE;
+  byte checksum = positionRecordChecksum(next_sequence, state,
+                                         coordinate_x, coordinate_y);
+
+  // Invalidate the destination first and commit it last. If power disappears
+  // during this write, the previous complete journal entry remains newest.
+  EEPROM.update(address + 7, 0);
+  EEPROM.update(address, lowByte(next_sequence));
+  EEPROM.update(address + 1, highByte(next_sequence));
+  EEPROM.update(address + 2, POSITION_RECORD_VERSION);
+  EEPROM.update(address + 3, state);
+  EEPROM.update(address + 4, coordinate_x);
+  EEPROM.update(address + 5, coordinate_y);
+  EEPROM.update(address + 6, checksum);
+  EEPROM.update(address + 7, POSITION_RECORD_COMMIT);
+
+  position_record_slot = next_slot;
+  position_record_sequence = next_sequence;
+}
+
+void markTrolleyPositionUnknown() {
+  if (!trolley_position_known) return;
+  appendPositionRecord(POSITION_STATE_UNKNOWN, 0, 0);
+  trolley_position_known = false;
+}
+
+void rememberTrolleyPosition() {
+  if (trolley_position_known) return;
+  appendPositionRecord(POSITION_STATE_KNOWN,
+                       trolley_coordinate_X, trolley_coordinate_Y);
+  trolley_position_known = true;
+}
+
+void showPersistedTrolleyPosition() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(F("LAST HEAD: "));
+  if (trolley_position_known) {
+    lcd.print((char)('a' + trolley_coordinate_X - 1));
+    lcd.print(trolley_coordinate_Y);
+    lcd.setCursor(0, 1);
+    lcd.print(F("CAL BEFORE USE"));
+  }
+  else {
+    lcd.print(F("??"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("POS UNKNOWN"));
+  }
+  delay(2500);
+}
+
+void showPositionRecovery() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(F("SET HEAD <= R6"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A=READY B=MENU"));
+}
+
+void requestCalibration(byte next_sequence) {
+  after_calibration = next_sequence;
+  calibration_lane_confirmed = false;
+  if (trolley_position_known ||
+      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+    sequence = calibration;
+    showCalibration();
+  }
+  else {
+    sequence = position_recovery;
+    showPositionRecovery();
+  }
+}
 
 void setup() {
   pinMode(MAGNET, OUTPUT);
@@ -39,16 +198,11 @@ void setup() {
 
   lcd.init();
   lcd.backlight();
+  loadPersistedTrolleyPosition();
+  showPersistedTrolleyPosition();
   AI_reset();
   scanSensors();
   syncSensorState();
-
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("AUTOMATIC CHESS"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("SAFE AI BUILD"));
-  delay(1800);
   sequence = main_menu;
   showMainMenu();
 }
@@ -59,9 +213,7 @@ void loop() {
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
         AI_reset();
         resetMoveTracker();
-        after_calibration = setup_check;
-        sequence = calibration;
-        showCalibration();
+        requestCalibration(setup_check);
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
         service_item = SERVICE_CALIBRATE;
@@ -70,12 +222,23 @@ void loop() {
       }
       break;
 
+    case position_recovery:
+      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
+        calibration_lane_confirmed = true;
+        sequence = calibration;
+        showCalibration();
+      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
+        returnToMainMenu();
+      }
+      break;
+
     case calibration:
       if (calibrateBoard()) {
         lcd.clear();
         lcd.print(F("CALIBRATION OK"));
         lcd.setCursor(0, 1);
-        lcd.print(F("HEAD AT e7"));
+        lcd.print(F("HEAD AT e6"));
         delay(1000);
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
@@ -154,9 +317,7 @@ void loop() {
 
     case fault_screen:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        after_calibration = service_menu;
-        sequence = calibration;
-        showCalibration();
+        requestCalibration(service_menu);
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
         returnToMainMenu();
@@ -245,6 +406,13 @@ void showMotionFault() {
   lcd.print(F("MOTION STOPPED"));
   lcd.setCursor(0, 1);
   lcd.print(F("A=CAL  B=MENU"));
+}
+
+void showCalibrationReferenceFault() {
+  lcd.clear();
+  lcd.print(F("HOME TEST FAIL"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("CAL REQUIRED"));
 }
 
 void showAiSensorMismatch() {
@@ -549,6 +717,8 @@ unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
 
 boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps, boolean monitor_stops) {
   if (monitor_stops && motion_fault) return false;
+  if (steps == 0) return true;
+  markTrolleyPositionUnknown();
   configureMotorDirection(direction);
   delayMicroseconds(2);
 
@@ -591,6 +761,7 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
   unsigned int event_count = max(white_steps, black_steps);
   if (event_count == 0) return true;
 
+  markTrolleyPositionUnknown();
   digitalWrite(MOTOR_WHITE_DIR, white_delta >= 0 ? HIGH : LOW);
   digitalWrite(MOTOR_BLACK_DIR, black_delta >= 0 ? HIGH : LOW);
   delayMicroseconds(2);
@@ -669,6 +840,7 @@ boolean moveTrolleyStraightTo(byte target_x, byte target_y,
   if (!pulseCoreXYLine(delta_x, delta_y, speed_delay, true)) return false;
   trolley_coordinate_X = target_x;
   trolley_coordinate_Y = target_y;
+  rememberTrolleyPosition();
   return true;
 }
 
@@ -697,6 +869,7 @@ boolean moveHeldPieceSmooth(byte from_x, byte from_y, byte to_x, byte to_y) {
   if (!ok) return false;
   trolley_coordinate_X = to_x;
   trolley_coordinate_Y = to_y;
+  rememberTrolleyPosition();
   return true;
 }
 
@@ -715,133 +888,116 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
   return pulseMotor(direction, speed_delay, steps, monitor_stops);
 }
 
-boolean homeAxis(byte direction, byte limit_pin) {
-  unsigned int steps = 0;
-  while (digitalRead(limit_pin) == HIGH && steps < HOME_MAX_STEPS) {
-    pulseMotor(direction, SPEED_SLOW, 4, false);
-    steps += 4;
+boolean prepareFirstCalibrationApproach() {
+  // Never seek the first (white) switch while the head is in the lane that
+  // leads to the second (black) switch at the calibration corner.
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+    calibration_lane_confirmed = false;
+    trolley_homed = false;
+    if (!pulseMotor(R_L, SPEED_SLOW,
+                    CALIBRATION_LANE_CLEARANCE_STEPS, false)) return false;
+    return digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
   }
-  return digitalRead(limit_pin) == LOW;
+
+  // A coordinate restored from EEPROM is enough for this one safe staging
+  // move, but it does not mark the trolley homed for normal chess movement.
+  // Only move away from the corner; never pre-stage toward the second switch.
+  if (trolley_position_known &&
+      trolley_coordinate_Y > CALIBRATION_PARK_RANK) {
+    int delta_y = ((int)CALIBRATION_PARK_RANK - trolley_coordinate_Y) *
+                  (int)SQUARE_SIZE;
+    if (!pulseCoreXYLine(0, delta_y, SPEED_FAST, false)) return false;
+    trolley_coordinate_Y = CALIBRATION_PARK_RANK;
+    rememberTrolleyPosition();
+  }
+  if (trolley_position_known) {
+    calibration_lane_confirmed = false;
+    return true;
+  }
+  if (!calibration_lane_confirmed) return false;
+  calibration_lane_confirmed = false;
+  return true;
 }
 
-boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
-  unsigned int steps = 0;
-  while (digitalRead(limit_pin) == LOW && steps < STEP_TEST_LIMIT_RELEASE_STEPS) {
-    if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
-    steps++;
-  }
-  return digitalRead(limit_pin) == HIGH;
-}
-
-boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
-                               unsigned int &measured_steps, boolean &aborted) {
+boolean homeAxisMeasured(byte direction, byte limit_pin,
+                         unsigned int &measured_steps) {
   measured_steps = 0;
   while (digitalRead(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
-    // The target input is the expected endstop. The other shared button/input
-    // remains available as an abort control while this axis is homing.
-    if (digitalRead(abort_pin) == LOW) {
-      aborted = true;
-      return false;
-    }
     if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
     measured_steps++;
   }
   return digitalRead(limit_pin) == LOW;
 }
 
-boolean restoreStepTestStart(boolean &aborted) {
-  unsigned int start_x_steps =
-      (unsigned int)(TROLLEY_START_POSITION_X * SQUARE_SIZE + 0.5);
-  unsigned int start_y_steps =
-      (unsigned int)(TROLLEY_START_POSITION_Y * SQUARE_SIZE + 0.5);
+boolean moveCalibrationCornerToPark() {
+  // Both switches stay pressed until the corner is fully measured. Move
+  // directly from that repeatable corner to the exact e6 parking offset.
+  if (!motor(R_L, SPEED_FAST, CALIBRATION_PARK_BLACK_OFFSET, false)) return false;
+  if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
 
-  if (start_x_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
-      start_y_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
+  return digitalRead(BUTTON_A_LIMIT_WHITE) == HIGH &&
+         digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
+}
 
-  // Move off the active black limit before enabling normal E-stop monitoring.
-  if (!pulseMotor(R_L, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
-  if (!pulseMotor(R_L, SPEED_FAST,
-                  start_x_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
-    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
-    return false;
-  }
-
-  // The white limit was already released by a known number of steps before
-  // the black-axis measurement, so only the remaining distance is required.
-  if (!pulseMotor(T_B, SPEED_FAST,
-                  start_y_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
-    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
-    return false;
-  }
-
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
-
-  trolley_coordinate_X = 5;
-  trolley_coordinate_Y = 7;
+boolean restoreStepTestStart() {
+  if (!moveCalibrationCornerToPark()) return false;
+  trolley_coordinate_X = CALIBRATION_PARK_FILE;
+  trolley_coordinate_Y = CALIBRATION_PARK_RANK;
   trolley_homed = true;
+  rememberTrolleyPosition();
   return true;
 }
 
 boolean measureStepTestReference(unsigned int &white_steps,
-                                 unsigned int &black_steps,
-                                 boolean &aborted) {
-  trolley_homed = false;
-
-  // If the black switch is already active at test startup, release it so it
-  // can serve as the abort input while the white axis is measured.
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW &&
-      !releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
-
-  if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
-                              BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
-
-  // Release the first switch by a known distance. This makes it available as
-  // the abort input while measuring the second axis.
-  if (!pulseMotor(T_B, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW) return false;
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
-    aborted = true;
+                                 unsigned int &black_steps) {
+  if (!prepareFirstCalibrationApproach()) {
+    trolley_homed = false;
     return false;
   }
+  trolley_homed = false;
 
-  if (!measureAxisForStepTest(L_R, BUTTON_B_LIMIT_BLACK,
-                              BUTTON_A_LIMIT_WHITE, black_steps, aborted)) return false;
+  if (!homeAxisMeasured(B_T, BUTTON_A_LIMIT_WHITE, white_steps)) return false;
 
-  return restoreStepTestStart(aborted);
+  // Keep the first switch pressed while finding the second switch. Calibration
+  // buttons are endstops only here; use the board power switch for emergency stop.
+  if (!homeAxisMeasured(L_R, BUTTON_B_LIMIT_BLACK, black_steps)) return false;
+
+  return restoreStepTestStart();
 }
 
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
+
+  if (!prepareFirstCalibrationApproach()) {
+    motion_fault = true;
+    trolley_homed = false;
+    return false;
+  }
   trolley_homed = false;
 
-  if (!homeAxis(B_T, BUTTON_A_LIMIT_WHITE)) {
+  unsigned int ignored_steps = 0;
+  if (!homeAxisMeasured(B_T, BUTTON_A_LIMIT_WHITE, ignored_steps)) {
     motion_fault = true;
     return false;
   }
-  if (!homeAxis(L_R, BUTTON_B_LIMIT_BLACK)) {
+  if (!homeAxisMeasured(L_R, BUTTON_B_LIMIT_BLACK, ignored_steps)) {
     motion_fault = true;
     return false;
   }
 
+  // Keep both switches pressed until the corner is established, then move
+  // directly to e6 without a separate switch-release/backoff stage.
+  if (!moveCalibrationCornerToPark()) {
+    motion_fault = true;
+    return false;
+  }
   delay(300);
-  if (!motor(R_L, SPEED_FAST, TROLLEY_START_POSITION_X, false)) return false;
-  if (!motor(T_B, SPEED_FAST, TROLLEY_START_POSITION_Y, false)) return false;
-  delay(300);
 
-  // Both switches must release after moving away from the homing corner.
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW || digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
-    motion_fault = true;
-    return false;
-  }
-
-  trolley_coordinate_X = 5;
-  trolley_coordinate_Y = 7;
+  trolley_coordinate_X = CALIBRATION_PARK_FILE;
+  trolley_coordinate_Y = CALIBRATION_PARK_RANK;
   trolley_homed = true;
+  rememberTrolleyPosition();
   return true;
 }
 
@@ -921,14 +1077,13 @@ void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) 
 void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
-  trolley_homed = false;
   AI_reset();
   initializeStepTestBoard();
 
   lcd.clear();
   lcd.print(F("STEP TEST CAL"));
   lcd.setCursor(0, 1);
-  lcd.print(F("A/B=E-STOP"));
+  lcd.print(F("POWER=E-STOP"));
 
   boolean aborted = false;
   unsigned int ignored_white = 0;
@@ -936,15 +1091,12 @@ void runStepLossTest() {
   unsigned int baseline_white = 0;
   unsigned int baseline_black = 0;
 
-  // The first pass calibrates from an unknown position. The second starts at
-  // the known e7 service position and establishes the repeatability baseline.
-  if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
-      !measureStepTestReference(baseline_white, baseline_black, aborted)) {
+  // The first pass calibrates from the current position. The second starts at
+  // the known e6 service position and establishes the repeatability baseline.
+  if (!measureStepTestReference(ignored_white, ignored_black) ||
+      !measureStepTestReference(baseline_white, baseline_black)) {
     trolley_homed = false;
-    lcd.clear();
-    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("CAL REQUIRED"));
+    showCalibrationReferenceFault();
     delay(2500);
     AI_reset();
     showServiceMenu();
@@ -1009,7 +1161,8 @@ void runStepLossTest() {
 
     if (ply % STEP_TEST_REFERENCE_INTERVAL != 0 && ply != STEP_TEST_PLIES) continue;
 
-    if (!moveTrolleyStraightTo(5, 7, SPEED_FAST)) {
+    if (!moveTrolleyStraightTo(CALIBRATION_PARK_FILE,
+                               CALIBRATION_PARK_RANK, SPEED_FAST)) {
       aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
                 digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
       trolley_homed = false;
@@ -1025,12 +1178,9 @@ void runStepLossTest() {
 
     unsigned int measured_white = 0;
     unsigned int measured_black = 0;
-    if (!measureStepTestReference(measured_white, measured_black, aborted)) {
+    if (!measureStepTestReference(measured_white, measured_black)) {
       trolley_homed = false;
-      lcd.clear();
-      lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
-      lcd.setCursor(0, 1);
-      lcd.print(F("CAL REQUIRED"));
+      showCalibrationReferenceFault();
       delay(2500);
       AI_reset();
       showServiceMenu();
@@ -1108,6 +1258,16 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   setMagnet(false);
   if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
 
+  // The off-board bin coordinate cannot be stored as a board square. If this
+  // capture came from the corner-switch side, move down the bin lane before
+  // starting the first calibration approach.
+  if (rank > CALIBRATION_PARK_RANK) {
+    int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
+                        (int)SQUARE_SIZE;
+    if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
+  }
+  calibration_lane_confirmed = true;
+
   if (use_magnet) {
     lcd.clear();
     lcd.print(F("CAPTURE HOMING"));
@@ -1115,13 +1275,12 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     lcd.print(F("KEEP HANDS CLEAR"));
   }
 
-  // Production and the empty-board endurance test both use the same
-  // abort-aware two-axis reference routine. The test omits only magnet and
-  // physical drop delays; its bin travel and position correction are real.
-  boolean aborted = false;
+  // Production and the empty-board endurance test both use the same two-axis
+  // reference routine. The test omits only magnet and physical drop delays;
+  // its bin travel and position correction are real.
   unsigned int ignored_white = 0;
   unsigned int ignored_black = 0;
-  return measureStepTestReference(ignored_white, ignored_black, aborted);
+  return measureStepTestReference(ignored_white, ignored_black);
 }
 
 boolean removeCapturedPiece(byte file, byte rank) {
@@ -1145,6 +1304,7 @@ boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
                         SPEED_SLOW, true)) return false;
   trolley_coordinate_X = rook_to;
   trolley_coordinate_Y = rank;
+  rememberTrolleyPosition();
   setMagnet(false);
 
   // Keep the public coordinate at the king's destination, as normal moves do.
@@ -1198,6 +1358,7 @@ boolean blackPlayerMovement() {
   if (motion_fault) return false;
   trolley_coordinate_X = arrival_x;
   trolley_coordinate_Y = arrival_y;
+  rememberTrolleyPosition();
 
   byte departure_row = 8 - departure_y;
   byte departure_column = departure_x - 1;
@@ -1248,9 +1409,7 @@ void serviceMenuLoop() {
 
   switch (service_item) {
     case SERVICE_CALIBRATE:
-      after_calibration = service_menu;
-      sequence = calibration;
-      showCalibration();
+      requestCalibration(service_menu);
       break;
 
     case SERVICE_SENSORS:
@@ -1288,7 +1447,8 @@ void serviceMenuLoop() {
       break;
 
     case SERVICE_STEP_LOSS:
-      runStepLossTest();
+      if (trolley_position_known) runStepLossTest();
+      else requestCalibration(service_menu);
       break;
 
     case SERVICE_EXIT:
