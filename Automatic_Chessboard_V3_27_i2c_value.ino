@@ -524,9 +524,7 @@ boolean isDiagonalDirection(byte direction) {
 
 unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
                             unsigned int total_steps) {
-  // SPEED_SLOW is also the safe starting/stopping speed. Slow carrying moves
-  // already use this delay, so they remain constant-speed.
-  if (cruise_delay >= SPEED_SLOW || total_steps < 2) return cruise_delay;
+  if (cruise_delay >= MOTOR_START_DELAY || total_steps < 2) return cruise_delay;
 
   unsigned int ramp_steps = min(MOTOR_RAMP_STEPS, total_steps / 2U);
   if (ramp_steps == 0) return cruise_delay;
@@ -535,8 +533,8 @@ unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
   unsigned int edge_distance = min(step_index, steps_from_end);
   if (edge_distance >= ramp_steps) return cruise_delay;
 
-  unsigned long delay_range = SPEED_SLOW - cruise_delay;
-  return SPEED_SLOW - (unsigned int)(delay_range * edge_distance / ramp_steps);
+  unsigned long delay_range = MOTOR_START_DELAY - cruise_delay;
+  return MOTOR_START_DELAY - (unsigned int)(delay_range * edge_distance / ramp_steps);
 }
 
 boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps, boolean monitor_stops) {

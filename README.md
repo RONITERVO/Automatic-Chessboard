@@ -36,10 +36,13 @@ motor drivers. For an A4988, the common modes are:
 | 8 | HIGH | HIGH | LOW |
 | 16 | HIGH | HIGH | HIGH |
 
-The default remains full-step mode (`MOTOR_MICROSTEPS = 1`). After changing the
-driver jumpers or wiring, change this constant to the same value. The firmware
-then scales the steps per square, homing limit, ramp length, and step intervals
-to preserve the existing travel distance and approximate physical speeds.
+The current high-friction-drive profile remains in full-step mode
+(`MOTOR_MICROSTEPS = 1`). Slow movement accelerates from approximately 167 to
+200 full steps per second and decelerates again before stopping. If the driver
+jumpers or wiring are changed later, change this constant to the same value.
+The firmware then scales the steps per square, homing limit, ramp length, and
+step intervals to preserve the existing travel distance and approximate
+physical speeds.
 
 Set the driver current limit from the motor's rated phase current and the sense
 resistors fitted to the particular driver board. For an A4988, consult that
