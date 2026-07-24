@@ -176,3 +176,19 @@ byte AI_HvsC() {
   if (!(r > -I + 1)) return AI_GAME_OVER;
   return AI_MOVE_READY;
 }
+
+// Generate and apply one legal move for whichever side is currently to move.
+// This keeps service-mode self-play inside the engine instead of fabricating
+// moves or feeding them through the human-move interface.
+byte AI_selfPlayMove() {
+  K = I;
+  N = 0;
+  T = 0x3F;
+  r = D(-I, I, Q, O, 1, 3);
+  if (!(r > -I + 1)) return AI_GAME_OVER;
+
+  for (byte i = 0; i < 5; i++) lastM[i] = c[i];
+  r = D(-I, I, Q, O, 1, 3);
+  if (!(r > -I + 1)) return AI_GAME_OVER;
+  return AI_MOVE_READY;
+}

@@ -5,6 +5,16 @@
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
+enum {SIM_EMPTY, SIM_PAWN, SIM_KNIGHT, SIM_BISHOP, SIM_ROOK, SIM_QUEEN, SIM_KING};
+byte step_test_board[8][8];
+
+// Board-square centers are x=1..8, so the playing-field edge is x=0.50.
+// Calibration establishes the left limit near x=0.35. x=0.48 is outside
+// the playing field while retaining about 25 full steps from that limit.
+const unsigned int CAPTURE_SIDE_X_STEPS =
+    (SQUARE_SIZE * 12UL + 12UL) / 25UL;
+const unsigned int CAPTURE_DROP_SETTLE_MS = 400;
+
 void setup() {
   pinMode(MAGNET, OUTPUT);
   digitalWrite(MAGNET, LOW);
@@ -13,6 +23,8 @@ void setup() {
   pinMode(MOTOR_WHITE_DIR, OUTPUT);
   pinMode(MOTOR_BLACK_STEP, OUTPUT);
   pinMode(MOTOR_BLACK_DIR, OUTPUT);
+  digitalWrite(MOTOR_WHITE_STEP, LOW);
+  digitalWrite(MOTOR_BLACK_STEP, LOW);
 
   for (byte i = 0; i < 4; i++) {
     pinMode(MUX_ADDR[i], OUTPUT);
@@ -515,9 +527,30 @@ void configureMotorDirection(byte direction) {
                (direction == B_T || direction == R_L || direction == RL_BT) ? HIGH : LOW);
 }
 
+boolean isDiagonalDirection(byte direction) {
+  return direction == LR_BT || direction == RL_TB ||
+         direction == LR_TB || direction == RL_BT;
+}
+
+unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
+                            unsigned int total_steps) {
+  if (cruise_delay >= MOTOR_START_DELAY || total_steps < 2) return cruise_delay;
+
+  unsigned int ramp_steps = min(MOTOR_RAMP_STEPS, total_steps / 2U);
+  if (ramp_steps == 0) return cruise_delay;
+
+  unsigned int steps_from_end = total_steps - step_index - 1U;
+  unsigned int edge_distance = min(step_index, steps_from_end);
+  if (edge_distance >= ramp_steps) return cruise_delay;
+
+  unsigned long delay_range = MOTOR_START_DELAY - cruise_delay;
+  return MOTOR_START_DELAY - (unsigned int)(delay_range * edge_distance / ramp_steps);
+}
+
 boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps, boolean monitor_stops) {
   if (monitor_stops && motion_fault) return false;
   configureMotorDirection(direction);
+  delayMicroseconds(2);
 
   for (unsigned int step_count = 0; step_count < steps; step_count++) {
     if (monitor_stops &&
@@ -528,15 +561,142 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
       return false;
     }
 
+    unsigned int current_delay = motorStepDelay(speed_delay, step_count, steps);
+    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+
     digitalWrite(MOTOR_WHITE_STEP,
                  (direction == LR_TB || direction == RL_BT) ? LOW : HIGH);
     digitalWrite(MOTOR_BLACK_STEP,
                  (direction == LR_BT || direction == RL_TB) ? LOW : HIGH);
-    delayMicroseconds(speed_delay);
+    delayMicroseconds(MOTOR_STEP_PULSE_US);
     digitalWrite(MOTOR_WHITE_STEP, LOW);
     digitalWrite(MOTOR_BLACK_STEP, LOW);
-    delayMicroseconds(speed_delay);
+    delayMicroseconds(low_time);
   }
+  return true;
+}
+
+boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
+                        unsigned int speed_delay, boolean monitor_stops) {
+  if (monitor_stops && motion_fault) return false;
+
+  // CoreXY transform for the existing motor polarity:
+  // white = +X -Y, black = -X -Y.
+  long white_delta = (long)delta_x_steps - delta_y_steps;
+  long black_delta = -(long)delta_x_steps - delta_y_steps;
+  unsigned int white_steps =
+      (unsigned int)(white_delta < 0 ? -white_delta : white_delta);
+  unsigned int black_steps =
+      (unsigned int)(black_delta < 0 ? -black_delta : black_delta);
+  unsigned int event_count = max(white_steps, black_steps);
+  if (event_count == 0) return true;
+
+  digitalWrite(MOTOR_WHITE_DIR, white_delta >= 0 ? HIGH : LOW);
+  digitalWrite(MOTOR_BLACK_DIR, black_delta >= 0 ? HIGH : LOW);
+  delayMicroseconds(2);
+
+  unsigned long white_accumulator = 0;
+  unsigned long black_accumulator = 0;
+  for (unsigned int event = 0; event < event_count; event++) {
+    if (monitor_stops &&
+        (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+         digitalRead(BUTTON_B_LIMIT_BLACK) == LOW)) {
+      motion_fault = true;
+      trolley_homed = false;
+      setMagnet(false);
+      return false;
+    }
+
+    white_accumulator += white_steps;
+    black_accumulator += black_steps;
+    boolean step_white = white_accumulator >= event_count;
+    boolean step_black = black_accumulator >= event_count;
+    if (step_white) white_accumulator -= event_count;
+    if (step_black) black_accumulator -= event_count;
+
+    unsigned int current_delay = motorStepDelay(speed_delay, event, event_count);
+    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+    digitalWrite(MOTOR_WHITE_STEP, step_white ? HIGH : LOW);
+    digitalWrite(MOTOR_BLACK_STEP, step_black ? HIGH : LOW);
+    delayMicroseconds(MOTOR_STEP_PULSE_US);
+    digitalWrite(MOTOR_WHITE_STEP, LOW);
+    digitalWrite(MOTOR_BLACK_STEP, LOW);
+    delayMicroseconds(low_time);
+  }
+  return true;
+}
+
+int roundedDivide(long value, long divisor) {
+  return (int)(value >= 0 ? (value + divisor / 2) / divisor
+                          : (value - divisor / 2) / divisor);
+}
+
+boolean pulseCoreXYCurve(int end_x, int end_y, int control1_x, int control1_y,
+                         int control2_x, int control2_y,
+                         unsigned int speed_delay, boolean monitor_stops) {
+  const byte segments = 12;
+  const long denominator = (long)segments * segments * segments;
+  int current_x = 0;
+  int current_y = 0;
+
+  for (byte i = 1; i <= segments; i++) {
+    long u = segments - i;
+    long x = 3L * u * u * i * control1_x +
+             3L * u * i * i * control2_x + (long)i * i * i * end_x;
+    long y = 3L * u * u * i * control1_y +
+             3L * u * i * i * control2_y + (long)i * i * i * end_y;
+    int target_x = roundedDivide(x, denominator);
+    int target_y = roundedDivide(y, denominator);
+    if (!pulseCoreXYLine(target_x - current_x, target_y - current_y,
+                         speed_delay, monitor_stops)) return false;
+    current_x = target_x;
+    current_y = target_y;
+  }
+  return current_x == end_x && current_y == end_y;
+}
+
+boolean moveTrolleyStraightTo(byte target_x, byte target_y,
+                              unsigned int speed_delay) {
+  if (!trolley_homed || target_x < 1 || target_x > 8 ||
+      target_y < 1 || target_y > 8) {
+    motion_fault = true;
+    setMagnet(false);
+    return false;
+  }
+
+  int delta_x = ((int)target_x - trolley_coordinate_X) * (int)SQUARE_SIZE;
+  int delta_y = ((int)target_y - trolley_coordinate_Y) * (int)SQUARE_SIZE;
+  if (!pulseCoreXYLine(delta_x, delta_y, speed_delay, true)) return false;
+  trolley_coordinate_X = target_x;
+  trolley_coordinate_Y = target_y;
+  return true;
+}
+
+// A legal sliding move has a clear direct corridor, so the shortest straight
+// path gives the weakest magnet the least lateral acceleration. Knights use a
+// smooth S-curve through the center of their L-shaped clearance corridor.
+boolean moveHeldPieceSmooth(byte from_x, byte from_y, byte to_x, byte to_y) {
+  int dx = ((int)to_x - from_x) * (int)SQUARE_SIZE;
+  int dy = ((int)to_y - from_y) * (int)SQUARE_SIZE;
+  byte squares_x = abs((int)to_x - from_x);
+  byte squares_y = abs((int)to_y - from_y);
+  boolean ok;
+
+  if (squares_x == 1 && squares_y == 2) {
+    ok = pulseCoreXYCurve(dx, dy, dx / 2, 0, dx / 2, dy,
+                          SPEED_SLOW, true);
+  }
+  else if (squares_x == 2 && squares_y == 1) {
+    ok = pulseCoreXYCurve(dx, dy, 0, dy / 2, dx, dy / 2,
+                          SPEED_SLOW, true);
+  }
+  else {
+    ok = pulseCoreXYLine(dx, dy, SPEED_SLOW, true);
+  }
+
+  if (!ok) return false;
+  trolley_coordinate_X = to_x;
+  trolley_coordinate_Y = to_y;
   return true;
 }
 
@@ -548,8 +708,9 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
     return false;
   }
 
-  float multiplier = (direction == LR_BT || direction == RL_TB ||
-                      direction == LR_TB || direction == RL_BT) ? 1.44 : 1.0;
+  // In CoreXY kinematics a board diagonal is driven by one motor. That motor
+  // must make twice as many steps as either motor makes for a cardinal move.
+  float multiplier = isDiagonalDirection(direction) ? 2.0 : 1.0;
   unsigned int steps = (unsigned int)(distance * SQUARE_SIZE * multiplier + 0.5);
   return pulseMotor(direction, speed_delay, steps, monitor_stops);
 }
@@ -561,6 +722,96 @@ boolean homeAxis(byte direction, byte limit_pin) {
     steps += 4;
   }
   return digitalRead(limit_pin) == LOW;
+}
+
+boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
+  unsigned int steps = 0;
+  while (digitalRead(limit_pin) == LOW && steps < STEP_TEST_LIMIT_RELEASE_STEPS) {
+    if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
+    steps++;
+  }
+  return digitalRead(limit_pin) == HIGH;
+}
+
+boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
+                               unsigned int &measured_steps, boolean &aborted) {
+  measured_steps = 0;
+  while (digitalRead(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
+    // The target input is the expected endstop. The other shared button/input
+    // remains available as an abort control while this axis is homing.
+    if (digitalRead(abort_pin) == LOW) {
+      aborted = true;
+      return false;
+    }
+    if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
+    measured_steps++;
+  }
+  return digitalRead(limit_pin) == LOW;
+}
+
+boolean restoreStepTestStart(boolean &aborted) {
+  unsigned int start_x_steps =
+      (unsigned int)(TROLLEY_START_POSITION_X * SQUARE_SIZE + 0.5);
+  unsigned int start_y_steps =
+      (unsigned int)(TROLLEY_START_POSITION_Y * SQUARE_SIZE + 0.5);
+
+  if (start_x_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
+      start_y_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
+
+  // Move off the active black limit before enabling normal E-stop monitoring.
+  if (!pulseMotor(R_L, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
+  if (!pulseMotor(R_L, SPEED_FAST,
+                  start_x_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+    return false;
+  }
+
+  // The white limit was already released by a known number of steps before
+  // the black-axis measurement, so only the remaining distance is required.
+  if (!pulseMotor(T_B, SPEED_FAST,
+                  start_y_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+    return false;
+  }
+
+  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
+
+  trolley_coordinate_X = 5;
+  trolley_coordinate_Y = 7;
+  trolley_homed = true;
+  return true;
+}
+
+boolean measureStepTestReference(unsigned int &white_steps,
+                                 unsigned int &black_steps,
+                                 boolean &aborted) {
+  trolley_homed = false;
+
+  // If the black switch is already active at test startup, release it so it
+  // can serve as the abort input while the white axis is measured.
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW &&
+      !releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
+
+  if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
+                              BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
+
+  // Release the first switch by a known distance. This makes it available as
+  // the abort input while measuring the second axis.
+  if (!pulseMotor(T_B, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
+  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW) return false;
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+    aborted = true;
+    return false;
+  }
+
+  if (!measureAxisForStepTest(L_R, BUTTON_B_LIMIT_BLACK,
+                              BUTTON_A_LIMIT_WHITE, black_steps, aborted)) return false;
+
+  return restoreStepTestStart(aborted);
 }
 
 boolean calibrateBoard() {
@@ -594,32 +845,223 @@ boolean calibrateBoard() {
   return true;
 }
 
-boolean moveTrolleyTo(byte target_x, byte target_y, unsigned int speed_delay) {
-  if (!trolley_homed || target_x < 1 || target_x > 8 || target_y < 1 || target_y > 8) {
-    motion_fault = true;
-    setMagnet(false);
+void initializeStepTestBoard() {
+  const byte back_rank[8] = {
+      SIM_ROOK, SIM_KNIGHT, SIM_BISHOP, SIM_QUEEN,
+      SIM_KING, SIM_BISHOP, SIM_KNIGHT, SIM_ROOK
+  };
+  for (byte rank = 0; rank < 8; rank++) {
+    for (byte file = 0; file < 8; file++) step_test_board[rank][file] = SIM_EMPTY;
+  }
+  for (byte file = 0; file < 8; file++) {
+    step_test_board[0][file] = back_rank[file];
+    step_test_board[1][file] = SIM_PAWN;
+    step_test_board[6][file] = SIM_PAWN;
+    step_test_board[7][file] = back_rank[file];
+  }
+}
+
+boolean executeSimulatedChessMove(const char *move) {
+  if (!validMoveText(move) || !trolley_homed) return false;
+  byte from_x = move[0] - 'a' + 1;
+  byte from_y = move[1] - '0';
+  byte to_x = move[2] - 'a' + 1;
+  byte to_y = move[3] - '0';
+  byte piece = step_test_board[from_y - 1][from_x - 1];
+  if (piece == SIM_EMPTY) return false;
+
+  boolean destination_occupied = step_test_board[to_y - 1][to_x - 1] != SIM_EMPTY;
+  boolean en_passant = piece == SIM_PAWN && !destination_occupied &&
+                       abs((int)to_x - from_x) == 1;
+  boolean castling = piece == SIM_KING && from_y == to_y &&
+                     abs((int)to_x - from_x) == 2;
+
+  if (destination_occupied) {
+    if (!removeCapturedPiecePath(to_x, to_y, false)) return false;
+  }
+  else if (en_passant) {
+    if (!removeCapturedPiecePath(to_x, from_y, false)) return false;
+  }
+
+  if (!moveTrolleyStraightTo(from_x, from_y, SPEED_FAST)) return false;
+  if (castling) {
+    if (!moveCastlingPieces(from_x, from_y, to_x, false)) return false;
+  }
+  else if (!moveHeldPieceSmooth(from_x, from_y, to_x, to_y)) {
     return false;
   }
 
-  byte distance_x = abs((int)target_x - (int)trolley_coordinate_X);
-  byte distance_y = abs((int)target_y - (int)trolley_coordinate_Y);
-
-  if (target_x > trolley_coordinate_X) {
-    if (!motor(T_B, speed_delay, distance_x, true)) return false;
+  step_test_board[from_y - 1][from_x - 1] = SIM_EMPTY;
+  if (en_passant) step_test_board[from_y - 1][to_x - 1] = SIM_EMPTY;
+  step_test_board[to_y - 1][to_x - 1] =
+      (piece == SIM_PAWN && (to_y == 1 || to_y == 8)) ? (byte)SIM_QUEEN : piece;
+  if (castling) {
+    byte rook_from = to_x > from_x ? 8 : 1;
+    byte rook_to = to_x > from_x ? 6 : 4;
+    step_test_board[from_y - 1][rook_from - 1] = SIM_EMPTY;
+    step_test_board[from_y - 1][rook_to - 1] = SIM_ROOK;
   }
-  else if (target_x < trolley_coordinate_X) {
-    if (!motor(B_T, speed_delay, distance_x, true)) return false;
-  }
-  trolley_coordinate_X = target_x;
-
-  if (target_y > trolley_coordinate_Y) {
-    if (!motor(L_R, speed_delay, distance_y, true)) return false;
-  }
-  else if (target_y < trolley_coordinate_Y) {
-    if (!motor(R_L, speed_delay, distance_y, true)) return false;
-  }
-  trolley_coordinate_Y = target_y;
   return true;
+}
+
+void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) {
+  lcd.clear();
+  lcd.print(F("STEP LOSS P"));
+  if (ply < 10) lcd.print('0');
+  lcd.print(ply);
+  lcd.setCursor(0, 1);
+  lcd.print(F("W"));
+  if (white_delta >= 0) lcd.print('+');
+  lcd.print(white_delta);
+  lcd.print(F(" B"));
+  if (black_delta >= 0) lcd.print('+');
+  lcd.print(black_delta);
+}
+
+void runStepLossTest() {
+  setMagnet(false);
+  motion_fault = false;
+  trolley_homed = false;
+  AI_reset();
+  initializeStepTestBoard();
+
+  lcd.clear();
+  lcd.print(F("STEP TEST CAL"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A/B=E-STOP"));
+
+  boolean aborted = false;
+  unsigned int ignored_white = 0;
+  unsigned int ignored_black = 0;
+  unsigned int baseline_white = 0;
+  unsigned int baseline_black = 0;
+
+  // The first pass calibrates from an unknown position. The second starts at
+  // the known e7 service position and establishes the repeatability baseline.
+  if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
+      !measureStepTestReference(baseline_white, baseline_black, aborted)) {
+    trolley_homed = false;
+    lcd.clear();
+    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("CAL REQUIRED"));
+    delay(2500);
+    AI_reset();
+    showServiceMenu();
+    return;
+  }
+
+  unsigned int ply = 0;
+  unsigned int game = 1;
+  byte consecutive_game_overs = 0;
+  while (ply < STEP_TEST_PLIES) {
+    lcd.clear();
+    lcd.print(F("AI GAME "));
+    lcd.print(game);
+    lcd.setCursor(0, 1);
+    lcd.print(F("THINK "));
+    lcd.print(ply + 1);
+
+    byte ai_result = AI_selfPlayMove();
+    if (ai_result == AI_GAME_OVER) {
+      game++;
+      consecutive_game_overs++;
+      if (consecutive_game_overs > 2) {
+        trolley_homed = false;
+        lcd.clear();
+        lcd.print(F("AI TEST FAIL"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("CAL REQUIRED"));
+        delay(2500);
+        AI_reset();
+        showServiceMenu();
+        return;
+      }
+      AI_reset();
+      initializeStepTestBoard();
+      continue;
+    }
+    consecutive_game_overs = 0;
+
+    lcd.clear();
+    lcd.print(F("G"));
+    lcd.print(game);
+    lcd.print(F(" P"));
+    lcd.print(ply + 1);
+    lcd.setCursor(0, 1);
+    lcd.print(lastM);
+    lcd.print(F(" A/B=STOP"));
+
+    if (!executeSimulatedChessMove(lastM)) {
+      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      AI_reset();
+      showServiceMenu();
+      return;
+    }
+    ply++;
+
+    if (ply % STEP_TEST_REFERENCE_INTERVAL != 0 && ply != STEP_TEST_PLIES) continue;
+
+    if (!moveTrolleyStraightTo(5, 7, SPEED_FAST)) {
+      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      AI_reset();
+      showServiceMenu();
+      return;
+    }
+
+    unsigned int measured_white = 0;
+    unsigned int measured_black = 0;
+    if (!measureStepTestReference(measured_white, measured_black, aborted)) {
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      AI_reset();
+      showServiceMenu();
+      return;
+    }
+
+    int white_delta = (int)measured_white - (int)baseline_white;
+    int black_delta = (int)measured_black - (int)baseline_black;
+    if (abs(white_delta) > (int)STEP_TEST_TOLERANCE ||
+        abs(black_delta) > (int)STEP_TEST_TOLERANCE) {
+      trolley_homed = false;
+      showStepTestDifference(ply, white_delta, black_delta);
+      delay(4000);
+      AI_reset();
+      showServiceMenu();
+      return;
+    }
+  }
+
+  lcd.clear();
+  lcd.print(F("STEP TEST PASS"));
+  lcd.setCursor(0, 1);
+  lcd.print(STEP_TEST_PLIES);
+  lcd.print(F(" MOVES OK"));
+  delay(3000);
+  AI_reset();
+  showServiceMenu();
+}
+
+boolean moveTrolleyTo(byte target_x, byte target_y, unsigned int speed_delay) {
+  return moveTrolleyStraightTo(target_x, target_y, speed_delay);
 }
 
 void setMagnet(boolean enabled) {
@@ -640,17 +1082,73 @@ void setMagnet(boolean enabled) {
 
 // ---------------------------- AI physical movement -----------------------
 
-boolean removeCapturedPiece(byte file, byte rank) {
-  if (!moveTrolleyTo(file, rank, SPEED_FAST)) return false;
-  setMagnet(true);
-  if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-  if (!motor(B_T, SPEED_SLOW, file - 0.5, true)) return false;
+boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
+  if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
+  if (use_magnet) {
+    lcd.clear();
+    lcd.print(F("REMOVING CAPTURE"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("TO LEFT BIN"));
+    setMagnet(true);
+  }
+
+  int end_x = (int)CAPTURE_SIDE_X_STEPS -
+              (int)file * (int)SQUARE_SIZE;
+  int end_y = -(int)SQUARE_SIZE / 2;
+  int control1_x = 0;
+  int control1_y = end_y;
+  int control2_x = end_x;
+  int control2_y = end_y;
+  if (!pulseCoreXYCurve(end_x, end_y, control1_x, control1_y,
+                        control2_x, control2_y, SPEED_SLOW, true)) return false;
+  // The curve decelerates to the configured start delay before release.
+  // setMagnet(false) keeps the head stationary for the existing pre-release
+  // delay. The extra dwell after power goes low lets the piece fall clear
+  // before the head starts its capture-triggered calibration.
   setMagnet(false);
-  if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-  if (!motor(T_B, SPEED_FAST, file - 0.5, true)) return false;
-  trolley_coordinate_X = file;
+  if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
+
+  if (use_magnet) {
+    lcd.clear();
+    lcd.print(F("CAPTURE HOMING"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("KEEP HANDS CLEAR"));
+  }
+
+  // Production and the empty-board endurance test both use the same
+  // abort-aware two-axis reference routine. The test omits only magnet and
+  // physical drop delays; its bin travel and position correction are real.
+  boolean aborted = false;
+  unsigned int ignored_white = 0;
+  unsigned int ignored_black = 0;
+  return measureStepTestReference(ignored_white, ignored_black, aborted);
+}
+
+boolean removeCapturedPiece(byte file, byte rank) {
+  return removeCapturedPiecePath(file, rank, true);
+}
+
+boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
+                           boolean use_magnet) {
+  if (use_magnet) setMagnet(true);
+  if (!moveHeldPieceSmooth(from_x, rank, to_x, rank)) return false;
+  setMagnet(false);
+
+  byte rook_from = to_x > from_x ? 8 : 1;
+  byte rook_to = to_x > from_x ? 6 : 4;
+  if (!moveTrolleyStraightTo(rook_from, rank, SPEED_FAST)) return false;
+  if (use_magnet) setMagnet(true);
+
+  int dx = ((int)rook_to - rook_from) * (int)SQUARE_SIZE;
+  int clearance = rank <= 4 ? (int)SQUARE_SIZE / 2 : -(int)SQUARE_SIZE / 2;
+  if (!pulseCoreXYCurve(dx, 0, 0, clearance, dx, clearance,
+                        SPEED_SLOW, true)) return false;
+  trolley_coordinate_X = rook_to;
   trolley_coordinate_Y = rank;
-  return true;
+  setMagnet(false);
+
+  // Keep the public coordinate at the king's destination, as normal moves do.
+  return moveTrolleyStraightTo(to_x, rank, SPEED_FAST);
 }
 
 boolean blackPlayerMovement() {
@@ -682,72 +1180,18 @@ boolean blackPlayerMovement() {
     if (!removeCapturedPiece(arrival_x, arrival_y + 1)) return false;
   }
 
-  if (!moveTrolleyTo(departure_x, departure_y, SPEED_FAST)) return false;
-  setMagnet(true);
-
-  // Knight movement.
-  if ((displacement_x == 1 && displacement_y == 2) ||
-      (displacement_x == 2 && displacement_y == 1)) {
-    if (displacement_y == 2) {
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x * 0.5, true)) return false;
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y, true)) return false;
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x * 0.5, true)) return false;
-    }
-    else {
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y * 0.5, true)) return false;
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x, true)) return false;
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y * 0.5, true)) return false;
-    }
-  }
-  // Straight diagonal movement.
-  else if (displacement_x == displacement_y) {
-    byte direction;
-    if (departure_x > arrival_x && departure_y > arrival_y) direction = RL_BT;
-    else if (departure_x > arrival_x && departure_y < arrival_y) direction = LR_BT;
-    else if (departure_x < arrival_x && departure_y > arrival_y) direction = RL_TB;
-    else direction = LR_TB;
-    if (!motor(direction, SPEED_SLOW, displacement_x, true)) return false;
-  }
-  // Black kingside castling: king e8-g8, then rook h8-f8.
-  else if (departure_x == 5 && departure_y == 8 && arrival_x == 7 && arrival_y == 8) {
-    if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-    if (!motor(T_B, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(T_B, SPEED_FAST, 1, true)) return false;
-    if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(B_T, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(T_B, SPEED_FAST, 1, true)) return false;
-    if (!motor(R_L, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(L_R, SPEED_SLOW, 0.5, true)) return false;
-  }
-  // Black queenside castling: king e8-c8, then rook a8-d8.
-  else if (departure_x == 5 && departure_y == 8 && arrival_x == 3 && arrival_y == 8) {
-    if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-    if (!motor(B_T, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(B_T, SPEED_FAST, 2, true)) return false;
-    if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(T_B, SPEED_SLOW, 3, true)) return false;
-    setMagnet(false);
-    if (!motor(B_T, SPEED_FAST, 1, true)) return false;
-    if (!motor(R_L, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(L_R, SPEED_SLOW, 0.5, true)) return false;
-  }
-  else if (displacement_y == 0) {
-    if (!motor(departure_x > arrival_x ? B_T : T_B, SPEED_SLOW, displacement_x, true)) return false;
-  }
-  else if (displacement_x == 0) {
-    if (!motor(departure_y > arrival_y ? R_L : L_R, SPEED_SLOW, displacement_y, true)) return false;
+  if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
+    return false;
+  boolean castling = departure_x == 5 && departure_y == 8 &&
+                     arrival_y == 8 && (arrival_x == 3 || arrival_x == 7);
+  if (castling) {
+    if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
+      return false;
   }
   else {
-    motion_fault = true;
-    setMagnet(false);
-    return false;
+    setMagnet(true);
+    if (!moveHeldPieceSmooth(departure_x, departure_y, arrival_x, arrival_y))
+      return false;
   }
 
   setMagnet(false);
@@ -787,6 +1231,7 @@ void showServiceMenu() {
     case SERVICE_MOVE:      lcd.print(F("MOVE HEAD")); break;
     case SERVICE_MAGNET:    lcd.print(F("MAGNET "));
                             lcd.print(magnet_state ? F("ON") : F("OFF")); break;
+    case SERVICE_STEP_LOSS: lcd.print(F("STEP LOSS")); break;
     case SERVICE_EXIT:      lcd.print(F("EXIT")); break;
   }
   lcd.setCursor(0, 1);
@@ -840,6 +1285,10 @@ void serviceMenuLoop() {
       lcd.print(F("USE MOVE HEAD"));
       delay(1000);
       showServiceMenu();
+      break;
+
+    case SERVICE_STEP_LOSS:
+      runStepLossTest();
       break;
 
     case SERVICE_EXIT:

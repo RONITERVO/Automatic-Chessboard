@@ -50,7 +50,15 @@ byte after_calibration = setup_check;
 enum {T_B, B_T, L_R, R_L, LR_BT, RL_TB, LR_TB, RL_BT};
 // T=Top, B=Bottom, L=Left, R=Right.
 
-enum {SERVICE_CALIBRATE, SERVICE_SENSORS, SERVICE_MOVE, SERVICE_MAGNET, SERVICE_EXIT, SERVICE_COUNT};
+enum {
+  SERVICE_CALIBRATE,
+  SERVICE_SENSORS,
+  SERVICE_MOVE,
+  SERVICE_MAGNET,
+  SERVICE_STEP_LOSS,
+  SERVICE_EXIT,
+  SERVICE_COUNT
+};
 byte service_item = SERVICE_CALIBRATE;
 byte service_file = 1;
 byte service_rank = 1;
@@ -63,10 +71,25 @@ const byte MOTOR_WHITE_DIR = 2;
 const byte MOTOR_WHITE_STEP = 3;
 const byte MOTOR_BLACK_DIR = 4;
 const byte MOTOR_BLACK_STEP = 5;
-const unsigned int SQUARE_SIZE = 195;
-const unsigned int SPEED_SLOW = 3000;
-const unsigned int SPEED_FAST = 1000;
+// This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
+// Supported A4988 values are 1, 2, 4, 8, and 16.
+const byte MOTOR_MICROSTEPS = 1;
+const unsigned int FULL_STEPS_PER_SQUARE = 195;
+const unsigned int SQUARE_SIZE = FULL_STEPS_PER_SQUARE * MOTOR_MICROSTEPS;
+
+// Measured half-period delays for the current high-friction full-step drive.
+// Slow carrying moves ramp from 250 to about 278 full steps/second. Dividing
+// by the microstep setting preserves physical speed if the hardware changes.
+const unsigned int MOTOR_START_DELAY = 2000U / MOTOR_MICROSTEPS;
+const unsigned int SPEED_SLOW = 1800U / MOTOR_MICROSTEPS;
+const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
+const unsigned int MOTOR_STEP_PULSE_US = 4;
+const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;
 const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
+const unsigned int STEP_TEST_PLIES = 200;
+const byte STEP_TEST_REFERENCE_INTERVAL = 8;
+const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
+const unsigned int STEP_TEST_LIMIT_RELEASE_STEPS = 16U * MOTOR_MICROSTEPS;
 
 // Reed-sensor multiplexers.
 const byte MUX_ADDR[4] = {A3, A2, A1, A0};
