@@ -77,12 +77,11 @@ const byte MOTOR_MICROSTEPS = 1;
 const unsigned int FULL_STEPS_PER_SQUARE = 195;
 const unsigned int SQUARE_SIZE = FULL_STEPS_PER_SQUARE * MOTOR_MICROSTEPS;
 
-// Half-period delays. Slow carrying moves cruise at 200 full steps/second but
-// start at the former 167-step/second rate to protect the high-friction drive.
-// Dividing by the microstep setting preserves the physical carriage speed if
-// microstepping is enabled in future hardware.
-const unsigned int MOTOR_START_DELAY = 3000U / MOTOR_MICROSTEPS;
-const unsigned int SPEED_SLOW = 2500U / MOTOR_MICROSTEPS;
+// Measured half-period delays for the current high-friction full-step drive.
+// Slow carrying moves ramp from 250 to about 278 full steps/second. Dividing
+// by the microstep setting preserves physical speed if the hardware changes.
+const unsigned int MOTOR_START_DELAY = 2000U / MOTOR_MICROSTEPS;
+const unsigned int SPEED_SLOW = 1800U / MOTOR_MICROSTEPS;
 const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
 const unsigned int MOTOR_STEP_PULSE_US = 4;
 const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;

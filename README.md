@@ -37,12 +37,12 @@ motor drivers. For an A4988, the common modes are:
 | 16 | HIGH | HIGH | HIGH |
 
 The current high-friction-drive profile remains in full-step mode
-(`MOTOR_MICROSTEPS = 1`). Slow movement accelerates from approximately 167 to
-200 full steps per second and decelerates again before stopping. If the driver
-jumpers or wiring are changed later, change this constant to the same value.
-The firmware then scales the steps per square, homing limit, ramp length, and
-step intervals to preserve the existing travel distance and approximate
-physical speeds.
+(`MOTOR_MICROSTEPS = 1`). Its measured working values ramp slow movement from
+approximately 250 to 278 full steps per second and decelerate again before
+stopping. If the driver jumpers or wiring are changed later, change this
+constant to the same value. The firmware then scales the steps per square,
+homing limit, ramp length, and step intervals to preserve the existing travel
+distance and approximate physical speeds.
 
 Set the driver current limit from the motor's rated phase current and the sense
 resistors fitted to the particular driver board. For an A4988, consult that
@@ -57,7 +57,9 @@ test. Remove all pieces from the board before starting it. The test:
 
 1. homes both axes and restores the normal e7 service position;
 2. repeats the homing pass to establish a switch-to-position baseline;
-3. runs a large rectangular travel pattern 50 times; and
+3. runs a large rectangular path followed by a 16-segment circle in both
+   directions at the carrying speed, repeating the combined pattern 50 times;
+   and
 4. returns to both home switches after every cycle and compares the measured
    step counts with the baseline.
 
@@ -71,3 +73,9 @@ This detects accumulated position drift using the existing switches. It cannot
 prove that no individual step was missed and later cancelled by a missed step
 in the opposite direction. Detecting every stall in real time requires motor
 encoders or a driver with suitable diagnostic feedback.
+
+The circular portion uses coordinated CoreXY pulse interpolation, including
+diagonal and intermediate-angle movement. Its small direction changes and
+per-segment speed ramps provide a long-term stress test for the kind of rounded
+travel that is less likely to release a weakly held chess piece than abrupt
+right-angle turns.

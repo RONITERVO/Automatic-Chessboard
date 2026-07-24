@@ -566,6 +566,56 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
   return true;
 }
 
+boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
+                        unsigned int speed_delay, boolean monitor_stops) {
+  if (monitor_stops && motion_fault) return false;
+
+  // CoreXY transform for the existing motor polarity:
+  // white = +X -Y, black = -X -Y.
+  long white_delta = (long)delta_x_steps - delta_y_steps;
+  long black_delta = -(long)delta_x_steps - delta_y_steps;
+  unsigned int white_steps =
+      (unsigned int)(white_delta < 0 ? -white_delta : white_delta);
+  unsigned int black_steps =
+      (unsigned int)(black_delta < 0 ? -black_delta : black_delta);
+  unsigned int event_count = max(white_steps, black_steps);
+  if (event_count == 0) return true;
+
+  digitalWrite(MOTOR_WHITE_DIR, white_delta >= 0 ? HIGH : LOW);
+  digitalWrite(MOTOR_BLACK_DIR, black_delta >= 0 ? HIGH : LOW);
+  delayMicroseconds(2);
+
+  unsigned long white_accumulator = 0;
+  unsigned long black_accumulator = 0;
+  for (unsigned int event = 0; event < event_count; event++) {
+    if (monitor_stops &&
+        (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+         digitalRead(BUTTON_B_LIMIT_BLACK) == LOW)) {
+      motion_fault = true;
+      trolley_homed = false;
+      setMagnet(false);
+      return false;
+    }
+
+    white_accumulator += white_steps;
+    black_accumulator += black_steps;
+    boolean step_white = white_accumulator >= event_count;
+    boolean step_black = black_accumulator >= event_count;
+    if (step_white) white_accumulator -= event_count;
+    if (step_black) black_accumulator -= event_count;
+
+    unsigned int current_delay = motorStepDelay(speed_delay, event, event_count);
+    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+    digitalWrite(MOTOR_WHITE_STEP, step_white ? HIGH : LOW);
+    digitalWrite(MOTOR_BLACK_STEP, step_black ? HIGH : LOW);
+    delayMicroseconds(MOTOR_STEP_PULSE_US);
+    digitalWrite(MOTOR_WHITE_STEP, LOW);
+    digitalWrite(MOTOR_BLACK_STEP, LOW);
+    delayMicroseconds(low_time);
+  }
+  return true;
+}
+
 boolean motor(byte direction, unsigned int speed_delay, float distance, boolean monitor_stops) {
   if (distance < 0.0 || distance > 8.5) {
     motion_fault = true;
@@ -719,7 +769,44 @@ boolean runStepTestPattern() {
   for (byte i = 0; i < waypoint_count; i++) {
     if (!moveTrolleyTo(waypoint_x[i], waypoint_y[i], SPEED_FAST)) return false;
   }
-  return true;
+
+  // The rectangular path ends at e7, which is also the top of a two-square
+  // radius test circle centered on e5.
+  return runStepTestCircle(false) && runStepTestCircle(true);
+}
+
+int circleCoordinateToSteps(int8_t coordinate) {
+  long scaled = (long)coordinate * SQUARE_SIZE;
+  return (int)(scaled >= 0 ? (scaled + 25L) / 50L : (scaled - 25L) / 50L);
+}
+
+boolean runStepTestCircle(boolean reverse) {
+  // Sixteen points around a radius-2 circle. Small 22.5-degree direction
+  // changes plus the per-segment ramp avoid the sharp corners of a square.
+  const int8_t circle_x[] = {
+      0, 38, 71, 92, 100, 92, 71, 38,
+      0, -38, -71, -92, -100, -92, -71, -38
+  };
+  const int8_t circle_y[] = {
+      100, 92, 71, 38, 0, -38, -71, -92,
+      -100, -92, -71, -38, 0, 38, 71, 92
+  };
+  const byte point_count = sizeof(circle_x) / sizeof(circle_x[0]);
+
+  int current_x = circleCoordinateToSteps(circle_x[0]);
+  int current_y = circleCoordinateToSteps(circle_y[0]);
+  for (byte segment = 1; segment <= point_count; segment++) {
+    byte index = reverse ? (point_count - segment) % point_count
+                         : segment % point_count;
+    int target_x = circleCoordinateToSteps(circle_x[index]);
+    int target_y = circleCoordinateToSteps(circle_y[index]);
+    if (!pulseCoreXYLine(target_x - current_x, target_y - current_y,
+                         SPEED_SLOW, true)) return false;
+    current_x = target_x;
+    current_y = target_y;
+  }
+  return current_x == circleCoordinateToSteps(circle_x[0]) &&
+         current_y == circleCoordinateToSteps(circle_y[0]);
 }
 
 void showStepTestDifference(unsigned int cycle, int white_delta, int black_delta) {
