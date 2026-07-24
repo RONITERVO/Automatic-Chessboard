@@ -13,6 +13,8 @@ void setup() {
   pinMode(MOTOR_WHITE_DIR, OUTPUT);
   pinMode(MOTOR_BLACK_STEP, OUTPUT);
   pinMode(MOTOR_BLACK_DIR, OUTPUT);
+  digitalWrite(MOTOR_WHITE_STEP, LOW);
+  digitalWrite(MOTOR_BLACK_STEP, LOW);
 
   for (byte i = 0; i < 4; i++) {
     pinMode(MUX_ADDR[i], OUTPUT);
@@ -515,9 +517,32 @@ void configureMotorDirection(byte direction) {
                (direction == B_T || direction == R_L || direction == RL_BT) ? HIGH : LOW);
 }
 
+boolean isDiagonalDirection(byte direction) {
+  return direction == LR_BT || direction == RL_TB ||
+         direction == LR_TB || direction == RL_BT;
+}
+
+unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
+                            unsigned int total_steps) {
+  // SPEED_SLOW is also the safe starting/stopping speed. Slow carrying moves
+  // already use this delay, so they remain constant-speed.
+  if (cruise_delay >= SPEED_SLOW || total_steps < 2) return cruise_delay;
+
+  unsigned int ramp_steps = min(MOTOR_RAMP_STEPS, total_steps / 2U);
+  if (ramp_steps == 0) return cruise_delay;
+
+  unsigned int steps_from_end = total_steps - step_index - 1U;
+  unsigned int edge_distance = min(step_index, steps_from_end);
+  if (edge_distance >= ramp_steps) return cruise_delay;
+
+  unsigned long delay_range = SPEED_SLOW - cruise_delay;
+  return SPEED_SLOW - (unsigned int)(delay_range * edge_distance / ramp_steps);
+}
+
 boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps, boolean monitor_stops) {
   if (monitor_stops && motion_fault) return false;
   configureMotorDirection(direction);
+  delayMicroseconds(2);
 
   for (unsigned int step_count = 0; step_count < steps; step_count++) {
     if (monitor_stops &&
@@ -528,14 +553,17 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
       return false;
     }
 
+    unsigned int current_delay = motorStepDelay(speed_delay, step_count, steps);
+    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+
     digitalWrite(MOTOR_WHITE_STEP,
                  (direction == LR_TB || direction == RL_BT) ? LOW : HIGH);
     digitalWrite(MOTOR_BLACK_STEP,
                  (direction == LR_BT || direction == RL_TB) ? LOW : HIGH);
-    delayMicroseconds(speed_delay);
+    delayMicroseconds(MOTOR_STEP_PULSE_US);
     digitalWrite(MOTOR_WHITE_STEP, LOW);
     digitalWrite(MOTOR_BLACK_STEP, LOW);
-    delayMicroseconds(speed_delay);
+    delayMicroseconds(low_time);
   }
   return true;
 }
@@ -548,8 +576,9 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
     return false;
   }
 
-  float multiplier = (direction == LR_BT || direction == RL_TB ||
-                      direction == LR_TB || direction == RL_BT) ? 1.44 : 1.0;
+  // In CoreXY kinematics a board diagonal is driven by one motor. That motor
+  // must make twice as many steps as either motor makes for a cardinal move.
+  float multiplier = isDiagonalDirection(direction) ? 2.0 : 1.0;
   unsigned int steps = (unsigned int)(distance * SQUARE_SIZE * multiplier + 0.5);
   return pulseMotor(direction, speed_delay, steps, monitor_stops);
 }

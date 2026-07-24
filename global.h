@@ -63,9 +63,18 @@ const byte MOTOR_WHITE_DIR = 2;
 const byte MOTOR_WHITE_STEP = 3;
 const byte MOTOR_BLACK_DIR = 4;
 const byte MOTOR_BLACK_STEP = 5;
-const unsigned int SQUARE_SIZE = 195;
-const unsigned int SPEED_SLOW = 3000;
-const unsigned int SPEED_FAST = 1000;
+// This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
+// Supported A4988 values are 1, 2, 4, 8, and 16.
+const byte MOTOR_MICROSTEPS = 1;
+const unsigned int FULL_STEPS_PER_SQUARE = 195;
+const unsigned int SQUARE_SIZE = FULL_STEPS_PER_SQUARE * MOTOR_MICROSTEPS;
+
+// Half-period delays. Dividing by the microstep setting preserves the
+// physical carriage speed when microstepping is enabled in hardware.
+const unsigned int SPEED_SLOW = 3000U / MOTOR_MICROSTEPS;
+const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
+const unsigned int MOTOR_STEP_PULSE_US = 4;
+const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;
 const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
 
 // Reed-sensor multiplexers.
