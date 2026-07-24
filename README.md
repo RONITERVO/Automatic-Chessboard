@@ -60,14 +60,17 @@ never travels toward the black switch.
 
 During normal calibration both switches are approached one step at a time. The
 white switch stays pressed while the black switch is found. The head then backs
-away from the black switch only until it releases, with an eight-step maximum,
+away from the black switch only until it releases, with an eleven-step maximum,
 before completing the exact e6 park offset.
 
-Capture parking and step-loss reference calibrations use the same eight-step
+Capture parking and step-loss reference calibrations use the same eleven-step
 maximum. They release the white switch only until its input opens so it can be
 used as the abort control during the black-switch approach, then release the
 black switch by only its measured amount. No calibration path uses the old
-fixed 16-step switch back-off.
+fixed 16-step switch back-off. If an installed switch still has not released
+after eleven steps, the LCD reports `SWITCH >11 STEPS` / `EDIT MAX IN CODE`.
+Adjust `CALIBRATION_SWITCH_RELEASE_MAX_STEPS` in `global.h` to match that
+switch's physical release travel.
 
 Every successful calibration and step-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the

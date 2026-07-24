@@ -28,6 +28,7 @@ byte trolley_coordinate_X = CALIBRATION_PARK_FILE;
 byte trolley_coordinate_Y = CALIBRATION_PARK_RANK;
 boolean trolley_homed = false;
 boolean motion_fault = false;
+boolean calibration_switch_release_fault = false;
 boolean magnet_state = false;
 
 char mov[5] = {0, 0, 0, 0, 0};
@@ -95,8 +96,10 @@ const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
 const unsigned int STEP_TEST_PLIES = 200;
 const byte STEP_TEST_REFERENCE_INTERVAL = 8;
 const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
+// Switch-specific tuning: if the LCD reports "EDIT MAX IN CODE", increase
+// this value to match the physical release travel of the installed switch.
 const unsigned int CALIBRATION_SWITCH_RELEASE_MAX_STEPS =
-    8U * MOTOR_MICROSTEPS;
+    11U * MOTOR_MICROSTEPS;
 const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = SQUARE_SIZE;
 
 // Reed-sensor multiplexers.

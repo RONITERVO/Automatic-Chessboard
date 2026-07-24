@@ -359,6 +359,7 @@ boolean buttonPressed(byte pin) {
 void returnToMainMenu() {
   setMagnet(false);
   motion_fault = false;
+  calibration_switch_release_fault = false;
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -399,13 +400,39 @@ void showStartingMismatch() {
   lcd.print(F(" A=TRY"));
 }
 
+void showCalibrationSwitchReleaseFault() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(F("SWITCH >"));
+  lcd.print(CALIBRATION_SWITCH_RELEASE_MAX_STEPS / MOTOR_MICROSTEPS);
+  lcd.print(F(" STEPS"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("EDIT MAX IN CODE"));
+}
+
 void showMotionFault() {
   setMagnet(false);
+  if (calibration_switch_release_fault) {
+    showCalibrationSwitchReleaseFault();
+    return;
+  }
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(F("MOTION STOPPED"));
   lcd.setCursor(0, 1);
   lcd.print(F("A=CAL  B=MENU"));
+}
+
+void showCalibrationReferenceFault(boolean aborted) {
+  if (calibration_switch_release_fault) {
+    showCalibrationSwitchReleaseFault();
+  }
+  else {
+    lcd.clear();
+    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("CAL REQUIRED"));
+  }
 }
 
 void showAiSensorMismatch() {
@@ -898,7 +925,11 @@ boolean releaseLimitMeasured(byte limit_pin, byte away_direction,
     if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
     release_steps++;
   }
-  return digitalRead(limit_pin) == HIGH;
+  boolean released = digitalRead(limit_pin) == HIGH;
+  if (!released && release_steps >= max_steps) {
+    calibration_switch_release_fault = true;
+  }
+  return released;
 }
 
 boolean prepareFirstCalibrationApproach() {
@@ -1029,6 +1060,7 @@ boolean measureStepTestReference(unsigned int &white_steps,
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
+  calibration_switch_release_fault = false;
 
   if (!prepareFirstCalibrationApproach()) {
     motion_fault = true;
@@ -1153,6 +1185,7 @@ void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) 
 void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
+  calibration_switch_release_fault = false;
   AI_reset();
   initializeStepTestBoard();
 
@@ -1172,11 +1205,8 @@ void runStepLossTest() {
   if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
       !measureStepTestReference(baseline_white, baseline_black, aborted)) {
     trolley_homed = false;
-    lcd.clear();
-    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("CAL REQUIRED"));
-    delay(2500);
+    showCalibrationReferenceFault(aborted);
+    delay(calibration_switch_release_fault ? 4000 : 2500);
     AI_reset();
     showServiceMenu();
     return;
@@ -1259,11 +1289,8 @@ void runStepLossTest() {
     unsigned int measured_black = 0;
     if (!measureStepTestReference(measured_white, measured_black, aborted)) {
       trolley_homed = false;
-      lcd.clear();
-      lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
-      lcd.setCursor(0, 1);
-      lcd.print(F("CAL REQUIRED"));
-      delay(2500);
+      showCalibrationReferenceFault(aborted);
+      delay(calibration_switch_release_fault ? 4000 : 2500);
       AI_reset();
       showServiceMenu();
       return;
@@ -1465,6 +1492,7 @@ boolean blackPlayerMovement() {
 // ---------------------------- Persistent service mode --------------------
 
 void showServiceMenu() {
+  calibration_switch_release_fault = false;
   sequence = service_menu;
   lcd.clear();
   lcd.setCursor(0, 0);
