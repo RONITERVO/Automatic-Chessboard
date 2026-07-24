@@ -104,11 +104,13 @@ For every capture, the head first moves half a rank toward the lower clearance
 line and then follows a rounded cubic turn to that left-side release point.
 The curve uses the normal carrying speed and decelerates completely at its
 endpoint. The head remains stationary through the magnet's release delay and
-for another 400 ms while the piece falls into the bin, then retraces the same
-rounded route without the piece. Nothing is stored on the travel rail, so later
-captures cannot collide with earlier ones.
+for another 400 ms while the piece falls into the bin. It then immediately
+homes both axes from the nearby calibration side and restores the known e7
+position before moving the AI piece. Nothing is stored on the travel rail, so
+later captures cannot collide with earlier ones.
 
 The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
-runs this exact same exit curve and empty return route. Its electromagnet and
-release dwell remain disabled because no physical pieces are present, but the
-motor workload and off-board travel are included in the endurance measurement.
+runs this exact same exit curve followed by an abort-aware two-axis re-home.
+Its electromagnet and release dwell remain disabled because no physical pieces
+are present, but the motor workload, off-board travel, and capture correction
+are included in the endurance measurement.

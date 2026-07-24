@@ -1104,18 +1104,24 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   // The curve decelerates to the configured start delay before release.
   // setMagnet(false) keeps the head stationary for the existing pre-release
   // delay. The extra dwell after power goes low lets the piece fall clear
-  // before the empty head retraces the path.
+  // before the head starts its capture-triggered calibration.
   setMagnet(false);
   if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
 
-  // Follow the exact same rounded path backwards to restore the known square.
-  if (!pulseCoreXYCurve(-end_x, -end_y,
-                        control2_x - end_x, control2_y - end_y,
-                        control1_x - end_x, control1_y - end_y,
-                        SPEED_FAST, true)) return false;
-  trolley_coordinate_X = file;
-  trolley_coordinate_Y = rank;
-  return true;
+  if (use_magnet) {
+    lcd.clear();
+    lcd.print(F("CAPTURE HOMING"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("KEEP HANDS CLEAR"));
+  }
+
+  // Production and the empty-board endurance test both use the same
+  // abort-aware two-axis reference routine. The test omits only magnet and
+  // physical drop delays; its bin travel and position correction are real.
+  boolean aborted = false;
+  unsigned int ignored_white = 0;
+  unsigned int ignored_black = 0;
+  return measureStepTestReference(ignored_white, ignored_black, aborted);
 }
 
 boolean removeCapturedPiece(byte file, byte rank) {
