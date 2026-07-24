@@ -57,11 +57,14 @@ test. Remove all pieces from the board before starting it. The test:
 
 1. homes both axes and restores the normal e7 service position;
 2. repeats the homing pass to establish a switch-to-position baseline;
-3. runs a large rectangular path followed by a 16-segment circle in both
-   directions at the carrying speed, repeating the combined pattern 50 times;
-   and
-4. returns to both home switches after every cycle and compares the measured
-   step counts with the baseline.
+3. lets the Micro-Max chess engine play both sides of a sequence of legal games;
+4. mirrors those games on a separate in-memory board, so captures, en passant,
+   promotions, and castling are exercised without reading or modifying the
+   real reed-sensor board state;
+5. runs the same production travel planner used for real moves, with the
+   electromagnet kept off because the physical board must be empty; and
+6. returns to both home switches every eight half-moves and compares the
+   measured step counts with the baseline, for a total of 200 half-moves.
 
 A difference greater than four full steps, scaled to the configured microstep
 mode, is reported as step loss. Either shared limit/button input stops regular
@@ -71,11 +74,20 @@ invalidates the trolley position and requires calibration before further use.
 
 This detects accumulated position drift using the existing switches. It cannot
 prove that no individual step was missed and later cancelled by a missed step
-in the opposite direction. Detecting every stall in real time requires motor
-encoders or a driver with suitable diagnostic feedback.
+in the opposite direction. Detecting every stall in real time still requires
+motor encoders or a driver with suitable diagnostic feedback.
 
-The circular portion uses coordinated CoreXY pulse interpolation, including
-diagonal and intermediate-angle movement. Its small direction changes and
-per-segment speed ramps provide a long-term stress test for the kind of rounded
-travel that is less likely to release a weakly held chess piece than abrupt
-right-angle turns.
+## Piece-retention travel planner
+
+For a weak magnet, the production planner uses the shortest straight path for
+normal legal moves. A legal rook, bishop, queen, pawn, or king move already has
+a clear corridor, and a straight path has no corner-induced lateral jerk.
+Knight moves use a 12-segment cubic S-curve through the middle of the normal
+L-shaped clearance corridor instead of two sharp 90-degree corners. Capture
+removal and the rook part of castling use rounded cubic detours. Unloaded head
+travel is also coordinated directly in X/Y instead of moving one axis and then
+the other.
+
+Each curve ends on an exact whole-step destination; interpolation rounding is
+not allowed to accumulate between moves. All paths keep the current tested
+full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.

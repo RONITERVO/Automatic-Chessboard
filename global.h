@@ -86,7 +86,8 @@ const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
 const unsigned int MOTOR_STEP_PULSE_US = 4;
 const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;
 const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
-const unsigned int STEP_TEST_CYCLES = 50;
+const unsigned int STEP_TEST_PLIES = 200;
+const byte STEP_TEST_REFERENCE_INTERVAL = 8;
 const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
 const unsigned int STEP_TEST_LIMIT_RELEASE_STEPS = 16U * MOTOR_MICROSTEPS;
 

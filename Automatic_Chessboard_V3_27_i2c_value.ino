@@ -5,6 +5,9 @@
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
+enum {SIM_EMPTY, SIM_PAWN, SIM_KNIGHT, SIM_BISHOP, SIM_ROOK, SIM_QUEEN, SIM_KING};
+byte step_test_board[8][8];
+
 void setup() {
   pinMode(MAGNET, OUTPUT);
   digitalWrite(MAGNET, LOW);
@@ -616,6 +619,80 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
   return true;
 }
 
+int roundedDivide(long value, long divisor) {
+  return (int)(value >= 0 ? (value + divisor / 2) / divisor
+                          : (value - divisor / 2) / divisor);
+}
+
+boolean pulseCoreXYCurve(int end_x, int end_y, int control1_x, int control1_y,
+                         int control2_x, int control2_y,
+                         unsigned int speed_delay, boolean monitor_stops) {
+  const byte segments = 12;
+  const long denominator = (long)segments * segments * segments;
+  int current_x = 0;
+  int current_y = 0;
+
+  for (byte i = 1; i <= segments; i++) {
+    long u = segments - i;
+    long x = 3L * u * u * i * control1_x +
+             3L * u * i * i * control2_x + (long)i * i * i * end_x;
+    long y = 3L * u * u * i * control1_y +
+             3L * u * i * i * control2_y + (long)i * i * i * end_y;
+    int target_x = roundedDivide(x, denominator);
+    int target_y = roundedDivide(y, denominator);
+    if (!pulseCoreXYLine(target_x - current_x, target_y - current_y,
+                         speed_delay, monitor_stops)) return false;
+    current_x = target_x;
+    current_y = target_y;
+  }
+  return current_x == end_x && current_y == end_y;
+}
+
+boolean moveTrolleyStraightTo(byte target_x, byte target_y,
+                              unsigned int speed_delay) {
+  if (!trolley_homed || target_x < 1 || target_x > 8 ||
+      target_y < 1 || target_y > 8) {
+    motion_fault = true;
+    setMagnet(false);
+    return false;
+  }
+
+  int delta_x = ((int)target_x - trolley_coordinate_X) * (int)SQUARE_SIZE;
+  int delta_y = ((int)target_y - trolley_coordinate_Y) * (int)SQUARE_SIZE;
+  if (!pulseCoreXYLine(delta_x, delta_y, speed_delay, true)) return false;
+  trolley_coordinate_X = target_x;
+  trolley_coordinate_Y = target_y;
+  return true;
+}
+
+// A legal sliding move has a clear direct corridor, so the shortest straight
+// path gives the weakest magnet the least lateral acceleration. Knights use a
+// smooth S-curve through the center of their L-shaped clearance corridor.
+boolean moveHeldPieceSmooth(byte from_x, byte from_y, byte to_x, byte to_y) {
+  int dx = ((int)to_x - from_x) * (int)SQUARE_SIZE;
+  int dy = ((int)to_y - from_y) * (int)SQUARE_SIZE;
+  byte squares_x = abs((int)to_x - from_x);
+  byte squares_y = abs((int)to_y - from_y);
+  boolean ok;
+
+  if (squares_x == 1 && squares_y == 2) {
+    ok = pulseCoreXYCurve(dx, dy, dx / 2, 0, dx / 2, dy,
+                          SPEED_SLOW, true);
+  }
+  else if (squares_x == 2 && squares_y == 1) {
+    ok = pulseCoreXYCurve(dx, dy, 0, dy / 2, dx, dy / 2,
+                          SPEED_SLOW, true);
+  }
+  else {
+    ok = pulseCoreXYLine(dx, dy, SPEED_SLOW, true);
+  }
+
+  if (!ok) return false;
+  trolley_coordinate_X = to_x;
+  trolley_coordinate_Y = to_y;
+  return true;
+}
+
 boolean motor(byte direction, unsigned int speed_delay, float distance, boolean monitor_stops) {
   if (distance < 0.0 || distance > 8.5) {
     motion_fault = true;
@@ -761,59 +838,70 @@ boolean calibrateBoard() {
   return true;
 }
 
-boolean runStepTestPattern() {
-  const byte waypoint_x[] = {2, 7, 7, 2, 5};
-  const byte waypoint_y[] = {2, 2, 7, 7, 7};
-  const byte waypoint_count = sizeof(waypoint_x) / sizeof(waypoint_x[0]);
+void initializeStepTestBoard() {
+  const byte back_rank[8] = {
+      SIM_ROOK, SIM_KNIGHT, SIM_BISHOP, SIM_QUEEN,
+      SIM_KING, SIM_BISHOP, SIM_KNIGHT, SIM_ROOK
+  };
+  for (byte rank = 0; rank < 8; rank++) {
+    for (byte file = 0; file < 8; file++) step_test_board[rank][file] = SIM_EMPTY;
+  }
+  for (byte file = 0; file < 8; file++) {
+    step_test_board[0][file] = back_rank[file];
+    step_test_board[1][file] = SIM_PAWN;
+    step_test_board[6][file] = SIM_PAWN;
+    step_test_board[7][file] = back_rank[file];
+  }
+}
 
-  for (byte i = 0; i < waypoint_count; i++) {
-    if (!moveTrolleyTo(waypoint_x[i], waypoint_y[i], SPEED_FAST)) return false;
+boolean executeSimulatedChessMove(const char *move) {
+  if (!validMoveText(move) || !trolley_homed) return false;
+  byte from_x = move[0] - 'a' + 1;
+  byte from_y = move[1] - '0';
+  byte to_x = move[2] - 'a' + 1;
+  byte to_y = move[3] - '0';
+  byte piece = step_test_board[from_y - 1][from_x - 1];
+  if (piece == SIM_EMPTY) return false;
+
+  boolean destination_occupied = step_test_board[to_y - 1][to_x - 1] != SIM_EMPTY;
+  boolean en_passant = piece == SIM_PAWN && !destination_occupied &&
+                       abs((int)to_x - from_x) == 1;
+  boolean castling = piece == SIM_KING && from_y == to_y &&
+                     abs((int)to_x - from_x) == 2;
+
+  if (destination_occupied) {
+    if (!removeCapturedPiecePath(to_x, to_y, false)) return false;
+  }
+  else if (en_passant) {
+    if (!removeCapturedPiecePath(to_x, from_y, false)) return false;
   }
 
-  // The rectangular path ends at e7, which is also the top of a two-square
-  // radius test circle centered on e5.
-  return runStepTestCircle(false) && runStepTestCircle(true);
-}
-
-int circleCoordinateToSteps(int8_t coordinate) {
-  long scaled = (long)coordinate * SQUARE_SIZE;
-  return (int)(scaled >= 0 ? (scaled + 25L) / 50L : (scaled - 25L) / 50L);
-}
-
-boolean runStepTestCircle(boolean reverse) {
-  // Sixteen points around a radius-2 circle. Small 22.5-degree direction
-  // changes plus the per-segment ramp avoid the sharp corners of a square.
-  const int8_t circle_x[] = {
-      0, 38, 71, 92, 100, 92, 71, 38,
-      0, -38, -71, -92, -100, -92, -71, -38
-  };
-  const int8_t circle_y[] = {
-      100, 92, 71, 38, 0, -38, -71, -92,
-      -100, -92, -71, -38, 0, 38, 71, 92
-  };
-  const byte point_count = sizeof(circle_x) / sizeof(circle_x[0]);
-
-  int current_x = circleCoordinateToSteps(circle_x[0]);
-  int current_y = circleCoordinateToSteps(circle_y[0]);
-  for (byte segment = 1; segment <= point_count; segment++) {
-    byte index = reverse ? (point_count - segment) % point_count
-                         : segment % point_count;
-    int target_x = circleCoordinateToSteps(circle_x[index]);
-    int target_y = circleCoordinateToSteps(circle_y[index]);
-    if (!pulseCoreXYLine(target_x - current_x, target_y - current_y,
-                         SPEED_SLOW, true)) return false;
-    current_x = target_x;
-    current_y = target_y;
+  if (!moveTrolleyStraightTo(from_x, from_y, SPEED_FAST)) return false;
+  if (castling) {
+    if (!moveCastlingPieces(from_x, from_y, to_x, false)) return false;
   }
-  return current_x == circleCoordinateToSteps(circle_x[0]) &&
-         current_y == circleCoordinateToSteps(circle_y[0]);
+  else if (!moveHeldPieceSmooth(from_x, from_y, to_x, to_y)) {
+    return false;
+  }
+
+  step_test_board[from_y - 1][from_x - 1] = SIM_EMPTY;
+  if (en_passant) step_test_board[from_y - 1][to_x - 1] = SIM_EMPTY;
+  step_test_board[to_y - 1][to_x - 1] =
+      (piece == SIM_PAWN && (to_y == 1 || to_y == 8)) ? (byte)SIM_QUEEN : piece;
+  if (castling) {
+    byte rook_from = to_x > from_x ? 8 : 1;
+    byte rook_to = to_x > from_x ? 6 : 4;
+    step_test_board[from_y - 1][rook_from - 1] = SIM_EMPTY;
+    step_test_board[from_y - 1][rook_to - 1] = SIM_ROOK;
+  }
+  return true;
 }
 
-void showStepTestDifference(unsigned int cycle, int white_delta, int black_delta) {
+void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) {
   lcd.clear();
-  lcd.print(F("STEP LOSS C"));
-  if (cycle < 10) lcd.print('0');
-  lcd.print(cycle);
+  lcd.print(F("STEP LOSS P"));
+  if (ply < 10) lcd.print('0');
+  lcd.print(ply);
   lcd.setCursor(0, 1);
   lcd.print(F("W"));
   if (white_delta >= 0) lcd.print('+');
@@ -827,6 +915,8 @@ void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
   trolley_homed = false;
+  AI_reset();
+  initializeStepTestBoard();
 
   lcd.clear();
   lcd.print(F("STEP TEST CAL"));
@@ -849,21 +939,53 @@ void runStepLossTest() {
     lcd.setCursor(0, 1);
     lcd.print(F("CAL REQUIRED"));
     delay(2500);
+    AI_reset();
     showServiceMenu();
     return;
   }
 
-  for (unsigned int cycle = 1; cycle <= STEP_TEST_CYCLES; cycle++) {
+  unsigned int ply = 0;
+  unsigned int game = 1;
+  byte consecutive_game_overs = 0;
+  while (ply < STEP_TEST_PLIES) {
     lcd.clear();
-    lcd.print(F("STEP TEST "));
-    if (cycle < 10) lcd.print('0');
-    lcd.print(cycle);
-    lcd.print('/');
-    lcd.print(STEP_TEST_CYCLES);
+    lcd.print(F("AI GAME "));
+    lcd.print(game);
     lcd.setCursor(0, 1);
-    lcd.print(F("A/B=E-STOP"));
+    lcd.print(F("THINK "));
+    lcd.print(ply + 1);
 
-    if (!runStepTestPattern()) {
+    byte ai_result = AI_selfPlayMove();
+    if (ai_result == AI_GAME_OVER) {
+      game++;
+      consecutive_game_overs++;
+      if (consecutive_game_overs > 2) {
+        trolley_homed = false;
+        lcd.clear();
+        lcd.print(F("AI TEST FAIL"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("CAL REQUIRED"));
+        delay(2500);
+        AI_reset();
+        showServiceMenu();
+        return;
+      }
+      AI_reset();
+      initializeStepTestBoard();
+      continue;
+    }
+    consecutive_game_overs = 0;
+
+    lcd.clear();
+    lcd.print(F("G"));
+    lcd.print(game);
+    lcd.print(F(" P"));
+    lcd.print(ply + 1);
+    lcd.setCursor(0, 1);
+    lcd.print(lastM);
+    lcd.print(F(" A/B=STOP"));
+
+    if (!executeSimulatedChessMove(lastM)) {
       aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
                 digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
       trolley_homed = false;
@@ -872,6 +994,24 @@ void runStepLossTest() {
       lcd.setCursor(0, 1);
       lcd.print(F("CAL REQUIRED"));
       delay(2500);
+      AI_reset();
+      showServiceMenu();
+      return;
+    }
+    ply++;
+
+    if (ply % STEP_TEST_REFERENCE_INTERVAL != 0 && ply != STEP_TEST_PLIES) continue;
+
+    if (!moveTrolleyStraightTo(5, 7, SPEED_FAST)) {
+      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      trolley_homed = false;
+      lcd.clear();
+      lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
+      lcd.setCursor(0, 1);
+      lcd.print(F("CAL REQUIRED"));
+      delay(2500);
+      AI_reset();
       showServiceMenu();
       return;
     }
@@ -885,6 +1025,7 @@ void runStepLossTest() {
       lcd.setCursor(0, 1);
       lcd.print(F("CAL REQUIRED"));
       delay(2500);
+      AI_reset();
       showServiceMenu();
       return;
     }
@@ -894,8 +1035,9 @@ void runStepLossTest() {
     if (abs(white_delta) > (int)STEP_TEST_TOLERANCE ||
         abs(black_delta) > (int)STEP_TEST_TOLERANCE) {
       trolley_homed = false;
-      showStepTestDifference(cycle, white_delta, black_delta);
+      showStepTestDifference(ply, white_delta, black_delta);
       delay(4000);
+      AI_reset();
       showServiceMenu();
       return;
     }
@@ -904,38 +1046,15 @@ void runStepLossTest() {
   lcd.clear();
   lcd.print(F("STEP TEST PASS"));
   lcd.setCursor(0, 1);
-  lcd.print(STEP_TEST_CYCLES);
-  lcd.print(F(" CYCLES OK"));
+  lcd.print(STEP_TEST_PLIES);
+  lcd.print(F(" MOVES OK"));
   delay(3000);
+  AI_reset();
   showServiceMenu();
 }
 
 boolean moveTrolleyTo(byte target_x, byte target_y, unsigned int speed_delay) {
-  if (!trolley_homed || target_x < 1 || target_x > 8 || target_y < 1 || target_y > 8) {
-    motion_fault = true;
-    setMagnet(false);
-    return false;
-  }
-
-  byte distance_x = abs((int)target_x - (int)trolley_coordinate_X);
-  byte distance_y = abs((int)target_y - (int)trolley_coordinate_Y);
-
-  if (target_x > trolley_coordinate_X) {
-    if (!motor(T_B, speed_delay, distance_x, true)) return false;
-  }
-  else if (target_x < trolley_coordinate_X) {
-    if (!motor(B_T, speed_delay, distance_x, true)) return false;
-  }
-  trolley_coordinate_X = target_x;
-
-  if (target_y > trolley_coordinate_Y) {
-    if (!motor(L_R, speed_delay, distance_y, true)) return false;
-  }
-  else if (target_y < trolley_coordinate_Y) {
-    if (!motor(R_L, speed_delay, distance_y, true)) return false;
-  }
-  trolley_coordinate_Y = target_y;
-  return true;
+  return moveTrolleyStraightTo(target_x, target_y, speed_delay);
 }
 
 void setMagnet(boolean enabled) {
@@ -956,17 +1075,55 @@ void setMagnet(boolean enabled) {
 
 // ---------------------------- AI physical movement -----------------------
 
-boolean removeCapturedPiece(byte file, byte rank) {
-  if (!moveTrolleyTo(file, rank, SPEED_FAST)) return false;
-  setMagnet(true);
-  if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-  if (!motor(B_T, SPEED_SLOW, file - 0.5, true)) return false;
+boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
+  if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
+  if (use_magnet) setMagnet(true);
+
+  int end_x = -((int)file * (int)SQUARE_SIZE - (int)SQUARE_SIZE / 2);
+  int end_y = -(int)SQUARE_SIZE / 2;
+  int control1_x = 0;
+  int control1_y = end_y;
+  int control2_x = end_x;
+  int control2_y = end_y;
+  if (!pulseCoreXYCurve(end_x, end_y, control1_x, control1_y,
+                        control2_x, control2_y, SPEED_SLOW, true)) return false;
   setMagnet(false);
-  if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-  if (!motor(T_B, SPEED_FAST, file - 0.5, true)) return false;
+
+  // Follow the exact same rounded path backwards to restore the known square.
+  if (!pulseCoreXYCurve(-end_x, -end_y,
+                        control2_x - end_x, control2_y - end_y,
+                        control1_x - end_x, control1_y - end_y,
+                        SPEED_FAST, true)) return false;
   trolley_coordinate_X = file;
   trolley_coordinate_Y = rank;
   return true;
+}
+
+boolean removeCapturedPiece(byte file, byte rank) {
+  return removeCapturedPiecePath(file, rank, true);
+}
+
+boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
+                           boolean use_magnet) {
+  if (use_magnet) setMagnet(true);
+  if (!moveHeldPieceSmooth(from_x, rank, to_x, rank)) return false;
+  setMagnet(false);
+
+  byte rook_from = to_x > from_x ? 8 : 1;
+  byte rook_to = to_x > from_x ? 6 : 4;
+  if (!moveTrolleyStraightTo(rook_from, rank, SPEED_FAST)) return false;
+  if (use_magnet) setMagnet(true);
+
+  int dx = ((int)rook_to - rook_from) * (int)SQUARE_SIZE;
+  int clearance = rank <= 4 ? (int)SQUARE_SIZE / 2 : -(int)SQUARE_SIZE / 2;
+  if (!pulseCoreXYCurve(dx, 0, 0, clearance, dx, clearance,
+                        SPEED_SLOW, true)) return false;
+  trolley_coordinate_X = rook_to;
+  trolley_coordinate_Y = rank;
+  setMagnet(false);
+
+  // Keep the public coordinate at the king's destination, as normal moves do.
+  return moveTrolleyStraightTo(to_x, rank, SPEED_FAST);
 }
 
 boolean blackPlayerMovement() {
@@ -998,72 +1155,15 @@ boolean blackPlayerMovement() {
     if (!removeCapturedPiece(arrival_x, arrival_y + 1)) return false;
   }
 
-  if (!moveTrolleyTo(departure_x, departure_y, SPEED_FAST)) return false;
-  setMagnet(true);
-
-  // Knight movement.
-  if ((displacement_x == 1 && displacement_y == 2) ||
-      (displacement_x == 2 && displacement_y == 1)) {
-    if (displacement_y == 2) {
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x * 0.5, true)) return false;
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y, true)) return false;
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x * 0.5, true)) return false;
-    }
-    else {
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y * 0.5, true)) return false;
-      if (!motor(departure_x < arrival_x ? T_B : B_T, SPEED_SLOW, displacement_x, true)) return false;
-      if (!motor(departure_y < arrival_y ? L_R : R_L, SPEED_SLOW, displacement_y * 0.5, true)) return false;
-    }
-  }
-  // Straight diagonal movement.
-  else if (displacement_x == displacement_y) {
-    byte direction;
-    if (departure_x > arrival_x && departure_y > arrival_y) direction = RL_BT;
-    else if (departure_x > arrival_x && departure_y < arrival_y) direction = LR_BT;
-    else if (departure_x < arrival_x && departure_y > arrival_y) direction = RL_TB;
-    else direction = LR_TB;
-    if (!motor(direction, SPEED_SLOW, displacement_x, true)) return false;
-  }
-  // Black kingside castling: king e8-g8, then rook h8-f8.
-  else if (departure_x == 5 && departure_y == 8 && arrival_x == 7 && arrival_y == 8) {
-    if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-    if (!motor(T_B, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(T_B, SPEED_FAST, 1, true)) return false;
-    if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(B_T, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(T_B, SPEED_FAST, 1, true)) return false;
-    if (!motor(R_L, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(L_R, SPEED_SLOW, 0.5, true)) return false;
-  }
-  // Black queenside castling: king e8-c8, then rook a8-d8.
-  else if (departure_x == 5 && departure_y == 8 && arrival_x == 3 && arrival_y == 8) {
-    if (!motor(R_L, SPEED_SLOW, 0.5, true)) return false;
-    if (!motor(B_T, SPEED_SLOW, 2, true)) return false;
-    setMagnet(false);
-    if (!motor(B_T, SPEED_FAST, 2, true)) return false;
-    if (!motor(L_R, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(T_B, SPEED_SLOW, 3, true)) return false;
-    setMagnet(false);
-    if (!motor(B_T, SPEED_FAST, 1, true)) return false;
-    if (!motor(R_L, SPEED_FAST, 0.5, true)) return false;
-    setMagnet(true);
-    if (!motor(L_R, SPEED_SLOW, 0.5, true)) return false;
-  }
-  else if (displacement_y == 0) {
-    if (!motor(departure_x > arrival_x ? B_T : T_B, SPEED_SLOW, displacement_x, true)) return false;
-  }
-  else if (displacement_x == 0) {
-    if (!motor(departure_y > arrival_y ? R_L : L_R, SPEED_SLOW, displacement_y, true)) return false;
+  if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST)) return false;
+  boolean castling = departure_x == 5 && departure_y == 8 &&
+                     arrival_y == 8 && (arrival_x == 3 || arrival_x == 7);
+  if (castling) {
+    if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true)) return false;
   }
   else {
-    motion_fault = true;
-    setMagnet(false);
-    return false;
+    setMagnet(true);
+    if (!moveHeldPieceSmooth(departure_x, departure_y, arrival_x, arrival_y)) return false;
   }
 
   setMagnet(false);
