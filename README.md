@@ -54,23 +54,19 @@ driver or motor connection while motor power is applied.
 
 Calibration always seeks the white switch before the black corner switch. If a
 known trolley position is above rank 6, the unloaded head first moves down to
-rank 6. If the black switch is already active, the head backs away until the
-switch releases and then clears that lane by one full square. The staging move
-never travels toward the black switch.
+rank 6. If the black switch is already active, the head moves one full square
+away to clear that lane. The staging move never travels toward the black switch.
 
 During normal calibration both switches are approached one step at a time. The
-white switch stays pressed while the black switch is found. The head then backs
-away from the black switch only until it releases, with an eleven-step maximum,
-before completing the exact e6 park offset.
+white switch stays pressed while the black switch is found. Capture parking and
+step-loss reference calibrations use the same sequence. After both switches
+establish the corner, the head moves directly to the exact e6 park offset with
+no separate release/backoff stage or switch-specific release-distance setting.
 
-Capture parking and step-loss reference calibrations use the same eleven-step
-maximum. They release the white switch only until its input opens so it can be
-used as the abort control during the black-switch approach, then release the
-black switch by only its measured amount. No calibration path uses the old
-fixed 16-step switch back-off. If an installed switch still has not released
-after eleven steps, the LCD reports `SWITCH >11 STEPS` / `EDIT MAX IN CODE`.
-Adjust `CALIBRATION_SWITCH_RELEASE_MAX_STEPS` in `global.h` to match that
-switch's physical release travel.
+The shared button inputs act only as endstops during calibration, so they cannot
+abort calibration. Use the board's power switch for an emergency stop during
+this sequence. Button emergency stops remain enabled for normal board and test
+movements outside calibration.
 
 Every successful calibration and step-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
@@ -120,9 +116,10 @@ test. Remove all pieces from the board before starting it. The test:
 
 A difference greater than four full steps, scaled to the configured microstep
 mode, is reported as step loss. Either shared limit/button input stops regular
-test motion. During a homing approach the target switch is expected to trigger,
-so the other shared input is the abort control. Any abort or homing failure
-invalidates the trolley position and requires calibration before further use.
+test motion. During a homing reference both inputs are endstops and button abort
+handling is disabled; use the board power switch for an emergency stop. Any
+abort during regular test motion or any homing failure invalidates the trolley
+position and requires calibration before further use.
 
 This detects accumulated position drift using the existing switches. It cannot
 prove that no individual step was missed and later cancelled by a missed step
@@ -162,7 +159,7 @@ position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.
 
 The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
-runs this exact same exit curve followed by an abort-aware two-axis re-home.
+runs this exact same exit curve followed by the same two-axis re-home.
 Its electromagnet and release dwell remain disabled because no physical pieces
 are present, but the motor workload, off-board travel, and capture correction
 are included in the endurance measurement.

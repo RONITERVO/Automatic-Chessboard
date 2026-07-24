@@ -359,7 +359,6 @@ boolean buttonPressed(byte pin) {
 void returnToMainMenu() {
   setMagnet(false);
   motion_fault = false;
-  calibration_switch_release_fault = false;
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -400,22 +399,8 @@ void showStartingMismatch() {
   lcd.print(F(" A=TRY"));
 }
 
-void showCalibrationSwitchReleaseFault() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("SWITCH >"));
-  lcd.print(CALIBRATION_SWITCH_RELEASE_MAX_STEPS / MOTOR_MICROSTEPS);
-  lcd.print(F(" STEPS"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("EDIT MAX IN CODE"));
-}
-
 void showMotionFault() {
   setMagnet(false);
-  if (calibration_switch_release_fault) {
-    showCalibrationSwitchReleaseFault();
-    return;
-  }
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print(F("MOTION STOPPED"));
@@ -423,16 +408,11 @@ void showMotionFault() {
   lcd.print(F("A=CAL  B=MENU"));
 }
 
-void showCalibrationReferenceFault(boolean aborted) {
-  if (calibration_switch_release_fault) {
-    showCalibrationSwitchReleaseFault();
-  }
-  else {
-    lcd.clear();
-    lcd.print(aborted ? F("TEST ABORTED") : F("HOME TEST FAIL"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("CAL REQUIRED"));
-  }
+void showCalibrationReferenceFault() {
+  lcd.clear();
+  lcd.print(F("HOME TEST FAIL"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("CAL REQUIRED"));
 }
 
 void showAiSensorMismatch() {
@@ -908,42 +888,14 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
   return pulseMotor(direction, speed_delay, steps, monitor_stops);
 }
 
-boolean homeAxis(byte direction, byte limit_pin) {
-  unsigned int steps = 0;
-  while (digitalRead(limit_pin) == HIGH && steps < HOME_MAX_STEPS) {
-    if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
-    steps++;
-  }
-  return digitalRead(limit_pin) == LOW;
-}
-
-boolean releaseLimitMeasured(byte limit_pin, byte away_direction,
-                             unsigned int max_steps,
-                             unsigned int &release_steps) {
-  release_steps = 0;
-  while (digitalRead(limit_pin) == LOW && release_steps < max_steps) {
-    if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
-    release_steps++;
-  }
-  boolean released = digitalRead(limit_pin) == HIGH;
-  if (!released && release_steps >= max_steps) {
-    calibration_switch_release_fault = true;
-  }
-  return released;
-}
-
 boolean prepareFirstCalibrationApproach() {
   // Never seek the first (white) switch while the head is in the lane that
   // leads to the second (black) switch at the calibration corner.
   if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
     calibration_lane_confirmed = false;
     trolley_homed = false;
-    unsigned int release_steps = 0;
-    if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
-                              CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
-                              release_steps)) return false;
     if (!pulseMotor(R_L, SPEED_SLOW,
-                    CALIBRATION_LANE_CLEARANCE_STEPS, true)) return false;
+                    CALIBRATION_LANE_CLEARANCE_STEPS, false)) return false;
     return digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
   }
 
@@ -954,7 +906,7 @@ boolean prepareFirstCalibrationApproach() {
       trolley_coordinate_Y > CALIBRATION_PARK_RANK) {
     int delta_y = ((int)CALIBRATION_PARK_RANK - trolley_coordinate_Y) *
                   (int)SQUARE_SIZE;
-    if (!pulseCoreXYLine(0, delta_y, SPEED_FAST, true)) return false;
+    if (!pulseCoreXYLine(0, delta_y, SPEED_FAST, false)) return false;
     trolley_coordinate_Y = CALIBRATION_PARK_RANK;
     rememberTrolleyPosition();
   }
@@ -967,57 +919,28 @@ boolean prepareFirstCalibrationApproach() {
   return true;
 }
 
-boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
-                               unsigned int &measured_steps, boolean &aborted) {
+boolean homeAxisMeasured(byte direction, byte limit_pin,
+                         unsigned int &measured_steps) {
   measured_steps = 0;
   while (digitalRead(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
-    // The target input is the expected endstop. The other shared button/input
-    // remains available as an abort control while this axis is homing.
-    if (digitalRead(abort_pin) == LOW) {
-      aborted = true;
-      return false;
-    }
     if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
     measured_steps++;
   }
   return digitalRead(limit_pin) == LOW;
 }
 
-boolean restoreStepTestStart(unsigned int white_release_steps,
-                             boolean &aborted) {
-  unsigned int black_offset_steps =
-      (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
-  unsigned int white_offset_steps =
-      (unsigned int)(CALIBRATION_PARK_WHITE_OFFSET * SQUARE_SIZE + 0.5);
+boolean moveCalibrationCornerToPark() {
+  // Both switches stay pressed until the corner is fully measured. Move
+  // directly from that repeatable corner to the exact e6 parking offset.
+  if (!motor(R_L, SPEED_FAST, CALIBRATION_PARK_BLACK_OFFSET, false)) return false;
+  if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
 
-  if (white_release_steps >= white_offset_steps) return false;
+  return digitalRead(BUTTON_A_LIMIT_WHITE) == HIGH &&
+         digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
+}
 
-  // Move only far enough to release the active black switch, then enable
-  // normal E-stop monitoring for the remaining exact park distance.
-  unsigned int black_release_steps = 0;
-  if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
-                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
-                            black_release_steps) ||
-      black_release_steps >= black_offset_steps) return false;
-  if (!pulseMotor(R_L, SPEED_FAST,
-                  black_offset_steps - black_release_steps, true)) {
-    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
-    return false;
-  }
-
-  // The white limit was already released by a known number of steps before
-  // the black-axis measurement, so only the remaining distance is required.
-  if (!pulseMotor(T_B, SPEED_FAST,
-                  white_offset_steps - white_release_steps, true)) {
-    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
-    return false;
-  }
-
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
-
+boolean restoreStepTestStart() {
+  if (!moveCalibrationCornerToPark()) return false;
   trolley_coordinate_X = CALIBRATION_PARK_FILE;
   trolley_coordinate_Y = CALIBRATION_PARK_RANK;
   trolley_homed = true;
@@ -1026,41 +949,25 @@ boolean restoreStepTestStart(unsigned int white_release_steps,
 }
 
 boolean measureStepTestReference(unsigned int &white_steps,
-                                 unsigned int &black_steps,
-                                 boolean &aborted) {
+                                 unsigned int &black_steps) {
   if (!prepareFirstCalibrationApproach()) {
-    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
     trolley_homed = false;
     return false;
   }
   trolley_homed = false;
 
-  if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
-                              BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
+  if (!homeAxisMeasured(B_T, BUTTON_A_LIMIT_WHITE, white_steps)) return false;
 
-  // Release the first switch by only the measured amount. This makes it
-  // available as the abort input while measuring the second axis without
-  // moving the second-switch actuator to the edge of its reach.
-  unsigned int white_release_steps = 0;
-  if (!releaseLimitMeasured(BUTTON_A_LIMIT_WHITE, T_B,
-                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
-                            white_release_steps)) return false;
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
-    aborted = true;
-    return false;
-  }
+  // Keep the first switch pressed while finding the second switch. Calibration
+  // buttons are endstops only here; use the board power switch for emergency stop.
+  if (!homeAxisMeasured(L_R, BUTTON_B_LIMIT_BLACK, black_steps)) return false;
 
-  if (!measureAxisForStepTest(L_R, BUTTON_B_LIMIT_BLACK,
-                              BUTTON_A_LIMIT_WHITE, black_steps, aborted)) return false;
-
-  return restoreStepTestStart(white_release_steps, aborted);
+  return restoreStepTestStart();
 }
 
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
-  calibration_switch_release_fault = false;
 
   if (!prepareFirstCalibrationApproach()) {
     motion_fault = true;
@@ -1069,38 +976,23 @@ boolean calibrateBoard() {
   }
   trolley_homed = false;
 
-  if (!homeAxis(B_T, BUTTON_A_LIMIT_WHITE)) {
+  unsigned int ignored_steps = 0;
+  if (!homeAxisMeasured(B_T, BUTTON_A_LIMIT_WHITE, ignored_steps)) {
     motion_fault = true;
     return false;
   }
-  if (!homeAxis(L_R, BUTTON_B_LIMIT_BLACK)) {
+  if (!homeAxisMeasured(L_R, BUTTON_B_LIMIT_BLACK, ignored_steps)) {
     motion_fault = true;
     return false;
   }
 
-  // Keep the first switch pressed while finding and releasing the second one.
-  // Back away only until the second switch releases, never the full 16 steps
-  // used by the step-loss reference routine.
-  unsigned int black_offset_steps =
-      (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
-  unsigned int second_release_steps = 0;
-  if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
-                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
-                            second_release_steps) ||
-      second_release_steps >= black_offset_steps) {
+  // Keep both switches pressed until the corner is established, then move
+  // directly to e6 without a separate switch-release/backoff stage.
+  if (!moveCalibrationCornerToPark()) {
     motion_fault = true;
     return false;
   }
-  if (!pulseMotor(R_L, SPEED_FAST,
-                  black_offset_steps - second_release_steps, false)) return false;
-  if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
   delay(300);
-
-  // Both switches must release after moving away from the homing corner.
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW || digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
-    motion_fault = true;
-    return false;
-  }
 
   trolley_coordinate_X = CALIBRATION_PARK_FILE;
   trolley_coordinate_Y = CALIBRATION_PARK_RANK;
@@ -1185,14 +1077,13 @@ void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) 
 void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
-  calibration_switch_release_fault = false;
   AI_reset();
   initializeStepTestBoard();
 
   lcd.clear();
   lcd.print(F("STEP TEST CAL"));
   lcd.setCursor(0, 1);
-  lcd.print(F("A/B=E-STOP"));
+  lcd.print(F("POWER=E-STOP"));
 
   boolean aborted = false;
   unsigned int ignored_white = 0;
@@ -1202,11 +1093,11 @@ void runStepLossTest() {
 
   // The first pass calibrates from the current position. The second starts at
   // the known e6 service position and establishes the repeatability baseline.
-  if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
-      !measureStepTestReference(baseline_white, baseline_black, aborted)) {
+  if (!measureStepTestReference(ignored_white, ignored_black) ||
+      !measureStepTestReference(baseline_white, baseline_black)) {
     trolley_homed = false;
-    showCalibrationReferenceFault(aborted);
-    delay(calibration_switch_release_fault ? 4000 : 2500);
+    showCalibrationReferenceFault();
+    delay(2500);
     AI_reset();
     showServiceMenu();
     return;
@@ -1287,10 +1178,10 @@ void runStepLossTest() {
 
     unsigned int measured_white = 0;
     unsigned int measured_black = 0;
-    if (!measureStepTestReference(measured_white, measured_black, aborted)) {
+    if (!measureStepTestReference(measured_white, measured_black)) {
       trolley_homed = false;
-      showCalibrationReferenceFault(aborted);
-      delay(calibration_switch_release_fault ? 4000 : 2500);
+      showCalibrationReferenceFault();
+      delay(2500);
       AI_reset();
       showServiceMenu();
       return;
@@ -1373,7 +1264,7 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   if (rank > CALIBRATION_PARK_RANK) {
     int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
                         (int)SQUARE_SIZE;
-    if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, true)) return false;
+    if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
   }
   calibration_lane_confirmed = true;
 
@@ -1384,13 +1275,12 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     lcd.print(F("KEEP HANDS CLEAR"));
   }
 
-  // Production and the empty-board endurance test both use the same
-  // abort-aware two-axis reference routine. The test omits only magnet and
-  // physical drop delays; its bin travel and position correction are real.
-  boolean aborted = false;
+  // Production and the empty-board endurance test both use the same two-axis
+  // reference routine. The test omits only magnet and physical drop delays;
+  // its bin travel and position correction are real.
   unsigned int ignored_white = 0;
   unsigned int ignored_black = 0;
-  return measureStepTestReference(ignored_white, ignored_black, aborted);
+  return measureStepTestReference(ignored_white, ignored_black);
 }
 
 boolean removeCapturedPiece(byte file, byte rank) {
@@ -1492,7 +1382,6 @@ boolean blackPlayerMovement() {
 // ---------------------------- Persistent service mode --------------------
 
 void showServiceMenu() {
-  calibration_switch_release_fault = false;
   sequence = service_menu;
   lcd.clear();
   lcd.setCursor(0, 0);
