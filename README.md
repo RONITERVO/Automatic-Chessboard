@@ -50,12 +50,24 @@ board's documentation before using the common `Imax = Vref / (8 * Rsense)`
 calculation; clone boards use different sense-resistor values. Never move a
 driver or motor connection while motor power is applied.
 
+## Calibration approach safety
+
+Calibration always seeks the white switch before the black corner switch. If a
+known trolley position is above rank 6, the unloaded head first moves down to
+rank 6. If the black switch is already active, the head backs away until the
+switch releases and then clears that lane by one full square. The staging move
+never travels toward the black switch.
+
+Every successful calibration and step-test reference pass parks the head at
+e6. This keeps the normal power-cycle and new-game starting position out of the
+black-switch lane before the next white-switch approach.
+
 ## Step-loss test
 
 The service menu includes **STEP LOSS**, a long-running motion repeatability
 test. Remove all pieces from the board before starting it. The test:
 
-1. homes both axes and restores the normal e7 service position;
+1. homes both axes and restores the normal e6 service position;
 2. repeats the homing pass to establish a switch-to-position baseline;
 3. lets the Micro-Max chess engine play both sides of a sequence of legal games;
 4. mirrors those games on a separate in-memory board, so captures, en passant,
@@ -95,7 +107,7 @@ full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
 ## Captured-piece bin
 
 Black's captured pieces are released into the bin along the calibration side.
-The calibrated e7 offset places the left limit at approximately `x = 0.35` in
+The calibrated e6 park position places the left limit at approximately `x = 0.35` in
 board-square coordinates; the playing-field edge is `x = 0.50`. Release uses a
 conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
@@ -105,7 +117,7 @@ line and then follows a rounded cubic turn to that left-side release point.
 The curve uses the normal carrying speed and decelerates completely at its
 endpoint. The head remains stationary through the magnet's release delay and
 for another 400 ms while the piece falls into the bin. It then immediately
-homes both axes from the nearby calibration side and restores the known e7
+homes both axes from the nearby calibration side and restores the known e6
 position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.
 

@@ -75,7 +75,7 @@ void loop() {
         lcd.clear();
         lcd.print(F("CALIBRATION OK"));
         lcd.setCursor(0, 1);
-        lcd.print(F("HEAD AT e7"));
+        lcd.print(F("HEAD AT e6"));
         delay(1000);
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
@@ -733,6 +733,26 @@ boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
   return digitalRead(limit_pin) == HIGH;
 }
 
+boolean prepareFirstCalibrationApproach() {
+  // Never seek the first (white) switch while the head is in the lane that
+  // leads to the second (black) switch at the calibration corner.
+  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+    trolley_homed = false;
+    if (!releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
+    if (!pulseMotor(R_L, SPEED_SLOW,
+                    CALIBRATION_LANE_CLEARANCE_STEPS, true)) return false;
+    return digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
+  }
+
+  // During a new game or capture re-home the logical position is still known.
+  // Only move away from the corner; never pre-stage toward the second switch.
+  if (trolley_homed && trolley_coordinate_Y > CALIBRATION_PARK_RANK) {
+    return moveTrolleyStraightTo(trolley_coordinate_X,
+                                 CALIBRATION_PARK_RANK, SPEED_FAST);
+  }
+  return true;
+}
+
 boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
                                unsigned int &measured_steps, boolean &aborted) {
   measured_steps = 0;
@@ -750,19 +770,19 @@ boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
 }
 
 boolean restoreStepTestStart(boolean &aborted) {
-  unsigned int start_x_steps =
-      (unsigned int)(TROLLEY_START_POSITION_X * SQUARE_SIZE + 0.5);
-  unsigned int start_y_steps =
-      (unsigned int)(TROLLEY_START_POSITION_Y * SQUARE_SIZE + 0.5);
+  unsigned int black_offset_steps =
+      (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
+  unsigned int white_offset_steps =
+      (unsigned int)(CALIBRATION_PARK_WHITE_OFFSET * SQUARE_SIZE + 0.5);
 
-  if (start_x_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
-      start_y_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
+  if (black_offset_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
+      white_offset_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
 
   // Move off the active black limit before enabling normal E-stop monitoring.
   if (!pulseMotor(R_L, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
   if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
   if (!pulseMotor(R_L, SPEED_FAST,
-                  start_x_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+                  black_offset_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
     aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
               digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
     return false;
@@ -771,7 +791,7 @@ boolean restoreStepTestStart(boolean &aborted) {
   // The white limit was already released by a known number of steps before
   // the black-axis measurement, so only the remaining distance is required.
   if (!pulseMotor(T_B, SPEED_FAST,
-                  start_y_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+                  white_offset_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
     aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
               digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
     return false;
@@ -780,8 +800,8 @@ boolean restoreStepTestStart(boolean &aborted) {
   if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
       digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
 
-  trolley_coordinate_X = 5;
-  trolley_coordinate_Y = 7;
+  trolley_coordinate_X = CALIBRATION_PARK_FILE;
+  trolley_coordinate_Y = CALIBRATION_PARK_RANK;
   trolley_homed = true;
   return true;
 }
@@ -789,12 +809,13 @@ boolean restoreStepTestStart(boolean &aborted) {
 boolean measureStepTestReference(unsigned int &white_steps,
                                  unsigned int &black_steps,
                                  boolean &aborted) {
+  if (!prepareFirstCalibrationApproach()) {
+    aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
+              digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+    trolley_homed = false;
+    return false;
+  }
   trolley_homed = false;
-
-  // If the black switch is already active at test startup, release it so it
-  // can serve as the abort input while the white axis is measured.
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW &&
-      !releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
 
   if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
                               BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
@@ -817,6 +838,12 @@ boolean measureStepTestReference(unsigned int &white_steps,
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
+
+  if (!prepareFirstCalibrationApproach()) {
+    motion_fault = true;
+    trolley_homed = false;
+    return false;
+  }
   trolley_homed = false;
 
   if (!homeAxis(B_T, BUTTON_A_LIMIT_WHITE)) {
@@ -829,8 +856,8 @@ boolean calibrateBoard() {
   }
 
   delay(300);
-  if (!motor(R_L, SPEED_FAST, TROLLEY_START_POSITION_X, false)) return false;
-  if (!motor(T_B, SPEED_FAST, TROLLEY_START_POSITION_Y, false)) return false;
+  if (!motor(R_L, SPEED_FAST, CALIBRATION_PARK_BLACK_OFFSET, false)) return false;
+  if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
   delay(300);
 
   // Both switches must release after moving away from the homing corner.
@@ -839,8 +866,8 @@ boolean calibrateBoard() {
     return false;
   }
 
-  trolley_coordinate_X = 5;
-  trolley_coordinate_Y = 7;
+  trolley_coordinate_X = CALIBRATION_PARK_FILE;
+  trolley_coordinate_Y = CALIBRATION_PARK_RANK;
   trolley_homed = true;
   return true;
 }
@@ -921,7 +948,6 @@ void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) 
 void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
-  trolley_homed = false;
   AI_reset();
   initializeStepTestBoard();
 
@@ -936,8 +962,8 @@ void runStepLossTest() {
   unsigned int baseline_white = 0;
   unsigned int baseline_black = 0;
 
-  // The first pass calibrates from an unknown position. The second starts at
-  // the known e7 service position and establishes the repeatability baseline.
+  // The first pass calibrates from the current position. The second starts at
+  // the known e6 service position and establishes the repeatability baseline.
   if (!measureStepTestReference(ignored_white, ignored_black, aborted) ||
       !measureStepTestReference(baseline_white, baseline_black, aborted)) {
     trolley_homed = false;
@@ -1009,7 +1035,8 @@ void runStepLossTest() {
 
     if (ply % STEP_TEST_REFERENCE_INTERVAL != 0 && ply != STEP_TEST_PLIES) continue;
 
-    if (!moveTrolleyStraightTo(5, 7, SPEED_FAST)) {
+    if (!moveTrolleyStraightTo(CALIBRATION_PARK_FILE,
+                               CALIBRATION_PARK_RANK, SPEED_FAST)) {
       aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
                 digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
       trolley_homed = false;
