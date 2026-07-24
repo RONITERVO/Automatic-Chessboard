@@ -91,3 +91,27 @@ the other.
 Each curve ends on an exact whole-step destination; interpolation rounding is
 not allowed to accumulate between moves. All paths keep the current tested
 full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
+
+## Captured-piece parking
+
+Black's captured pieces are parked along the calibration side of the board.
+The calibrated e7 offset places the left limit at approximately `x = 0.35` in
+board-square coordinates; the playing-field edge is `x = 0.50`. Parking uses a
+conservative `x = 0.48` center line, just outside the playing field and about
+25 full steps away from the limit switch.
+
+Eight tracked parking slots sit on the half-rank lanes from 0.5 through 7.5.
+For each capture the firmware uses a free lane immediately beside the captured
+square, moves vertically by only half a square, then follows a rounded turn to
+the outside rail. This avoids pulling a held piece through occupied squares.
+The setup screen asks the player to prepare both the board and this side area,
+and the parking map is reset only after the starting position passes its sensor
+check.
+
+There are no reed sensors outside the 8x8 playing field, so the firmware does
+not claim to sense untracked objects on the rail. If both safe exit lanes for a
+capture are already occupied in its tracked parking map, the head moves under
+the captured piece with the magnet off and the LCD asks the player to move that
+piece off-board. Pressing A continues only after the board sensor confirms that
+the indicated square is empty; B safely ends the game. The firmware never
+drives a held piece toward a parking location it already considers blocked.
