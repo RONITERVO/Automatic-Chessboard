@@ -62,6 +62,32 @@ Every successful calibration and step-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
 black-switch lane before the next white-switch approach.
 
+## Power-cycle position memory
+
+The firmware journals head positions across 32 EEPROM slots. Before the first
+step of any motor movement it commits an `UNKNOWN` record. A new board-square
+coordinate is committed only after the head reaches that stable endpoint. The
+journal spreads writes across slots and commits each record last, so an
+interrupted EEPROM write leaves the preceding complete record available.
+
+Immediately after power-up the LCD displays `LAST HEAD` and either the saved
+square or `??`. A saved coordinate is used only to stage calibration safely; it
+does not bypass calibration or enable normal movement. For example, a head
+saved at e8 first moves away from the corner to rank 6 before seeking the white
+calibration switch.
+
+Switching power off while the head is stopped preserves its displayed square.
+Switching power off during movement produces `POS UNKNOWN` on the next boot,
+because no coordinate can safely represent a partially completed move. The
+saved square also assumes the unpowered head has not been moved by hand or
+shifted mechanically after the motors lose holding torque.
+
+Calibration is blocked when the position is unknown and the black switch is
+not already active. The LCD asks for the unpowered head to be placed at rank 6
+or below; after the next startup, select calibration and confirm `A=READY`.
+This recovery confirmation is also required on the first boot after installing
+firmware that has no valid position journal yet.
+
 ## Step-loss test
 
 The service menu includes **STEP LOSS**, a long-running motion repeatability

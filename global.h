@@ -36,6 +36,7 @@ char mov[5] = {0, 0, 0, 0, 0};
 enum {
   start_up,
   main_menu,
+  position_recovery,
   calibration,
   setup_check,
   player_white,
