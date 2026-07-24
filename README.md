@@ -58,6 +58,11 @@ rank 6. If the black switch is already active, the head backs away until the
 switch releases and then clears that lane by one full square. The staging move
 never travels toward the black switch.
 
+During normal calibration both switches are approached one step at a time. The
+white switch stays pressed while the black switch is found. The head then backs
+away from the black switch only until it releases, with an eight-step maximum,
+before completing the exact e6 park offset.
+
 Every successful calibration and step-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
 black-switch lane before the next white-switch approach.

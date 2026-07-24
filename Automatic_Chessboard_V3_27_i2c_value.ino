@@ -884,19 +884,27 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
 boolean homeAxis(byte direction, byte limit_pin) {
   unsigned int steps = 0;
   while (digitalRead(limit_pin) == HIGH && steps < HOME_MAX_STEPS) {
-    pulseMotor(direction, SPEED_SLOW, 4, false);
-    steps += 4;
+    if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
+    steps++;
   }
   return digitalRead(limit_pin) == LOW;
 }
 
-boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
-  unsigned int steps = 0;
-  while (digitalRead(limit_pin) == LOW && steps < STEP_TEST_LIMIT_RELEASE_STEPS) {
+boolean releaseLimitMeasured(byte limit_pin, byte away_direction,
+                             unsigned int max_steps,
+                             unsigned int &release_steps) {
+  release_steps = 0;
+  while (digitalRead(limit_pin) == LOW && release_steps < max_steps) {
     if (!pulseMotor(away_direction, SPEED_SLOW, 1, false)) return false;
-    steps++;
+    release_steps++;
   }
   return digitalRead(limit_pin) == HIGH;
+}
+
+boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
+  unsigned int release_steps = 0;
+  return releaseLimitMeasured(limit_pin, away_direction,
+                              STEP_TEST_LIMIT_RELEASE_STEPS, release_steps);
 }
 
 boolean prepareFirstCalibrationApproach() {
@@ -1034,8 +1042,21 @@ boolean calibrateBoard() {
     return false;
   }
 
-  delay(300);
-  if (!motor(R_L, SPEED_FAST, CALIBRATION_PARK_BLACK_OFFSET, false)) return false;
+  // Keep the first switch pressed while finding and releasing the second one.
+  // Back away only until the second switch releases, never the full 16 steps
+  // used by the step-loss reference routine.
+  unsigned int black_offset_steps =
+      (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
+  unsigned int second_release_steps = 0;
+  if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
+                            CALIBRATION_SECOND_RELEASE_MAX_STEPS,
+                            second_release_steps) ||
+      second_release_steps >= black_offset_steps) {
+    motion_fault = true;
+    return false;
+  }
+  if (!pulseMotor(R_L, SPEED_FAST,
+                  black_offset_steps - second_release_steps, false)) return false;
   if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
   delay(300);
 

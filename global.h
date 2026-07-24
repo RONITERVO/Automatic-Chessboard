@@ -96,6 +96,8 @@ const unsigned int STEP_TEST_PLIES = 200;
 const byte STEP_TEST_REFERENCE_INTERVAL = 8;
 const unsigned int STEP_TEST_TOLERANCE = 4U * MOTOR_MICROSTEPS;
 const unsigned int STEP_TEST_LIMIT_RELEASE_STEPS = 16U * MOTOR_MICROSTEPS;
+const unsigned int CALIBRATION_SECOND_RELEASE_MAX_STEPS =
+    8U * MOTOR_MICROSTEPS;
 const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = SQUARE_SIZE;
 
 // Reed-sensor multiplexers.
