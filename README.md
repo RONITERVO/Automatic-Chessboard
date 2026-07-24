@@ -63,6 +63,12 @@ white switch stays pressed while the black switch is found. The head then backs
 away from the black switch only until it releases, with an eight-step maximum,
 before completing the exact e6 park offset.
 
+Capture parking and step-loss reference calibrations use the same eight-step
+maximum. They release the white switch only until its input opens so it can be
+used as the abort control during the black-switch approach, then release the
+black switch by only its measured amount. No calibration path uses the old
+fixed 16-step switch back-off.
+
 Every successful calibration and step-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
 black-switch lane before the next white-switch approach.

@@ -901,19 +901,16 @@ boolean releaseLimitMeasured(byte limit_pin, byte away_direction,
   return digitalRead(limit_pin) == HIGH;
 }
 
-boolean releaseLimitForStepTest(byte limit_pin, byte away_direction) {
-  unsigned int release_steps = 0;
-  return releaseLimitMeasured(limit_pin, away_direction,
-                              STEP_TEST_LIMIT_RELEASE_STEPS, release_steps);
-}
-
 boolean prepareFirstCalibrationApproach() {
   // Never seek the first (white) switch while the head is in the lane that
   // leads to the second (black) switch at the calibration corner.
   if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
     calibration_lane_confirmed = false;
     trolley_homed = false;
-    if (!releaseLimitForStepTest(BUTTON_B_LIMIT_BLACK, R_L)) return false;
+    unsigned int release_steps = 0;
+    if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
+                              CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
+                              release_steps)) return false;
     if (!pulseMotor(R_L, SPEED_SLOW,
                     CALIBRATION_LANE_CLEARANCE_STEPS, true)) return false;
     return digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
@@ -955,20 +952,24 @@ boolean measureAxisForStepTest(byte direction, byte limit_pin, byte abort_pin,
   return digitalRead(limit_pin) == LOW;
 }
 
-boolean restoreStepTestStart(boolean &aborted) {
+boolean restoreStepTestStart(unsigned int white_release_steps,
+                             boolean &aborted) {
   unsigned int black_offset_steps =
       (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
   unsigned int white_offset_steps =
       (unsigned int)(CALIBRATION_PARK_WHITE_OFFSET * SQUARE_SIZE + 0.5);
 
-  if (black_offset_steps <= STEP_TEST_LIMIT_RELEASE_STEPS ||
-      white_offset_steps <= STEP_TEST_LIMIT_RELEASE_STEPS) return false;
+  if (white_release_steps >= white_offset_steps) return false;
 
-  // Move off the active black limit before enabling normal E-stop monitoring.
-  if (!pulseMotor(R_L, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) return false;
+  // Move only far enough to release the active black switch, then enable
+  // normal E-stop monitoring for the remaining exact park distance.
+  unsigned int black_release_steps = 0;
+  if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
+                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
+                            black_release_steps) ||
+      black_release_steps >= black_offset_steps) return false;
   if (!pulseMotor(R_L, SPEED_FAST,
-                  black_offset_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+                  black_offset_steps - black_release_steps, true)) {
     aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
               digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
     return false;
@@ -977,7 +978,7 @@ boolean restoreStepTestStart(boolean &aborted) {
   // The white limit was already released by a known number of steps before
   // the black-axis measurement, so only the remaining distance is required.
   if (!pulseMotor(T_B, SPEED_FAST,
-                  white_offset_steps - STEP_TEST_LIMIT_RELEASE_STEPS, true)) {
+                  white_offset_steps - white_release_steps, true)) {
     aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
               digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
     return false;
@@ -1007,10 +1008,13 @@ boolean measureStepTestReference(unsigned int &white_steps,
   if (!measureAxisForStepTest(B_T, BUTTON_A_LIMIT_WHITE,
                               BUTTON_B_LIMIT_BLACK, white_steps, aborted)) return false;
 
-  // Release the first switch by a known distance. This makes it available as
-  // the abort input while measuring the second axis.
-  if (!pulseMotor(T_B, SPEED_SLOW, STEP_TEST_LIMIT_RELEASE_STEPS, false)) return false;
-  if (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW) return false;
+  // Release the first switch by only the measured amount. This makes it
+  // available as the abort input while measuring the second axis without
+  // moving the second-switch actuator to the edge of its reach.
+  unsigned int white_release_steps = 0;
+  if (!releaseLimitMeasured(BUTTON_A_LIMIT_WHITE, T_B,
+                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
+                            white_release_steps)) return false;
   if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
     aborted = true;
     return false;
@@ -1019,7 +1023,7 @@ boolean measureStepTestReference(unsigned int &white_steps,
   if (!measureAxisForStepTest(L_R, BUTTON_B_LIMIT_BLACK,
                               BUTTON_A_LIMIT_WHITE, black_steps, aborted)) return false;
 
-  return restoreStepTestStart(aborted);
+  return restoreStepTestStart(white_release_steps, aborted);
 }
 
 boolean calibrateBoard() {
@@ -1049,7 +1053,7 @@ boolean calibrateBoard() {
       (unsigned int)(CALIBRATION_PARK_BLACK_OFFSET * SQUARE_SIZE + 0.5);
   unsigned int second_release_steps = 0;
   if (!releaseLimitMeasured(BUTTON_B_LIMIT_BLACK, R_L,
-                            CALIBRATION_SECOND_RELEASE_MAX_STEPS,
+                            CALIBRATION_SWITCH_RELEASE_MAX_STEPS,
                             second_release_steps) ||
       second_release_steps >= black_offset_steps) {
     motion_fault = true;
