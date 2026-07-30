@@ -8,6 +8,8 @@ Arduino firmware for a CoreXY automatic chessboard with:
 - a 16x2 I2C LCD and two-button interface; and
 - the Micro-Max chess engine.
 
+The [interactive 3D build explorer](https://ronitervo.github.io/Automatic-Chessboard/) turns the complete assembly into a rotatable, zoomable, parts-level build checklist. It is published automatically from `site/` after changes reach `main`.
+
 ## Hardware assumptions
 
 The sketch uses the pin assignments and motion calibration in `global.h`. The
