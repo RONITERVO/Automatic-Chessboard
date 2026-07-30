@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 3.28 advertises `ACB2` monitoring while retaining the legacy
+terminator. Firmware 3.29 advertises `ACB2` monitoring while retaining the legacy
 `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 3.28 BOARD,TELEM,REMOTE,ESTOP,BTTEST
+< INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SENSORMAP
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -28,9 +28,12 @@ supports every command. A missing `INFO` response indicates legacy firmware.
 - `BOARD` → sixteen hexadecimal occupancy digits
 - `BTTEST` → idle-only HC-08 AT test; normally run over USB
 
-`BOARD` contains two hexadecimal digits per internal row, rank 8 through rank 1.
+`SENSORMAP` returns `SENSORMAP ACB1 STANDARD|GLUED_TILES` and is safe to query.
+
+`BOARD` contains two hexadecimal digits per normalized row, rank 8 through rank 1.
 Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a magnetic
-piece. It contains no piece-type or colour information.
+piece. It contains no piece-type or colour information. Firmware applies the
+active sensor-wiring profile before producing this snapshot.
 
 `TELEM` fields are positional to minimize Nano memory:
 
@@ -43,6 +46,18 @@ TELEM ACB2 sequence homed remote fault magnet x y a_released b_released b_raw fr
 - `b_raw` is the A6 ADC value, normally near 1023 when released and 0 when active.
 - `free_ram` is an instantaneous stack-to-heap estimate.
 - `uptime_s` wraps with the Nano's `millis()` counter.
+
+## Sensor wiring configuration
+
+`SENSORMAP SET STANDARD` and `SENSORMAP SET GLUED_TILES` are accepted only at the
+main menu. The Nano saves the selection in EEPROM, rebuilds its sensor baselines,
+then emits the authoritative `SENSORMAP` line and a fresh `BOARD` snapshot. This
+configuration does not move hardware, but clients should require explicit user
+confirmation because it changes the meaning of all 64 sensors.
+
+`STANDARD` preserves direct rank wiring. `GLUED_TILES` applies the documented
+reported-to-physical rank mapping `8->1, 7->2, 2->3, 1->4, 4->5, 3->6, 6->7,
+5->8`; files A-H are unchanged.
 
 ## Game and motion commands
 

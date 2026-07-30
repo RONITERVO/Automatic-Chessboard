@@ -65,6 +65,7 @@ class MonitorModel:
     sensor_squares: frozenset[int] | None = None
     sensor_hex: str = ""
     sensor_updated: float | None = None
+    sensor_map_profile: str = "Unknown"
     expected_squares: frozenset[int] = field(default_factory=frozenset)
     last_error: str = ""
 

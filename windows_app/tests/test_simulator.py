@@ -39,6 +39,22 @@ class SimulatorTests(unittest.TestCase):
         self.assertTrue(received.wait(1.0))
         self.assertIn("ESTOP REMOTE", lines)
 
+    def test_sensor_map_profile_can_be_changed(self):
+        lines = []
+        received = threading.Event()
+
+        def on_line(line):
+            lines.append(line)
+            if line == "SENSORMAP ACB1 GLUED_TILES":
+                received.set()
+
+        transport = SimulatorTransport(on_line, lambda _status: None)
+        transport.start()
+        transport.send("SENSORMAP SET GLUED_TILES")
+        self.assertTrue(received.wait(1.0))
+        self.assertIn("SENSORMAP ACB1 GLUED_TILES", lines)
+        transport.close()
+
 
 if __name__ == "__main__":
     unittest.main()
