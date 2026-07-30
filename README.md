@@ -14,6 +14,12 @@ The sketch uses the pin assignments and motion calibration in `global.h`. The
 motor interface expects STEP/DIR drivers such as the A4988; motor current and
 microstep selection are configured on the driver hardware.
 
+For a complete beginner-oriented build, start with the
+[`hardware` build guide](hardware/README.md). It includes protected power
+wiring, a BOM, exact Nano and 64-square sensor maps, staged assembly,
+commissioning checks, diagrams, and a quarantined copy of the incomplete legacy
+PCB source. The 5 V buck output belongs on the Nano `5V` pin, not `VIN`.
+
 ## Building
 
 Open `Automatic_Chessboard_V3_27_i2c_value.ino` in the Arduino IDE, install a

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1120" viewBox="0 0 1700 1120" role="img" aria-labelledby="title desc">
+  <title id="title">Arduino Nano controller wiring for the automatic chessboard</title>
+  <desc id="desc">Firmware pin connections from the Nano to two stepper drivers, four multiplexers, LCD, switches, Bluetooth module, and electromagnet transistor.</desc>
+  <defs>
+    <style>
+      .title{font:700 30px Arial,sans-serif;fill:#1f2328}.sub{font:16px Arial,sans-serif;fill:#59636e}.box{fill:#fff;stroke:#30363d;stroke-width:2;rx:12}.nano{fill:#ddf4ff;stroke:#0969da;stroke-width:3}.motion{fill:#fff1e5;stroke:#bc4c00}.sensor{fill:#dafbe1;stroke:#1a7f37}.ui{fill:#fbefff;stroke:#8250df}.power{fill:#ffebe9;stroke:#cf222e}.head{font:700 18px Arial,sans-serif;fill:#1f2328}.pin{font:700 15px Consolas,monospace;fill:#0550ae}.text{font:15px Arial,sans-serif;fill:#1f2328}.small{font:13px Arial,sans-serif;fill:#59636e}.line{stroke:#57606a;stroke-width:3;fill:none}.bus{stroke:#1a7f37;stroke-width:5;fill:none}.uart{stroke:#8250df;stroke-width:4;fill:none}.motorline{stroke:#bc4c00;stroke-width:4;fill:none}.magline{stroke:#cf222e;stroke-width:4;fill:none}.dot{fill:#1f2328}
+    </style>
+  </defs>
+  <rect width="1700" height="1120" fill="#fff"/>
+  <text class="title" x="55" y="55">Controller wiring — firmware 3.29</text>
+  <text class="sub" x="55" y="84">Read carrier silkscreens before wiring. All modules share regulated +5 V and common GND unless marked +24 V.</text>
+
+  <rect class="box nano" x="650" y="145" width="400" height="830"/>
+  <text class="head" x="850" y="182" text-anchor="middle">ARDUINO NANO</text>
+  <text class="small" x="850" y="206" text-anchor="middle">classic ATmega328P · 5 V · 16 MHz</text>
+  <line x1="670" y1="226" x2="1030" y2="226" stroke="#0969da"/>
+
+  <text class="pin" x="690" y="270">D2</text><text class="text" x="745" y="270">motor 1 DIR</text>
+  <text class="pin" x="690" y="310">D3</text><text class="text" x="745" y="310">motor 1 STEP</text>
+  <text class="pin" x="690" y="350">D4</text><text class="text" x="745" y="350">motor 2 DIR</text>
+  <text class="pin" x="690" y="390">D5</text><text class="text" x="745" y="390">motor 2 STEP</text>
+  <text class="pin" x="690" y="440">D6</text><text class="text" x="745" y="440">magnet command</text>
+  <text class="pin" x="690" y="500">D13</text><text class="text" x="755" y="500">MUX0 EN</text>
+  <text class="pin" x="690" y="540">D9</text><text class="text" x="745" y="540">MUX1 EN</text>
+  <text class="pin" x="690" y="580">D8</text><text class="text" x="745" y="580">MUX2 EN</text>
+  <text class="pin" x="690" y="620">D7</text><text class="text" x="745" y="620">MUX3 EN</text>
+  <text class="pin" x="690" y="660">D12</text><text class="text" x="755" y="660">all MUX SIG</text>
+  <text class="pin" x="690" y="710">A3/A2/A1/A0</text><text class="text" x="815" y="710">S0/S1/S2/S3</text>
+  <text class="pin" x="690" y="770">A4/A5</text><text class="text" x="765" y="770">LCD SDA/SCL</text>
+  <text class="pin" x="690" y="820">D11</text><text class="text" x="755" y="820">switch A to GND</text>
+  <text class="pin" x="690" y="860">A6</text><text class="text" x="745" y="860">switch B + 10k pull-up</text>
+  <text class="pin" x="690" y="910">D10 / D1</text><text class="text" x="790" y="910">BLE RX / reply TX</text>
+  <text class="pin" x="690" y="950">5V / GND</text><text class="text" x="800" y="950">logic power</text>
+
+  <rect class="box motion" x="70" y="150" width="465" height="235"/>
+  <text class="head" x="302" y="185" text-anchor="middle">DRIVER 1 + MOTOR 1</text>
+  <text class="text" x="100" y="222">DIR ← D2 · STEP ← D3</text>
+  <text class="text" x="100" y="252">VDD 5 V · logic GND</text>
+  <text class="text" x="100" y="282">VMOT protected 24 V · local 100 µF/50 V</text>
+  <text class="text" x="100" y="312">RESET + SLEEP → 5 V</text>
+  <text class="text" x="100" y="342">MS1/MS2/MS3 + ENABLE → GND</text>
+  <text class="small" x="100" y="368">1A/1B = one coil; 2A/2B = the other coil</text>
+  <path class="motorline" d="M650 270 H535"/><path class="motorline" d="M650 310 H535"/>
+
+  <rect class="box motion" x="70" y="420" width="465" height="235"/>
+  <text class="head" x="302" y="455" text-anchor="middle">DRIVER 2 + MOTOR 2</text>
+  <text class="text" x="100" y="492">DIR ← D4 · STEP ← D5</text>
+  <text class="text" x="100" y="522">VDD 5 V · logic GND</text>
+  <text class="text" x="100" y="552">VMOT protected 24 V · local 100 µF/50 V</text>
+  <text class="text" x="100" y="582">RESET + SLEEP → 5 V</text>
+  <text class="text" x="100" y="612">MS1/MS2/MS3 + ENABLE → GND</text>
+  <text class="small" x="100" y="638">Full-step mode must match MOTOR_MICROSTEPS = 1</text>
+  <path class="motorline" d="M650 350 H590 V492 H535"/><path class="motorline" d="M650 390 H570 V512 H535"/>
+
+  <rect class="box power" x="70" y="700" width="465" height="225"/>
+  <text class="head" x="302" y="735" text-anchor="middle">H2520 MAGNET + TIP120</text>
+  <text class="text" x="100" y="772">D6 → 1k → base</text>
+  <text class="text" x="100" y="802">base → 10k → GND · emitter → GND</text>
+  <text class="text" x="100" y="832">collector → magnet − · magnet + → 24 V</text>
+  <text class="text" x="100" y="862">flyback stripe/cathode → magnet + / 24 V</text>
+  <text class="small" x="100" y="895">See magnet-driver.svg for the circuit.</text>
+  <path class="magline" d="M650 440 H575 V775 H535"/>
+
+  <rect class="box sensor" x="1165" y="145" width="465" height="400"/>
+  <text class="head" x="1397" y="180" text-anchor="middle">4 × CD74HC4067 BREAKOUT</text>
+  <text class="text" x="1195" y="220">Shared address bus:</text>
+  <text class="pin" x="1220" y="250">A3 → S0 · A2 → S1 · A1 → S2 · A0 → S3</text>
+  <text class="text" x="1195" y="288">Shared signal:</text>
+  <text class="pin" x="1220" y="318">all SIG → D12 (internal pull-up)</text>
+  <text class="text" x="1195" y="356">Independent active-low enables:</text>
+  <text class="pin" x="1220" y="386">MUX0 EN → D13 · MUX1 EN → D9</text>
+  <text class="pin" x="1220" y="416">MUX2 EN → D8  · MUX3 EN → D7</text>
+  <text class="text" x="1195" y="457">VCC → 5 V · GND → common GND</text>
+  <text class="small" x="1195" y="492">Each reed connects channel C0-C15 to GND.</text>
+  <text class="small" x="1195" y="516">Closed/occupied = LOW. See sensor-matrix.svg.</text>
+  <path class="bus" d="M1050 500 H1120 V250 H1165"/><path class="bus" d="M1050 540 H1140 V386 H1165"/><path class="bus" d="M1050 580 H1148 V416 H1165"/><path class="bus" d="M1050 620 H1156 V446 H1165"/><path class="bus" d="M1050 660 H1130 V318 H1165"/><path class="bus" d="M1050 710 H1165"/>
+
+  <rect class="box ui" x="1165" y="590" width="465" height="170"/>
+  <text class="head" x="1397" y="625" text-anchor="middle">LCD + SWITCHES</text>
+  <text class="text" x="1195" y="664">LCD: A4 → SDA · A5 → SCL · 5 V · GND</text>
+  <text class="text" x="1195" y="696">Switch A: D11 — NO switch — GND</text>
+  <text class="text" x="1195" y="728">Switch B: A6 — NO switch — GND; A6 → 10k → 5 V</text>
+  <path class="line" d="M1050 770 H1130 V664 H1165"/><path class="line" d="M1050 820 H1145 V696 H1165"/><path class="line" d="M1050 860 H1155 V728 H1165"/>
+
+  <rect class="box ui" x="1165" y="805" width="465" height="205"/>
+  <text class="head" x="1397" y="840" text-anchor="middle">HC-08 BLE UART</text>
+  <text class="text" x="1195" y="878">HC-08 TXD → 1k → D10</text>
+  <text class="text" x="1195" y="910">Nano D1 → 1k → HC-08 RXD node</text>
+  <text class="text" x="1195" y="942">HC-08 RXD node → 2k → GND</text>
+  <text class="text" x="1195" y="974">Carrier VCC → 5 V · GND → common GND</text>
+  <text class="small" x="1195" y="998">D0 stays connected only to the onboard USB bridge.</text>
+  <path class="uart" d="M1050 910 H1165"/>
+
+  <rect x="70" y="1018" width="1560" height="58" rx="10" fill="#f6f8fa" stroke="#57606a"/>
+  <text class="text" x="850" y="1043" text-anchor="middle">5 V rail: Nano 5V, both driver VDD, all MUX VCC, LCD VCC, HC-08 carrier VCC</text>
+  <text class="small" x="850" y="1065" text-anchor="middle">Common GND includes 24 V return. Disconnect external power before USB unless a verified isolation/power-OR solution is installed.</text>
+</svg>

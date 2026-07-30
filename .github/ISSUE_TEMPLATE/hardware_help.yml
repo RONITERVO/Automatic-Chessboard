@@ -1,0 +1,66 @@
+name: Hardware build help
+description: Ask for help with wiring, first power, sensors, drivers, or motion
+title: "[Hardware]: "
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Switch off and disconnect 24 V before changing wiring. Do not unplug a motor while its driver is powered. Photos are useful, but remove addresses, labels, and other private details before posting publicly.
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Build stage
+      options:
+        - Planning / buying parts
+        - Power-off wiring
+        - Logic-only commissioning
+        - Sensor commissioning
+        - Magnet commissioning
+        - One-motor commissioning
+        - Calibration / full motion
+        - Previously working repair
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version or commit
+      placeholder: "3.29 or commit hash"
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Power measurements
+      description: With units, list protected 24 V, buck output, Nano 5 V, and where each measurement was taken.
+      placeholder: "24V bus: ... V; buck before connection: ... V; Nano 5V: ... V"
+  - type: textarea
+    id: drivers
+    attributes:
+      label: Stepper driver identification
+      description: Give the chip marking, both sense-resistor markings, VREF, and motor label if present. Do not assume red means A4988.
+      placeholder: "Chip: HR4988SQ; resistors: R100/R100; VREF: 0.720 V; motor: unlabelled"
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: State the last commissioning step that passed and the first one that failed.
+    validations:
+      required: true
+  - type: textarea
+    id: photos
+    attributes:
+      label: Photos or diagram
+      description: Include clear views of pin labels, power input, both sides of the affected board, and meter probe locations when safe.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I will disconnect both 24 V and USB before changing wiring.
+          required: true
+        - label: I will not connect or disconnect a stepper motor while its driver is powered.
+          required: true
+        - label: I will use the physical power cutoff for unexpected motion.
+          required: true

@@ -1,0 +1,27 @@
+name: Hardware documentation
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - "hardware/**"
+      - "global.h"
+      - "Automatic_Chessboard_V3_27_i2c_value.ino"
+      - ".github/workflows/hardware-docs.yml"
+  pull_request:
+    paths:
+      - "hardware/**"
+      - "global.h"
+      - "Automatic_Chessboard_V3_27_i2c_value.ino"
+      - ".github/workflows/hardware-docs.yml"
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross-check wiring tables against firmware
+        shell: pwsh
+        run: ./hardware/validate.ps1

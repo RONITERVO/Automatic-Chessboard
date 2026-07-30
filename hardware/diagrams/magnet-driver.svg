@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">TIP120 low-side electromagnet driver</title>
+  <desc id="desc">Nano D6 drives a TIP120 through one kilohm. A ten kilohm pull-down holds the base off. The 24 volt electromagnet has a reverse flyback diode across it.</desc>
+  <defs>
+    <style>.title{font:700 30px Arial,sans-serif;fill:#1f2328}.sub{font:16px Arial,sans-serif;fill:#59636e}.wire{stroke:#30363d;stroke-width:5;fill:none}.hot{stroke:#cf222e;stroke-width:6;fill:none}.logic{stroke:#0969da;stroke-width:5;fill:none}.sym{stroke:#30363d;stroke-width:4;fill:#fff}.head{font:700 18px Arial,sans-serif;fill:#1f2328}.text{font:15px Arial,sans-serif;fill:#1f2328}.small{font:13px Arial,sans-serif;fill:#59636e}</style>
+  </defs>
+  <rect width="1200" height="620" fill="#fff"/>
+  <text class="title" x="55" y="55">Electromagnet low-side switch</text>
+  <text class="sub" x="55" y="84">H2520: 24 V / 2.8 W / approximately 117 mA. Common GND with the Nano.</text>
+
+  <text class="head" x="1010" y="125" text-anchor="middle">PROTECTED +24 V</text>
+  <path class="hot" d="M1010 145 V210"/>
+  <rect class="sym" x="900" y="210" width="220" height="105" rx="10"/>
+  <text class="head" x="1010" y="248" text-anchor="middle">H2520 COIL</text>
+  <text class="text" x="1010" y="278" text-anchor="middle">24 V · 2.8 W</text>
+  <text class="small" x="1010" y="300" text-anchor="middle">+ at top, − at bottom</text>
+  <path class="wire" d="M1010 315 V410 H790"/>
+
+  <path class="hot" d="M1010 175 H705 V245"/>
+  <path class="wire" d="M705 298 V410 H790"/>
+  <line x1="662" y1="245" x2="748" y2="245" stroke="#30363d" stroke-width="7"/>
+  <polygon points="665,298 745,298 705,258" fill="#fff" stroke="#30363d" stroke-width="4"/>
+  <text class="head" x="820" y="338" text-anchor="middle">Flyback diode</text>
+  <text class="text" x="820" y="364" text-anchor="middle">1N4004–1N4007</text>
+  <text class="small" x="820" y="389" text-anchor="middle">stripe/cathode at +24 V</text>
+
+  <circle cx="790" cy="410" r="7" fill="#30363d"/>
+  <path class="wire" d="M790 410 H700 V455"/>
+  <rect class="sym" x="610" y="455" width="180" height="105" rx="10"/>
+  <text class="head" x="700" y="492" text-anchor="middle">TIP120</text>
+  <text class="text" x="700" y="520" text-anchor="middle">collector: coil −</text>
+  <text class="text" x="700" y="545" text-anchor="middle">emitter: GND</text>
+  <path class="wire" d="M700 560 V585"/><line x1="655" y1="585" x2="745" y2="585" stroke="#30363d" stroke-width="5"/><line x1="670" y1="598" x2="730" y2="598" stroke="#30363d" stroke-width="4"/><line x1="687" y1="610" x2="713" y2="610" stroke="#30363d" stroke-width="3"/>
+
+  <rect x="55" y="205" width="170" height="80" rx="10" fill="#ddf4ff" stroke="#0969da" stroke-width="3"/>
+  <text class="head" x="140" y="240" text-anchor="middle">NANO D6</text>
+  <text class="small" x="140" y="266" text-anchor="middle">HIGH = magnet on</text>
+  <path class="logic" d="M225 245 H320"/>
+  <rect class="sym" x="320" y="215" width="170" height="60" rx="8"/>
+  <text class="head" x="405" y="252" text-anchor="middle">1 kΩ</text>
+  <path class="logic" d="M490 245 H570 V505 H610"/>
+  <circle cx="570" cy="245" r="7" fill="#0969da"/>
+
+  <path class="wire" d="M570 245 V335"/>
+  <rect class="sym" x="500" y="335" width="140" height="60" rx="8"/>
+  <text class="head" x="570" y="372" text-anchor="middle">10 kΩ</text>
+  <path class="wire" d="M570 395 V585"/>
+  <line x1="525" y1="585" x2="615" y2="585" stroke="#30363d" stroke-width="5"/><line x1="540" y1="598" x2="600" y2="598" stroke="#30363d" stroke-width="4"/><line x1="557" y1="610" x2="583" y2="610" stroke="#30363d" stroke-width="3"/>
+
+  <text class="small" x="55" y="450">TIP120 front-view TO-220 pins are B-C-E for the documented part.</text>
+  <text class="small" x="55" y="474">Verify the actual manufacturer's datasheet before soldering a substitute.</text>
+  <text class="small" x="55" y="515">Place the diode physically close to the coil/connector.</text>
+  <text class="small" x="55" y="539">The 10 kΩ pull-down prevents an unintended pulse while D6 is high-impedance at reset.</text>
+</svg>
