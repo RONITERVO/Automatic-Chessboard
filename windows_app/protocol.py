@@ -140,6 +140,8 @@ def classify_command(line: str) -> CommandRisk:
     if stripped.startswith("!"):
         return CommandRisk.EMERGENCY
     command = stripped.split(maxsplit=1)[0].upper() if stripped else ""
+    if command == "SENSORMAP":
+        return CommandRisk.READ_ONLY if stripped.upper() == "SENSORMAP" else CommandRisk.CONTROL
     if command in READ_ONLY_COMMANDS:
         return CommandRisk.READ_ONLY
     if command in CONTROL_COMMANDS:
