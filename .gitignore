@@ -12,3 +12,5 @@ build/
 *.swp
 Thumbs.db
 .DS_Store
+site/node_modules/
+site/dist/
