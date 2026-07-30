@@ -58,11 +58,6 @@ COLORS = {
     "panel": "#f4f6f8",
 }
 
-SENSOR_MAP_LABELS = {
-    "STANDARD": "Direct ranks (reported A1 is physical A1)",
-    "GLUED_TILES": "Glued-tile ranks (reported A8 is physical A1)",
-}
-
 
 class ChessboardCanvas(tk.Canvas):
     """Logical pieces plus physical reed occupancy and carriage position."""
@@ -166,7 +161,7 @@ class ChessboardCanvas(tk.Canvas):
 
 class MechanismCanvas(tk.Canvas):
     def __init__(self, master):
-        super().__init__(master, height=62, background="#f7f9fb", highlightthickness=0)
+        super().__init__(master, height=95, background="#f7f9fb", highlightthickness=0)
         self.telemetry = None
         self.bind("<Configure>", lambda _event: self.redraw())
 
@@ -176,8 +171,8 @@ class MechanismCanvas(tk.Canvas):
 
     def redraw(self) -> None:
         self.delete("all")
-        width, height = max(self.winfo_width(), 260), max(self.winfo_height(), 62)
-        margin = 10
+        width, height = max(self.winfo_width(), 260), max(self.winfo_height(), 120)
+        margin = 18
         self.create_rectangle(margin, margin, width - margin, height - margin,
                               fill="#eef1f4", outline="#6d7782", width=2)
         for index in range(1, 8):
@@ -358,7 +353,7 @@ class AutomaticChessboardApp:
             ("Controller", "controller"), ("Firmware", "firmware"),
             ("Carriage", "carriage"), ("Magnet", "magnet"),
             ("Button / limit A", "limit_a"), ("Button / limit B", "limit_b"),
-            ("Sensors", "sensors"), ("Sensor wiring", "sensor_map"), ("Free Nano RAM", "ram"),
+            ("Sensors", "sensors"), ("Free Nano RAM", "ram"),
             ("Uptime", "uptime"),
         )
         for row, (label, key) in enumerate(card_rows):
@@ -460,8 +455,7 @@ class AutomaticChessboardApp:
         self.diag_tree.tag_configure("fail", foreground=COLORS["bad"])
         checks = (
             ("connection", "Board connection"), ("firmware", "Firmware identity"),
-            ("telemetry", "Live telemetry"), ("mapping", "Sensor wiring profile"),
-            ("sensors", "64-square sensors"),
+            ("telemetry", "Live telemetry"), ("sensors", "64-square sensors"),
             ("controls", "Buttons / limit inputs"), ("engine", "Stockfish engine"),
             ("camera", "Optional camera"),
         )
@@ -474,23 +468,6 @@ class AutomaticChessboardApp:
         ttk.Button(actions, text="Create support bundle...",
                    command=self._create_support_bundle).pack(side="left", padx=8)
         ttk.Button(actions, text="Copy summary", command=self._copy_diagnostic_summary).pack(side="left")
-
-        wiring = ttk.LabelFrame(self.diagnostics_tab, text="Reed-sensor wiring", padding=8)
-        wiring.grid(row=3, column=0, sticky="ew")
-        wiring.columnconfigure(1, weight=1)
-        ttk.Label(wiring, text="Profile").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.sensor_map_choice = tk.StringVar(value=SENSOR_MAP_LABELS["STANDARD"])
-        ttk.Combobox(
-            wiring, textvariable=self.sensor_map_choice,
-            values=tuple(SENSOR_MAP_LABELS.values()), state="readonly", width=48,
-        ).grid(row=0, column=1, sticky="w")
-        ttk.Button(wiring, text="Apply to Nano", command=self._apply_sensor_map).grid(
-            row=0, column=2, padx=(8, 0))
-        self.sensor_map_status = tk.StringVar(
-            value="Read the active profile from firmware before changing it."
-        )
-        ttk.Label(wiring, textvariable=self.sensor_map_status, wraplength=850,
-                  style="Quiet.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
     def _build_camera_tab(self) -> None:
         self.camera_tab.columnconfigure(0, weight=1)
@@ -661,39 +638,6 @@ class AutomaticChessboardApp:
             self.root.after(180, lambda: self._send("TELEM", quiet=True))
             self.root.after(360, lambda: self._send("BOARD", quiet=True))
 
-    def _apply_sensor_map(self) -> None:
-        if not self.transport or not self.transport.is_connected:
-            messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
-            return
-        if not self.model.firmware or "SENSORMAP" not in self.model.firmware.capabilities:
-            messagebox.showerror(
-                "Firmware update required",
-                "This Nano does not advertise configurable sensor wiring. Upload firmware 3.29 or newer.",
-                parent=self.root,
-            )
-            return
-        selected_label = self.sensor_map_choice.get()
-        profile = next(
-            (code for code, label in SENSOR_MAP_LABELS.items() if label == selected_label), None
-        )
-        if profile is None:
-            messagebox.showerror("Unknown profile", "Select one of the listed wiring profiles.",
-                                 parent=self.root)
-            return
-        if profile == self.model.sensor_map_profile:
-            self.sensor_map_status.set(f"Nano already uses {selected_label}.")
-            return
-        if not messagebox.askyesno(
-            "Change reed-sensor wiring profile",
-            "This changes how all 64 reed switches are interpreted and saves the choice in Nano EEPROM. "
-            "It does not move the mechanism. Apply only while the controller is at the main menu.\n\n"
-            f"New profile: {selected_label}",
-            parent=self.root,
-        ):
-            return
-        if self._send(f"SENSORMAP SET {profile}"):
-            self.sensor_map_status.set("Waiting for the Nano to confirm the new profile...")
-
     def _monitor_tick(self) -> None:
         try:
             connected = bool(self.transport and self.transport.is_connected)
@@ -779,8 +723,6 @@ class AutomaticChessboardApp:
         if event.kind == "INFO":
             try:
                 self.model.firmware = parse_info(event)
-                if "SENSORMAP" in self.model.firmware.capabilities:
-                    self.root.after(120, lambda: self._send("SENSORMAP", quiet=True))
             except ValueError as error:
                 self.model.last_error = str(error)
         elif event.kind == "TELEM":
@@ -796,15 +738,6 @@ class AutomaticChessboardApp:
                 self.model.sensor_updated = time.monotonic()
             except ValueError as error:
                 self.model.last_error = str(error)
-        elif event.kind == "SENSORMAP" and len(event.args) >= 2:
-            profile = event.args[1].upper()
-            self.model.sensor_map_profile = profile
-            label = SENSOR_MAP_LABELS.get(profile, f"Unknown profile ({profile})")
-            if profile in SENSOR_MAP_LABELS:
-                self.sensor_map_choice.set(label)
-            self.sensor_map_status.set(f"Nano reports: {label}")
-            self._set_diag("mapping", "Pass" if profile in SENSOR_MAP_LABELS else "Attention",
-                           label, "pass" if profile in SENSOR_MAP_LABELS else "warn")
         elif event.kind in ("READY", "PONG"):
             self._set_connection_text("Board connected and responding")
         elif event.kind == "SETUP":
@@ -871,9 +804,6 @@ class AutomaticChessboardApp:
             )
         else:
             self.state_values["firmware"].set("Legacy or not read")
-        self.state_values["sensor_map"].set(
-            SENSOR_MAP_LABELS.get(self.model.sensor_map_profile, self.model.sensor_map_profile)
-        )
         if telemetry:
             homed = "referenced" if telemetry.homed else "not referenced"
             self.state_values["carriage"].set(f"{chr(96 + telemetry.trolley_x)}{telemetry.trolley_y} · {homed}")
@@ -1097,7 +1027,7 @@ class AutomaticChessboardApp:
         if connected:
             for delay, command in ((0, "PING"), (180, "INFO"), (360, "TELEM"), (540, "BOARD")):
                 self.root.after(delay, lambda value=command: self._send(value, quiet=True))
-        for key in ("firmware", "telemetry", "mapping", "sensors", "controls"):
+        for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
 
         def engine_worker() -> None:
@@ -1129,15 +1059,6 @@ class AutomaticChessboardApp:
         self._set_diag("telemetry", "Pass" if telemetry else "Fail",
                        self.model.sequence_name() if telemetry else "No TELEM response",
                        "pass" if telemetry else "fail")
-        mapping = self.model.sensor_map_profile
-        mapping_known = mapping in SENSOR_MAP_LABELS
-        mapping_supported = bool(info and "SENSORMAP" in info.capabilities)
-        if mapping_known:
-            self._set_diag("mapping", "Pass", SENSOR_MAP_LABELS[mapping], "pass")
-        elif mapping_supported:
-            self._set_diag("mapping", "Fail", "No SENSORMAP response", "fail")
-        else:
-            self._set_diag("mapping", "Legacy", "Firmware does not report a wiring profile", "warn")
         sensors = self.model.sensor_squares
         self._set_diag("sensors", "Pass" if sensors is not None else "Fail",
                        f"Read all 64 squares; {len(sensors)} currently occupied" if sensors is not None else "No BOARD response",
@@ -1176,7 +1097,6 @@ class AutomaticChessboardApp:
             "telemetry": telemetry.__dict__ if telemetry else None,
             "sensor_hex": self.model.sensor_hex,
             "sensor_occupied": len(self.model.sensor_squares or ()),
-            "sensor_map_profile": self.model.sensor_map_profile,
             "logical_fen": self.board.fen(),
             "health": self.model.overall_health()[0],
             "last_error": self.model.last_error,

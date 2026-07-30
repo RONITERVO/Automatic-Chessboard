@@ -34,8 +34,8 @@ through a queue. Transport callbacks may run on any worker and must remain small
 
 - `python-chess` is authoritative for legal rules and expected pieces.
 - Reed sensors are authoritative only for physical occupancy.
-- The Nano normalizes raw multiplexer rows through its persistent sensor-wiring
-  profile before any move logic or `BOARD` telemetry consumes them.
+- The Nano normalizes raw multiplexer rows through the fixed published-hardware
+  row map before any move logic or `BOARD` telemetry consumes them.
 - Nano telemetry reports commanded/calculated controller state.
 - The visual model displays disagreement instead of silently choosing one source.
 

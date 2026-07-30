@@ -20,7 +20,7 @@ def main() -> int:
     args = parser.parse_args()
     with serial.Serial(args.port, 9600, timeout=0.1) as connection:
         print("BOOT:", repr(read_for(connection, 5.0)))
-        for command in ("PING", "INFO", "STATUS", "TELEM", "SENSORMAP", "BOARD", "BTTEST"):
+        for command in ("PING", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST"):
             connection.write((command + "\n").encode("ascii"))
             connection.flush()
             reply = read_for(connection, 1.0)

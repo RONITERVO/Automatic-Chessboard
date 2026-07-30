@@ -31,10 +31,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(play_command("e7e8q"), "PLAY e7e8q")
 
     def test_versioned_info_and_telemetry(self):
-        info = parse_info(parse_event("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,SENSORMAP"))
+        info = parse_info(parse_event("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST"))
         self.assertEqual(info.firmware, "3.29")
         self.assertIn("ESTOP", info.capabilities)
-        self.assertIn("SENSORMAP", info.capabilities)
         telemetry = parse_telemetry(
             parse_event("TELEM ACB2 17 1 1 0 0 5 6 1 1 1023 847 65")
         )
@@ -54,8 +53,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("TELEM"), CommandRisk.READ_ONLY)
         self.assertEqual(classify_command("PLAY e2e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("ACCEPT"), CommandRisk.MOTION)
-        self.assertEqual(classify_command("SENSORMAP"), CommandRisk.READ_ONLY)
-        self.assertEqual(classify_command("SENSORMAP SET GLUED_TILES"), CommandRisk.CONTROL)
         self.assertEqual(classify_command("!"), CommandRisk.EMERGENCY)
 
 

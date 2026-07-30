@@ -50,48 +50,13 @@ unsigned int position_record_sequence = 0;
 boolean trolley_position_known = false;
 boolean calibration_lane_confirmed = false;
 
-// Sensor ranks can be wired differently below glued board tiles. The standard
-// profile keeps the existing raw rank order. GLUED_TILES implements the
-// reported->physical mapping documented in windows_app/README.md, for example
-// raw A8 -> physical A1 and raw A1 -> physical A4. Only one byte of SRAM is
-// used; the row permutation itself stays in flash.
-enum {SENSOR_MAP_STANDARD, SENSOR_MAP_GLUED_TILES, SENSOR_MAP_COUNT};
-const byte SENSOR_MAP_DEFAULT = SENSOR_MAP_STANDARD;
-const int SENSOR_MAP_EEPROM_ADDRESS = POSITION_RECORD_SLOTS * POSITION_RECORD_SIZE;
-const byte SENSOR_MAP_RECORD_MAGIC = 0xB7;
-const byte SENSOR_MAP_RECORD_VERSION = 1;
-const byte GLUED_TILE_ROW_MAP[8] PROGMEM = {7, 6, 1, 0, 3, 2, 5, 4};
-byte sensor_map_profile = SENSOR_MAP_DEFAULT;
+// Raw multiplexer rows follow the glued-tile wiring documented in
+// windows_app/README.md. Normalize them once, before any chess logic or host
+// telemetry sees the board. The eight-byte permutation stays in flash.
+const byte SENSOR_ROW_MAP[8] PROGMEM = {7, 6, 1, 0, 3, 2, 5, 4};
 
-byte sensorMapChecksum(byte profile) {
-  return 0x53 ^ SENSOR_MAP_RECORD_VERSION ^ profile;
-}
-
-void loadSensorMapProfile() {
-  byte magic = EEPROM.read(SENSOR_MAP_EEPROM_ADDRESS);
-  byte version = EEPROM.read(SENSOR_MAP_EEPROM_ADDRESS + 1);
-  byte profile = EEPROM.read(SENSOR_MAP_EEPROM_ADDRESS + 2);
-  byte checksum = EEPROM.read(SENSOR_MAP_EEPROM_ADDRESS + 3);
-  if (magic == SENSOR_MAP_RECORD_MAGIC &&
-      version == SENSOR_MAP_RECORD_VERSION &&
-      profile < SENSOR_MAP_COUNT && checksum == sensorMapChecksum(profile)) {
-    sensor_map_profile = profile;
-  }
-  else sensor_map_profile = SENSOR_MAP_DEFAULT;
-}
-
-void persistSensorMapProfile(byte profile) {
-  EEPROM.update(SENSOR_MAP_EEPROM_ADDRESS, 0);
-  EEPROM.update(SENSOR_MAP_EEPROM_ADDRESS + 1, SENSOR_MAP_RECORD_VERSION);
-  EEPROM.update(SENSOR_MAP_EEPROM_ADDRESS + 2, profile);
-  EEPROM.update(SENSOR_MAP_EEPROM_ADDRESS + 3, sensorMapChecksum(profile));
-  EEPROM.update(SENSOR_MAP_EEPROM_ADDRESS, SENSOR_MAP_RECORD_MAGIC);
-}
-
-byte mapRawSensorRow(byte raw_row) {
-  if (sensor_map_profile == SENSOR_MAP_GLUED_TILES)
-    return pgm_read_byte(&GLUED_TILE_ROW_MAP[raw_row]);
-  return raw_row;
+byte logicalSensorRow(byte raw_row) {
+  return pgm_read_byte(&SENSOR_ROW_MAP[raw_row]);
 }
 
 byte positionRecordChecksum(unsigned int record_sequence, byte state,
@@ -267,7 +232,6 @@ void setup() {
   lcd.init();
   lcd.backlight();
   loadPersistedTrolleyPosition();
-  loadSensorMapProfile();
   showPersistedTrolleyPosition();
   AI_reset();
   scanSensors();
@@ -495,25 +459,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SENSORMAP"));
-}
-
-void sendSensorMapProfile() {
-  Serial.print(F("SENSORMAP ACB1 "));
-  if (sensor_map_profile == SENSOR_MAP_GLUED_TILES)
-    Serial.println(F("GLUED_TILES"));
-  else Serial.println(F("STANDARD"));
-}
-
-void setSensorMapProfile(byte profile) {
-  sensor_map_profile = profile;
-  persistSensorMapProfile(profile);
-  // Rebuild all sensor baselines immediately so a profile change cannot be
-  // mistaken for a 64-square physical move.
-  scanSensors();
-  syncSensorState();
-  sendSensorMapProfile();
-  sendSensorSnapshot();
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST"));
 }
 
 void sendTelemetry() {
@@ -621,22 +567,6 @@ void processHostCommand(char *line) {
   }
   if (strcmp(line, "BOARD") == 0) {
     sendSensorSnapshot();
-    return;
-  }
-  if (strcmp(line, "SENSORMAP") == 0) {
-    sendSensorMapProfile();
-    return;
-  }
-  if (strncmp(line, "SENSORMAP SET ", 14) == 0) {
-    if (sequence != main_menu) {
-      sendHostError(F("BUSY"));
-      return;
-    }
-    if (strcmp(line + 14, "STANDARD") == 0)
-      setSensorMapProfile(SENSOR_MAP_STANDARD);
-    else if (strcmp(line + 14, "GLUED_TILES") == 0)
-      setSensorMapProfile(SENSOR_MAP_GLUED_TILES);
-    else sendHostError(F("SENSORMAP"));
     return;
   }
   if (strcmp(line, "BTTEST") == 0) {
@@ -1114,7 +1044,7 @@ void scanSensors() {
       delayMicroseconds(30);
       high_votes += digitalRead(MUX_OUTPUT);
       byte raw_row = 7 - column;
-      reed_sensor_record[mapRawSensorRow(raw_row)][row] =
+      reed_sensor_record[logicalSensorRow(raw_row)][row] =
           high_votes >= 2 ? HIGH : LOW;
       row++;
       if (channel == 7) {

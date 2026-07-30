@@ -256,7 +256,6 @@ class SimulatorTransport:
         self._human_white = True
         self._sequence = 1
         self._fault = False
-        self._sensor_map = "STANDARD"
 
     @property
     def is_connected(self) -> bool:
@@ -294,25 +293,13 @@ class SimulatorTransport:
         elif upper in ("PING", "HELLO"):
             self._emit("PONG ACB1")
         elif upper == "INFO":
-            self._emit("INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST,SENSORMAP")
+            self._emit("INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST")
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} 1 {int(self._sequence >= 15)}")
         elif upper == "TELEM":
             self._emit(self._telemetry())
         elif upper == "BOARD":
             self._emit(f"BOARD {self._board_hex()}")
-        elif upper == "SENSORMAP":
-            self._emit(f"SENSORMAP ACB1 {self._sensor_map}")
-        elif upper.startswith("SENSORMAP SET "):
-            profile = upper.removeprefix("SENSORMAP SET ")
-            if self._sequence != 1:
-                self._emit("ERR BUSY")
-            elif profile not in ("STANDARD", "GLUED_TILES"):
-                self._emit("ERR SENSORMAP")
-            else:
-                self._sensor_map = profile
-                self._emit(f"SENSORMAP ACB1 {self._sensor_map}")
-                self._emit(f"BOARD {self._board_hex()}", 0.08)
         elif upper == "BTTEST":
             self._emit("BT SIMULATED")
         elif upper.startswith("START "):

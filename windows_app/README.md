@@ -51,18 +51,12 @@ analog-input-only. The HC-08 service jumper can remain closed during USB uploads
 Use Nano 5 V for HC-08 VCC only if the carrier board explicitly includes a 3.3 V
 regulator and accepts 5 V input. A bare HC-08 requires regulated 3.3 V power.
 
-## Reed-sensor wiring profiles (firmware 3.29+)
+## Reed-sensor rank wiring (firmware 3.29+)
 
-The Nano normalizes raw multiplexer ranks before standalone move recognition,
-capture handling, setup checks, and `BOARD` telemetry. Select the profile under
-**Diagnostics -> Reed-sensor wiring** while the controller is at the main menu.
-The choice is saved in Nano EEPROM and survives power loss; changing it never
-moves the mechanism.
-
-- **Direct ranks**: a raw/reported A1 switch is physically below A1. This remains
-  the public firmware default for existing builders.
-- **Glued-tile ranks**: the files remain A-H, but the ranks follow the permutation
-  below. This is the profile measured on the documented board in this repository.
+The firmware is built for the glued-tile wiring used by this project. It
+normalizes raw multiplexer ranks before standalone move recognition, capture
+handling, setup checks, and `BOARD` telemetry. Files A-H are unchanged; ranks
+follow this fixed permutation:
 
 | Previously reported rank | Physical/logical rank |
 | ---: | ---: |
@@ -75,10 +69,11 @@ moves the mechanism.
 | 6 | 7 |
 | 5 | 8 |
 
-For example, a switch previously shown as F4 is displayed and interpreted as F5
-under the glued-tile profile. Custom boards with a different permutation require
-a new named firmware profile; do not compensate by flipping only the Windows
-drawing, because the Nano also uses these squares for chess logic.
+For example, a raw A8 switch is displayed and interpreted as A1, and raw F4 is
+displayed and interpreted as F5. Builders should follow the hardware files that
+will be published with this repository. If a custom board uses different wiring,
+change the firmware table rather than only flipping the Windows drawing, because
+the Nano also uses these squares for chess logic.
 
 ## Install and run
 
@@ -112,10 +107,9 @@ runtime.
 3. Open **Diagnostics** and run **Safe diagnostics**. These checks do not move.
 4. Confirm telemetry reports both limit/button inputs released. A6 should normally
    read well above 700 and near 1023.
-5. Confirm **Sensor wiring** matches the construction of the physical board.
-6. Use the Monitor tab to compare green physical sensor dots with logical pieces.
-7. Test each physical limit input locally before requesting calibration.
-8. Only then use **Play -> Start game and calibrate**.
+5. Use the Monitor tab to compare green physical sensor dots with logical pieces.
+6. Test each physical limit input locally before requesting calibration.
+7. Only then use **Play -> Start game and calibrate**.
 
 The companion may also use USB or **Simulator**. Simulator mode is the recommended
 starting point for contributors and UI demonstrations because it cannot energize
@@ -141,9 +135,9 @@ longer uses Windows resources and does not consume more Nano flash or RAM.
 
 ### Diagnostics
 
-The guided routine checks the connection, firmware identity, active sensor-wiring
-profile, telemetry, all 64 sensors, control inputs, Stockfish, and optional camera
-dependencies. A support bundle can then be saved for a GitHub issue.
+The guided routine checks the connection, firmware identity, telemetry, all 64
+sensors, control inputs, Stockfish, and optional camera dependencies. A support
+bundle can then be saved for a GitHub issue.
 
 ### Camera
 
