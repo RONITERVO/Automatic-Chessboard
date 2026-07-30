@@ -1,0 +1,27 @@
+category,quantity,item,minimum_specification,tested_reference,status
+controller,1,Arduino Nano,Classic ATmega328P 5V 16MHz,Nano-compatible USB-C clone,required
+sensors,4,16-channel multiplexer breakout,CD74HC4067-compatible 5V active-low enable,WAVGAT CD74HC4067 breakout,required
+sensors,64,Normally-open glass reed switch,Closes reliably through selected tile and piece gap,Glass reed in printed tile slot,required
+motion,2,Stepper driver carrier,A4988 or HR4988 StepStick pinout 24V capable with heatsink,HR4988SQ with two R100 resistors,required
+motion,2,Bipolar stepper motor,4-wire NEMA17 1.8deg preferred >=0.20Nm and current matched to driver,Unlabelled JGAurora A3S donor motor,required
+motion,2,VMOT capacitor,100uF >=50V electrolytic 105C preferred,100uF 50V,required
+magnet,1,Electromagnet,24V DC approximately 2.8W,H2520 24V 2.8W,required
+magnet,1,NPN Darlington,TIP120 or validated logic-level MOSFET alternative,TIP120,required
+magnet,1,Flyback diode,1A >=50V axial diode,1N4004-1N4007 equivalent,required
+magnet,1,Base resistor,1kohm 0.25W,1kohm,required
+magnet,1,Base pull-down resistor,10kohm 0.25W,None on prototype,safety addition
+interface,1,16x2 I2C LCD,5V PCF8574 backpack address 0x27,Blue 16x2 module,required
+interface,2,Normally-open momentary microswitch,Actuated before mechanical hard stop,Shared button and limit switch,required
+interface,1,A6 pull-up resistor,10kohm 0.25W,Inside heat-shrink,required
+bluetooth,1,HC-08 BLE UART carrier,Carrier accepts 5V supply and uses 3.3V UART logic,HC-08 carrier,required for BLE
+bluetooth,2,1kohm resistor,0.25W,Inside heat-shrink,required for BLE
+bluetooth,1,2kohm resistor,0.25W,Inside heat-shrink,required for BLE
+power,1,24V DC supply,Enclosed regulated isolated 3A minimum 5A recommended,Unbranded 24V 10A brick,required
+power,1,Buck converter,24V input 5.0V output >=1A continuous and >=36V input recommended,Unlabelled adjustable buck,required
+protection,1,Main fuse and holder,3A time-delay starting value >=32VDC; 5A maximum only after load measurement,None on prototype,safety addition
+protection,1,Latching cutoff,>=30VDC 5A and reachable,None on prototype,safety addition
+protection,1,Reverse-polarity protection,>=30VDC 5A,None on prototype,safety addition
+protection,1,Logic fuse,1A >=32VDC,None on prototype,safety addition
+wiring,as needed,Main power wire,0.75mm2 or 18AWG copper recommended,Mixed prototype wire,required
+wiring,as needed,Branch and motor wire,0.34mm2 or 22AWG copper recommended,Mixed prototype wire,required
+wiring,as needed,Logic and sensor wire,0.14-0.25mm2 or 26-24AWG strain-relieved,Ribbon and hookup wire,required

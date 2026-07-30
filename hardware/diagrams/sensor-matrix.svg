@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">Reed sensor to CD74HC4067 multiplexer map</title>
+  <desc id="desc">Four multiplexers share address and signal lines. The diagram gives the exact channel-to-square map used by firmware 3.29.</desc>
+  <defs>
+    <style>
+      .title{font:700 30px Arial,sans-serif;fill:#1f2328}.sub{font:16px Arial,sans-serif;fill:#59636e}.box{fill:#dafbe1;stroke:#1a7f37;stroke-width:2;rx:12}.nano{fill:#ddf4ff;stroke:#0969da;stroke-width:3;rx:12}.head{font:700 18px Arial,sans-serif;fill:#1f2328}.text{font:15px Arial,sans-serif;fill:#1f2328}.mono{font:15px Consolas,monospace;fill:#1f2328}.small{font:13px Arial,sans-serif;fill:#59636e}.bus{stroke:#1a7f37;stroke-width:5;fill:none}.signal{stroke:#0969da;stroke-width:5;fill:none}.ground{stroke:#30363d;stroke-width:4;fill:none}.grid{stroke:#8c959f;stroke-width:1}.rank1{fill:#ffffff}.rank2{fill:#f6f8fa}
+    </style>
+  </defs>
+  <rect width="1600" height="980" fill="#fff"/>
+  <text class="title" x="55" y="55">64 reed sensors — exact firmware channel map</text>
+  <text class="sub" x="55" y="84">Each normally-open reed connects its channel to GND. A piece closes the reed, so occupied reads LOW.</text>
+
+  <rect class="nano" x="55" y="140" width="410" height="220"/>
+  <text class="head" x="260" y="178" text-anchor="middle">NANO SHARED BUS</text>
+  <text class="mono" x="85" y="218">A3 → S0   A2 → S1</text>
+  <text class="mono" x="85" y="250">A1 → S2   A0 → S3</text>
+  <text class="mono" x="85" y="292">D12 ← SIG (all four modules)</text>
+  <text class="text" x="85" y="330">D12 uses INPUT_PULLUP</text>
+
+  <path class="bus" d="M465 225 H535 V855"/><path class="signal" d="M465 292 H505 V885 H535"/>
+  <text class="small" x="485" y="205" transform="rotate(90 485 205)">S0-S3 shared</text>
+
+  <rect class="box" x="585" y="120" width="950" height="175"/>
+  <text class="head" x="615" y="155">MUX 0 · EN → D13</text>
+  <text class="text" x="615" y="182">C0-C7</text><text class="mono" x="710" y="182">a2  b2  c2  d2  e2  f2  g2  h2</text>
+  <text class="text" x="615" y="222">C8-C15</text><text class="mono" x="710" y="222">a1  b1  c1  d1  e1  f1  g1  h1</text>
+  <text class="small" x="615" y="258">VCC 5 V · GND common · SIG D12 · active-low EN</text>
+  <path class="bus" d="M535 205 H585"/><path class="signal" d="M535 255 H570 V245 H585"/>
+
+  <rect class="box" x="585" y="330" width="950" height="175"/>
+  <text class="head" x="615" y="365">MUX 1 · EN → D9</text>
+  <text class="text" x="615" y="392">C0-C7</text><text class="mono" x="710" y="392">a8  b8  c8  d8  e8  f8  g8  h8</text>
+  <text class="text" x="615" y="432">C8-C15</text><text class="mono" x="710" y="432">a7  b7  c7  d7  e7  f7  g7  h7</text>
+  <text class="small" x="615" y="468">VCC 5 V · GND common · SIG D12 · active-low EN</text>
+  <path class="bus" d="M535 415 H585"/><path class="signal" d="M535 465 H570 V455 H585"/>
+
+  <rect class="box" x="585" y="540" width="950" height="175"/>
+  <text class="head" x="615" y="575">MUX 2 · EN → D8</text>
+  <text class="text" x="615" y="602">C0-C7</text><text class="mono" x="710" y="602">a6  b6  c6  d6  e6  f6  g6  h6</text>
+  <text class="text" x="615" y="642">C8-C15</text><text class="mono" x="710" y="642">a5  b5  c5  d5  e5  f5  g5  h5</text>
+  <text class="small" x="615" y="678">VCC 5 V · GND common · SIG D12 · active-low EN</text>
+  <path class="bus" d="M535 625 H585"/><path class="signal" d="M535 675 H570 V665 H585"/>
+
+  <rect class="box" x="585" y="750" width="950" height="175"/>
+  <text class="head" x="615" y="785">MUX 3 · EN → D7</text>
+  <text class="text" x="615" y="812">C0-C7</text><text class="mono" x="710" y="812">a4  b4  c4  d4  e4  f4  g4  h4</text>
+  <text class="text" x="615" y="852">C8-C15</text><text class="mono" x="710" y="852">a3  b3  c3  d3  e3  f3  g3  h3</text>
+  <text class="small" x="615" y="888">VCC 5 V · GND common · SIG D12 · active-low EN</text>
+  <path class="bus" d="M535 835 H585"/><path class="signal" d="M535 885 H585"/>
+
+  <rect x="55" y="420" width="410" height="360" rx="12" fill="#f6f8fa" stroke="#57606a" stroke-width="2"/>
+  <text class="head" x="260" y="458" text-anchor="middle">ONE CHANNEL (repeat ×64)</text>
+  <text class="mono" x="95" y="520">MUX Cn ────────┐</text>
+  <text class="mono" x="95" y="565">                /  reed, normally open</text>
+  <text class="mono" x="95" y="610">                └──────── GND</text>
+  <text class="text" x="95" y="665">No resistor is required at each reed.</text>
+  <text class="text" x="95" y="695">D12's pull-up serves the selected channel.</text>
+  <text class="small" x="95" y="740">Support the glass body and strain-relieve</text>
+  <text class="small" x="95" y="762">the leads before gluing the tile.</text>
+
+  <text class="sub" x="55" y="955">The non-numerical rank order is intentional. It matches SENSOR_ROW_MAP = {7, 6, 1, 0, 3, 2, 5, 4}.</text>
+</svg>
