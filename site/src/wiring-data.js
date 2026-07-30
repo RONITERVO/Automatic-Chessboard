@@ -1,0 +1,123 @@
+const range = (prefix, start, end, width = 2) =>
+  Array.from({ length: end - start + 1 }, (_, index) => `${prefix}${String(start + index).padStart(width, "0")}`);
+
+export const WIRING_STEPS = Object.freeze([
+  {
+    key: "inspect",
+    icon: "inspect",
+    codes: ["0 V", "USB ∅", "+/−", "B·C·E"],
+    connectionIds: [],
+    focus: ["powerSupply", "drivers", "driverCaps", "controller", "magnetDriver"],
+  },
+  {
+    key: "protect",
+    icon: "shield",
+    codes: ["24V+→F1", "F1→⏻", "⏻→↯", "24V−→GND"],
+    connectionIds: range("PWR-", 1, 5),
+    focus: ["powerSupply", "fuse", "cutoff", "reverseProtection"],
+  },
+  {
+    key: "buck",
+    icon: "meter",
+    codes: ["24V→F2", "F2→IN+", "GND→IN−", "OUT=5.00V"],
+    connectionIds: range("PWR-", 9, 13),
+    focus: ["logicPower", "fuse", "powerSupply"],
+  },
+  {
+    key: "logic",
+    icon: "logic",
+    codes: ["5V≠VIN", "NANO·5V", "VDD×2", "VCC×4", "LCD·VCC", "BLE·VCC", "GND·ALL"],
+    connectionIds: [
+      "PWR-14", "PWR-15", "M1-03", "M1-04", "M2-03", "M2-04",
+      "MUX-10", "MUX-11", "LCD-03", "LCD-04", "BLE-07", "BLE-08",
+    ],
+    focus: ["controller", "drivers", "multiplexers", "display", "bluetooth", "logicPower"],
+  },
+  ...[0, 1, 2, 3].map((mux) => ({
+    key: `sensors-${mux}`,
+    icon: "sensor",
+    codes: [],
+    connectionIds: [],
+    sensorMux: mux,
+    focus: ["reedSwitches", "multiplexers"],
+  })),
+  {
+    key: "mux-bus",
+    icon: "bus",
+    codes: ["A3→S0×4", "A2→S1×4", "A1→S2×4", "A0→S3×4", "D12←SIG×4", "D13/D9/D8/D7→EN0/1/2/3"],
+    connectionIds: range("MUX-", 1, 9),
+    focus: ["controller", "multiplexers"],
+  },
+  {
+    key: "interface",
+    icon: "switch",
+    codes: ["A4→SDA", "A5→SCL", "D11→SW·A→GND", "A6→SW·B→GND", "5V→10k→A6", "0x27"],
+    connectionIds: [...range("LCD-", 1, 2), ...range("SW-", 1, 6)],
+    focus: ["controller", "display", "endstops"],
+  },
+  {
+    key: "bluetooth",
+    icon: "radio",
+    codes: ["TXD→1k→D10", "D1→1k→RXD", "RXD→2k→GND", "D0∅", "9600"],
+    connectionIds: range("BLE-", 1, 6),
+    focus: ["controller", "bluetooth"],
+  },
+  {
+    key: "magnet",
+    icon: "magnet",
+    codes: ["D6→1k→B", "B→10k→GND", "E→GND", "C→COIL−", "DIODE▮→COIL+", "24V∅"],
+    connectionIds: range("MAG-", 1, 8),
+    focus: ["controller", "magnetDriver", "magnet"],
+  },
+  {
+    key: "motor-1",
+    icon: "motor",
+    codes: ["D2→DIR", "D3→STEP", "RST+SLP→5V", "MS1/2/3→GND", "EN→GND", "1A/1B→COIL·A", "2A/2B→COIL·B", "100µF +→VMOT", "100µF −→GND", "ILIM≤0.40A", "VREF≈0.22V"],
+    connectionIds: ["M1-01", "M1-02", ...range("M1-", 5, 12)],
+    focus: ["controller", "drivers", "driverCaps", "motors"],
+  },
+  {
+    key: "motor-2",
+    icon: "motor",
+    codes: ["D4→DIR", "D5→STEP", "RST+SLP→5V", "MS1/2/3→GND", "EN→GND", "1A/1B→COIL·A", "2A/2B→COIL·B", "100µF +→VMOT", "100µF −→GND", "ILIM≤0.40A", "VREF≈0.22V"],
+    connectionIds: ["M2-01", "M2-02", ...range("M2-", 5, 12)],
+    focus: ["controller", "drivers", "driverCaps", "motors"],
+  },
+  {
+    key: "motor-power",
+    icon: "power",
+    codes: ["24V→VMOT·1", "24V→VMOT·2", "24V→COIL+", "POWER·OFF→CONNECT", "23–25 V"],
+    connectionIds: ["PWR-06", "PWR-07", "PWR-08"],
+    focus: ["drivers", "driverCaps", "magnet", "powerSupply", "cutoff"],
+  },
+  {
+    key: "verify",
+    icon: "meter",
+    codes: ["24V↔GND≠0Ω", "5V↔GND≠0Ω", "24V↔5V=∞", "CAP−→GND", "DIODE▮→24V", "SW·A/B→GND", "USB∅"],
+    connectionIds: [],
+    focus: ["powerSupply", "controller", "drivers", "driverCaps", "magnetDriver", "endstops"],
+  },
+  {
+    key: "complete",
+    icon: "complete",
+    codes: ["5.00 V", "23–25 V", "0x27", "9600", "FULL STEP", "E−STOP✓"],
+    connectionIds: [],
+    showAll: true,
+    focus: [],
+  },
+]);
+
+export const WIRING_ICON_PATHS = Object.freeze({
+  inspect: "M4 5h16M5 9h14v10H5V9Zm3 3h3m2 0h3m-8 4h8",
+  shield: "M12 3 4.5 6v5.5c0 4.5 3.1 7.8 7.5 9.5 4.4-1.7 7.5-5 7.5-9.5V6L12 3Zm-3 9 2 2 4-5",
+  meter: "M5 19a8 8 0 1 1 14 0H5Zm7-7 4-3m-4 3-2 4",
+  logic: "M7 5h10v14H7V5Zm-3 3h3m-3 4h3m-3 4h3m10-8h3m-3 4h3m-3 4h3",
+  sensor: "M4 17h16M6 14h12M8 11h8M10 8h4M12 3v5",
+  bus: "M4 6h8v12h8M8 6V3m0 18v-3m8-12V3m0 18v-3",
+  switch: "M4 17h5l7-10h4M9 17l7-4",
+  radio: "M8 9a6 6 0 0 1 8 0M5 6a10 10 0 0 1 14 0m-7 7v8m-2-8h4",
+  magnet: "M6 4v9a6 6 0 0 0 12 0V4h-4v9a2 2 0 0 1-4 0V4H6Zm0 4h4m4 0h4",
+  motor: "M5 7h14v10H5V7Zm3-3v3m4-3v3m4-3v3M8 17v3m4-3v3m4-3v3",
+  power: "M13 2 6 13h6l-1 9 7-12h-6l1-8Z",
+  complete: "m4 12 5 5L20 6",
+});

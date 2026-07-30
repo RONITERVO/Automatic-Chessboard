@@ -6,6 +6,7 @@ const registry = new Map();
 const rayTargets = [];
 const xrayMeshes = [];
 const sections = [];
+const decorativeHarnesses = [];
 
 const materials = {
   aluminum: new THREE.MeshPhysicalMaterial({ color: 0x252c32, metalness: 0.92, roughness: 0.24 }),
@@ -21,6 +22,7 @@ const materials = {
   pcbBlack: new THREE.MeshPhysicalMaterial({ color: 0x101820, roughness: 0.34, clearcoat: 0.28 }),
   pcbGreen: new THREE.MeshPhysicalMaterial({ color: 0x0b6846, roughness: 0.4, clearcoat: 0.28 }),
   red: new THREE.MeshPhysicalMaterial({ color: 0xc92f36, roughness: 0.31, clearcoat: 0.45 }),
+  resistor: new THREE.MeshPhysicalMaterial({ color: 0xd6ba82, roughness: 0.62 }),
   rubber: new THREE.MeshStandardMaterial({ color: 0x171b20, roughness: 0.88 }),
   screen: new THREE.MeshPhysicalMaterial({ color: 0x0a2a71, emissive: 0x0c4fb6, emissiveIntensity: 0.34, roughness: 0.14, clearcoat: 0.8 }),
   steel: new THREE.MeshPhysicalMaterial({ color: 0xaab5bb, metalness: 0.95, roughness: 0.22 }),
@@ -258,6 +260,38 @@ function powerModule(parent, x, y, z, width, depth, partId, material = materials
   parent.add(group);
 }
 
+function axialPart(parent, x, y, z, partId, bodyMaterial, stripe = false) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  const body = cylinder(0.13, 0.62, bodyMaterial, 18);
+  body.rotation.z = Math.PI / 2;
+  const leadA = roundedBox(0.42, 0.035, 0.035, materials.steel, 0.01);
+  leadA.position.x = -0.51;
+  const leadB = leadA.clone();
+  leadB.position.x = 0.51;
+  group.add(body, leadA, leadB);
+  if (stripe) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.022, 6, 18), materials.steel);
+    band.rotation.y = Math.PI / 2;
+    band.position.x = 0.18;
+    group.add(band);
+  }
+  parent.add(tag(group, partId));
+}
+
+function distributionBlock(parent, x, y, z, colorMaterial) {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  const base = roundedBox(1.15, 0.38, 0.72, colorMaterial, 0.1);
+  group.add(base);
+  for (const offset of [-0.36, 0, 0.36]) {
+    const terminal = cylinder(0.11, 0.18, materials.steel, 16);
+    terminal.position.set(offset, 0.28, 0);
+    group.add(terminal);
+  }
+  parent.add(tag(group, "pcb"));
+}
+
 function reedSwitch(x, z, parent) {
   const group = new THREE.Group();
   group.position.set(x, 8.56, z);
@@ -349,6 +383,7 @@ function createMechanics(parent) {
   face.position.y = 1.03;
   magnetGroup.add(coil, face);
   parent.add(tag(magnetGroup, "magnet"));
+  axialPart(parent, 5.4, 6.55, 2.1, "magnetDriver", materials.black, true);
 
   microswitch(-16.7, 2.4, -16.0, Math.PI / 2, parent);
   microswitch(16.7, 2.4, 16.0, -Math.PI / 2, parent);
@@ -414,12 +449,23 @@ function createElectronics(parent) {
   }
   parent.add(tag(transistor, "magnetDriver"));
 
+  axialPart(parent, 6.8, 3.2, 22.0, "magnetDriver", materials.resistor);
+  axialPart(parent, 8.7, 3.2, 22.6, "magnetDriver", materials.resistor);
+  axialPart(parent, 1.7, 3.25, 22.8, "endstops", materials.resistor);
+  axialPart(parent, 2.4, 3.2, 20.0, "bluetooth", materials.resistor);
+  axialPart(parent, 3.3, 3.2, 18.9, "bluetooth", materials.resistor);
+  axialPart(parent, 4.7, 3.2, 18.9, "bluetooth", materials.resistor);
+
   const harnesses = [
     [materials.wireRed, [new THREE.Vector3(8, 2.2, 22), new THREE.Vector3(7, 1.2, 14), new THREE.Vector3(3.4, 5.2, 2.1)]],
     [materials.wireYellow, [new THREE.Vector3(-11.9, 2.4, 20.2), new THREE.Vector3(-15, 1.8, 14), new THREE.Vector3(-21.3, 1.1, -16.2)]],
     [materials.wireBlue, [new THREE.Vector3(11.9, 2.4, 20.2), new THREE.Vector3(17, 1.8, 13), new THREE.Vector3(21.3, 1.1, 16.2)]],
   ];
-  for (const [material, points] of harnesses) parent.add(tag(tube(points, 0.095, material), "pcb"));
+  for (const [material, points] of harnesses) {
+    const harness = tag(tube(points, 0.095, material), "pcb");
+    decorativeHarnesses.push(harness);
+    parent.add(harness);
+  }
 }
 
 function createPower(parent) {
@@ -439,6 +485,17 @@ function createPower(parent) {
   parent.add(tag(panel, "frame"));
   powerModule(parent, 18.0, 2.5, 23.8, 2.7, 1.8, "reverseProtection");
   powerModule(parent, 21.2, 2.5, 23.8, 2.4, 1.8, "logicPower");
+  distributionBlock(parent, 15.1, 3.15, 23.8, materials.red);
+  distributionBlock(parent, 15.1, 2.95, 20.8, materials.black);
+  distributionBlock(parent, 15.6, 3.15, 22.2, materials.pcbBlue);
+
+  const logicFuse = new THREE.Group();
+  logicFuse.position.set(19.7, 3.15, 21.0);
+  const logicFuseBody = roundedBox(1.45, 0.46, 0.62, materials.black, 0.15);
+  const logicFuseWindow = roundedBox(0.72, 0.16, 0.34, materials.glass, 0.07);
+  logicFuseWindow.position.y = 0.27;
+  logicFuse.add(logicFuseBody, logicFuseWindow);
+  parent.add(tag(logicFuse, "fuse"));
 
   const fuse = new THREE.Group();
   fuse.position.set(24.2, 2.8, 23.8);
@@ -525,6 +582,10 @@ export function setXray(enabled) {
 
 export function setPartVisible(partId, visible) {
   for (const object of registry.get(partId) ?? []) object.visible = visible;
+}
+
+export function setDecorativeHarnessVisible(visible) {
+  for (const harness of decorativeHarnesses) harness.visible = visible;
 }
 
 export function getPartObjects(partId) {

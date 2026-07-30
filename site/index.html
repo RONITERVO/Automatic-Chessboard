@@ -32,6 +32,9 @@
         <button id="toggle-xray" type="button" aria-label="Toggle transparent board" aria-pressed="false">
           <svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" /></svg>
         </button>
+        <button id="toggle-wiring" type="button" aria-label="Toggle guided wiring" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><path d="M4 7h5v4h6V7h5M4 17h5v-4h6v4h5M4 4v6m16-6v6M4 14v6m16-6v6" /></svg>
+        </button>
         <button id="restore-hidden" type="button" aria-label="Restore manually hidden parts">
           <svg viewBox="0 0 24 24"><path d="M3 3 21 21M10.6 5.2A9.9 9.9 0 0 1 12 5c6 0 10 7 10 7a18 18 0 0 1-3 4M6.2 6.2C3.6 8 2 12 2 12s4 7 10 7c1 0 2-.2 2.8-.5M9.9 9.9A3 3 0 0 0 14.1 14" /></svg>
         </button>
@@ -44,6 +47,23 @@
           <path d="m17 27 6 6 13-14" />
         </svg>
       </button>
+
+      <section id="wiring-guide" aria-label="Guided wiring steps" hidden>
+        <div id="wiring-step-bar">
+          <button id="wiring-previous" type="button" aria-label="Previous wiring step">
+            <svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" /></svg>
+          </button>
+          <div id="wiring-step-status">
+            <svg id="wiring-step-icon" viewBox="0 0 24 24" aria-hidden="true"><path id="wiring-step-icon-path" /></svg>
+            <output id="wiring-step-index" aria-live="polite"></output>
+          </div>
+          <button id="wiring-next" type="button" aria-label="Complete step and continue">
+            <svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" /></svg>
+          </button>
+        </div>
+        <div id="wiring-step-track" aria-label="Wiring progress"></div>
+        <div id="wiring-pin-codes" aria-live="polite"></div>
+      </section>
 
       <section id="part-actions" aria-label="Selected component actions" hidden>
         <i id="part-swatch" aria-hidden="true"></i>

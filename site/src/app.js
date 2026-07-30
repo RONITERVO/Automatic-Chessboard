@@ -6,12 +6,15 @@ import { OutlinePass } from "three/addons/postprocessing/OutlinePass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { PARTS, PURCHASABLE_PART_IDS } from "./catalog.js";
+import { WIRING_ICON_PATHS } from "./wiring-data.js";
+import { createWiringGuide } from "./wiring.js";
 import {
   animateModel,
   createBoardModel,
   getPartCenter,
   getPartObjects,
   getRayTargets,
+  setDecorativeHarnessVisible,
   setPartVisible,
   setXray,
 } from "./model.js";
@@ -26,6 +29,11 @@ const pointerMark = document.querySelector("#pointer-mark");
 const progress = document.querySelector("#progress");
 const progressValue = progress.querySelector(".value");
 const purchasedButton = document.querySelector("#mark-purchased");
+const wiringPanel = document.querySelector("#wiring-guide");
+const wiringIndex = document.querySelector("#wiring-step-index");
+const wiringIconPath = document.querySelector("#wiring-step-icon-path");
+const wiringPinCodes = document.querySelector("#wiring-pin-codes");
+const wiringTrack = document.querySelector("#wiring-step-track");
 const storageKey = "automatic-chessboard-build-v1";
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -102,6 +110,7 @@ for (const radius of [28, 43, 58]) {
 }
 
 createBoardModel(scene);
+const wiringGuide = createWiringGuide(scene);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -121,9 +130,11 @@ function restoreState() {
     return {
       purchased: new Set((stored.purchased ?? []).filter((id) => PARTS[id])),
       hidden: new Set((stored.hidden ?? []).filter((id) => PARTS[id])),
+      wiringStep: Number.isInteger(stored.wiringStep) ? stored.wiringStep : 0,
+      wiringUnlocked: Number.isInteger(stored.wiringUnlocked) ? stored.wiringUnlocked : 0,
     };
   } catch {
-    return { purchased: new Set(), hidden: new Set() };
+    return { purchased: new Set(), hidden: new Set(), wiringStep: 0, wiringUnlocked: 0 };
   }
 }
 
@@ -135,11 +146,19 @@ const state = {
   showPurchased: false,
   exploded: false,
   xray: false,
+  wiring: false,
+  wiringStep: THREE.MathUtils.clamp(saved.wiringStep, 0, wiringGuide.steps.length - 1),
+  wiringUnlocked: THREE.MathUtils.clamp(Math.max(saved.wiringUnlocked, saved.wiringStep), 0, wiringGuide.steps.length - 1),
   explodeAmount: 0,
 };
 
 function saveState() {
-  localStorage.setItem(storageKey, JSON.stringify({ purchased: [...state.purchased], hidden: [...state.hidden] }));
+  localStorage.setItem(storageKey, JSON.stringify({
+    purchased: [...state.purchased],
+    hidden: [...state.hidden],
+    wiringStep: state.wiringStep,
+    wiringUnlocked: state.wiringUnlocked,
+  }));
 }
 
 function announce(message) {
@@ -179,6 +198,20 @@ function focusPart(id) {
   for (const object of objects) bounds.expandByObject(object);
   const size = bounds.getSize(new THREE.Vector3()).length();
   const distance = THREE.MathUtils.clamp(size * 1.75 + 10, 17, 40);
+  targetGoal = center;
+  cameraGoal = center.clone().addScaledVector(direction, distance);
+}
+
+function focusBounds(bounds) {
+  if (bounds.isEmpty()) {
+    targetGoal = initialTarget.clone();
+    cameraGoal = initialCamera.clone();
+    return;
+  }
+  const center = bounds.getCenter(new THREE.Vector3());
+  const size = bounds.getSize(new THREE.Vector3());
+  const direction = new THREE.Vector3(1, 0.78, 1).normalize();
+  const distance = THREE.MathUtils.clamp(size.length() * 1.18 + 8, 25, 96);
   targetGoal = center;
   cameraGoal = center.clone().addScaledVector(direction, distance);
 }
@@ -236,6 +269,130 @@ xrayButton.addEventListener("click", () => {
   togglePressed(xrayButton, state.xray);
 });
 
+const wiringButton = document.querySelector("#toggle-wiring");
+const wiringPrevious = document.querySelector("#wiring-previous");
+const wiringNext = document.querySelector("#wiring-next");
+const wiringDots = wiringGuide.steps.map((_, index) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.setAttribute("aria-label", `Go to wiring step ${index + 1}`);
+  button.addEventListener("click", () => setWiringStep(index));
+  wiringTrack.append(button);
+  return button;
+});
+let preWiringState = null;
+
+function updateWiringTrack() {
+  wiringDots.forEach((dot, index) => {
+    dot.classList.toggle("is-current", index === state.wiringStep);
+    dot.classList.toggle("is-complete", index < state.wiringUnlocked);
+    dot.disabled = index > state.wiringUnlocked;
+    dot.setAttribute("aria-current", index === state.wiringStep ? "step" : "false");
+  });
+}
+
+function focusWiringStep(step) {
+  const bounds = wiringGuide.getBounds(state.wiringStep);
+  const highlighted = [];
+  for (const partId of step.focus) {
+    for (const object of getPartObjects(partId)) {
+      bounds.expandByObject(object);
+      highlighted.push(object);
+    }
+  }
+  outline.selectedObjects = highlighted;
+  outline.visibleEdgeColor.set(0x74dcff);
+  outline.hiddenEdgeColor.set(0x173d4c);
+  focusBounds(bounds);
+}
+
+function setWiringStep(index, unlock = false) {
+  const nextIndex = THREE.MathUtils.clamp(index, 0, wiringGuide.steps.length - 1);
+  if (!unlock && nextIndex > state.wiringUnlocked) return;
+  state.wiringStep = nextIndex;
+  if (unlock) state.wiringUnlocked = Math.max(state.wiringUnlocked, nextIndex);
+  const step = wiringGuide.steps[nextIndex];
+  wiringGuide.showStep(nextIndex);
+  wiringIndex.textContent = `${String(nextIndex + 1).padStart(2, "0")} / ${String(wiringGuide.steps.length).padStart(2, "0")}`;
+  wiringIconPath.setAttribute("d", WIRING_ICON_PATHS[step.icon]);
+  wiringPinCodes.replaceChildren(...wiringGuide.getCodes(nextIndex).map((code) => {
+    const chip = document.createElement("span");
+    chip.textContent = code;
+    return chip;
+  }));
+  wiringPrevious.disabled = nextIndex === 0;
+  wiringNext.disabled = nextIndex === wiringGuide.steps.length - 1;
+  wiringNext.setAttribute("aria-label", nextIndex === wiringGuide.steps.length - 2 ? "Complete guided wiring" : "Complete step and continue");
+  updateWiringTrack();
+  focusWiringStep(step);
+  saveState();
+  announce(`Wiring step ${nextIndex + 1} of ${wiringGuide.steps.length}`);
+}
+
+function advanceWiring() {
+  if (state.wiringStep >= wiringGuide.steps.length - 1) return;
+  setWiringStep(state.wiringStep + 1, true);
+}
+
+function retreatWiring() {
+  if (state.wiringStep === 0) return;
+  setWiringStep(state.wiringStep - 1);
+}
+
+function toggleWiring(enabled = !state.wiring) {
+  if (enabled === state.wiring) return;
+  state.wiring = enabled;
+  viewport.classList.toggle("is-wiring", enabled);
+  togglePressed(wiringButton, enabled);
+  wiringPanel.hidden = !enabled;
+
+  if (enabled) {
+    preWiringState = { autoRotate: controls.autoRotate, exploded: state.exploded, xray: state.xray };
+    clearSelection();
+    for (const id of PURCHASABLE_PART_IDS) setPartVisible(id, true);
+    setPartVisible("pieces", false);
+    setPartVisible("pieceMagnets", false);
+    setDecorativeHarnessVisible(false);
+    controls.autoRotate = false;
+    state.exploded = false;
+    togglePressed(rotateButton, false);
+    togglePressed(explodeButton, false);
+    if (!state.xray) {
+      state.xray = true;
+      setXray(true);
+    }
+    togglePressed(xrayButton, true);
+    rotateButton.disabled = true;
+    explodeButton.disabled = true;
+    xrayButton.disabled = true;
+    wiringGuide.setEnabled(true);
+    setWiringStep(state.wiringStep);
+  } else {
+    wiringGuide.setEnabled(false);
+    rotateButton.disabled = false;
+    explodeButton.disabled = false;
+    xrayButton.disabled = false;
+    if (state.xray !== preWiringState.xray) {
+      state.xray = preWiringState.xray;
+      setXray(state.xray);
+    }
+    state.exploded = preWiringState.exploded;
+    controls.autoRotate = preWiringState.autoRotate;
+    togglePressed(rotateButton, controls.autoRotate);
+    togglePressed(explodeButton, state.exploded);
+    togglePressed(xrayButton, state.xray);
+    preWiringState = null;
+    applyVisibility();
+    setDecorativeHarnessVisible(true);
+    resetView();
+  }
+}
+
+wiringButton.addEventListener("click", () => toggleWiring());
+wiringPrevious.addEventListener("click", retreatWiring);
+wiringNext.addEventListener("click", advanceWiring);
+updateWiringTrack();
+
 document.querySelector("#restore-hidden").addEventListener("click", () => {
   state.hidden.clear();
   saveState();
@@ -288,11 +445,13 @@ function raycast(event) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
+  if (state.wiring) return;
   pointerWasDown = true;
   pointerStart.set(event.clientX, event.clientY);
 });
 
 canvas.addEventListener("pointerup", (event) => {
+  if (state.wiring) return;
   if (!pointerWasDown) return;
   pointerWasDown = false;
   if (pointerStart.distanceTo(new THREE.Vector2(event.clientX, event.clientY)) > 6) return;
@@ -302,11 +461,13 @@ canvas.addEventListener("pointerup", (event) => {
 });
 
 canvas.addEventListener("dblclick", (event) => {
+  if (state.wiring) return;
   const id = raycast(event);
   if (id) window.open(PARTS[id].url, "_blank", "noopener,noreferrer");
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (state.wiring) return;
   if (event.pointerType === "touch") return;
   hoveredId = raycast(event);
   viewport.classList.toggle("has-hover", Boolean(hoveredId));
@@ -322,9 +483,12 @@ canvas.addEventListener("pointerleave", () => {
 });
 
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") clearSelection();
+  if (state.wiring && event.key === "ArrowRight") advanceWiring();
+  if (state.wiring && event.key === "ArrowLeft") retreatWiring();
+  if (event.key === "Escape" && state.wiring) toggleWiring(false);
+  else if (event.key === "Escape") clearSelection();
   if (event.key === "Home") resetView();
-  if (event.key === "Enter" && state.selected) window.open(PARTS[state.selected].url, "_blank", "noopener,noreferrer");
+  if (!state.wiring && event.key === "Enter" && state.selected) window.open(PARTS[state.selected].url, "_blank", "noopener,noreferrer");
 });
 
 function resize() {
@@ -345,6 +509,7 @@ applyVisibility();
 
 let previousTime = performance.now();
 let firstFrame = true;
+let liveSensorChannel = -2;
 
 function render(now = performance.now()) {
   requestAnimationFrame(render);
@@ -352,6 +517,12 @@ function render(now = performance.now()) {
   previousTime = now;
   state.explodeAmount = THREE.MathUtils.damp(state.explodeAmount, state.exploded ? 1 : 0, 5.2, delta);
   animateModel(state.explodeAmount);
+  wiringGuide.update(now / 1000);
+  const nextLiveSensorChannel = state.wiring ? wiringGuide.getActiveSensorChannel(now / 1000) : -1;
+  if (nextLiveSensorChannel !== liveSensorChannel) {
+    liveSensorChannel = nextLiveSensorChannel;
+    [...wiringPinCodes.children].forEach((chip, index) => chip.classList.toggle("is-live", index === liveSensorChannel));
+  }
 
   if (targetGoal && cameraGoal) {
     controls.target.lerp(targetGoal, 1 - Math.exp(-delta * 5.4));
