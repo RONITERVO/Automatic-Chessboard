@@ -23,6 +23,33 @@ and compile or upload the sketch.
 Review the pin assignments, travel calibration, limit-switch behavior, driver
 current limit, and microstep settings before powering the motion hardware.
 
+## Windows and Bluetooth companion
+
+`windows_app` is the public-ready, open-source Windows monitor and companion for
+this firmware. Windows runs Stockfish 18 and full chess rules while the Nano
+retains motor timing, sensor scanning, calibration, limit checks, and Micro-Max
+as a standalone fallback. It supports the Nano USB port, HC-08 BLE using the
+default `FFE0`/`FFE1` service, and a no-hardware simulator for contributors.
+
+Run `windows_app/setup.ps1` once, then `windows_app/run.ps1`. The visual Monitor
+shows physical occupancy mismatches, carriage state, magnet command, limit
+inputs, firmware memory, uptime, and connection freshness. Guided diagnostics,
+structured logs, privacy-sanitized support bundles, optional local camera view,
+automatic reconnect, and guarded developer controls are included. Start with
+**Diagnostics -> Run safe diagnostics**; it never moves hardware. **Start game
+and calibrate** intentionally begins physical movement.
+
+The HC-08 receives commands on D10 through a receive-only software UART and
+gets replies from hardware TX/D1. D0 remains dedicated to the onboard USB
+bridge, so Bluetooth and USB transmitters never fight electrically. To free
+D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
+pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
+See `windows_app/README.md` for the complete wiring and first-start procedure.
+
+Firmware 3.28 adds versioned `INFO`/`TELEM` monitoring and a best-effort `!`
+remote halt checked inside motion loops. Bluetooth and cameras are not safety
+systems, so a local physical power cutoff remains required for remote operation.
+
 ## Motor-driver configuration
 
 `MOTOR_MICROSTEPS` in `global.h` must match the hardware configuration of both

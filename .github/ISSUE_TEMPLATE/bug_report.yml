@@ -1,0 +1,40 @@
+name: Windows monitor bug
+description: Report a connection, visual-state, game, camera, or diagnostics problem
+title: "[Monitor]: "
+labels: ["windows-app", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please run **Diagnostics → Run safe diagnostics**, then create a support bundle if you are comfortable attaching it. Bundles exclude camera frames, PGNs, and camera credentials.
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Connection type
+      options: [Bluetooth LE, USB, Simulator]
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Include what the visual monitor showed and what the physical board did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      options:
+        - label: No injury, overheating, smoke, or uncontrolled motion occurred.
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Support bundle or diagnostic summary
+      description: Drag the ZIP here, or paste the copied summary. Remove anything you do not want public.

@@ -1,10 +1,29 @@
 #include <Wire.h>
 #include <EEPROM.h>
+#include <SoftwareSerial.h>
 #include <LiquidCrystal_I2C.h>
 #include "global.h"
 #include "Micro_Max.h"
 
+#define FIRMWARE_VERSION "3.28"
+
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+// Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
+// Bluetooth commands use D10 so the onboard USB bridge cannot fight HC-08 TXD.
+// The transmit argument is D1 but this receive-only object never writes it.
+SoftwareSerial bluetoothInput(BLUETOOTH_RX, 1);
+
+// The compact line protocol keeps the Nano responsible for motion and safety
+// while a Windows host can provide full chess rules and Stockfish.
+const byte HOST_INPUT_SIZE = 32;
+char host_input[HOST_INPUT_SIZE];
+byte host_input_length = 0;
+boolean remote_mode = false;
+boolean remote_human_white = true;
+boolean remote_human_move_pending = false;
+volatile boolean remote_stop_requested = false;
+char remote_move_flags = 0;
+char remote_promotion_piece = 0;
 
 enum {SIM_EMPTY, SIM_PAWN, SIM_KNIGHT, SIM_BISHOP, SIM_ROOK, SIM_QUEEN, SIM_KING};
 byte step_test_board[8][8];
@@ -164,7 +183,7 @@ void requestCalibration(byte next_sequence) {
   after_calibration = next_sequence;
   calibration_lane_confirmed = false;
   if (trolley_position_known ||
-      digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+      readControlPin(BUTTON_B_LIMIT_BLACK) == LOW) {
     sequence = calibration;
     showCalibration();
   }
@@ -175,6 +194,9 @@ void requestCalibration(byte next_sequence) {
 }
 
 void setup() {
+  Serial.begin(9600);
+  bluetoothInput.begin(9600);
+
   pinMode(MAGNET, OUTPUT);
   digitalWrite(MAGNET, LOW);
 
@@ -194,7 +216,8 @@ void setup() {
   pinMode(MUX_OUTPUT, INPUT_PULLUP);
 
   pinMode(BUTTON_A_LIMIT_WHITE, INPUT_PULLUP);
-  pinMode(BUTTON_B_LIMIT_BLACK, INPUT_PULLUP);
+  // A6 has no digital input buffer or internal pull-up. The external 10 kOhm
+  // pull-up makes a released switch read near 1023 and a pressed switch near 0.
 
   lcd.init();
   lcd.backlight();
@@ -205,9 +228,12 @@ void setup() {
   syncSensorState();
   sequence = main_menu;
   showMainMenu();
+  Serial.println(F("READY ACB1"));
 }
 
 void loop() {
+  processHostSerial();
+
   switch (sequence) {
     case main_menu:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
@@ -242,6 +268,7 @@ void loop() {
         delay(1000);
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
+        else if (sequence == remote_setup_check) showRemoteSetupCheck();
         else showServiceMenu();
       }
       else {
@@ -339,17 +366,466 @@ void loop() {
     case service_move_rank:
       serviceMoveRankLoop();
       break;
+
+    case remote_setup_check:
+      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
+        if (startingPositionIsValid()) beginRemoteSession();
+        else showStartingMismatch();
+      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
+        stopRemoteSession();
+      }
+      break;
+
+    case remote_human:
+      updateSensorsAndTrackMove();
+      if (human_move_ready && !pending_move_displayed) showRemotePendingMove();
+      if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
+      else if (buttonPressed(BUTTON_A_LIMIT_WHITE)) finishRemoteHumanTurn();
+      break;
+
+    case remote_wait_host:
+      if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
+      break;
+
+    case remote_undo_required:
+      scanSensors();
+      if (recordMatchesTurnStart()) {
+        syncSensorState();
+        beginRemoteHumanTurn();
+      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
+        stopRemoteSession();
+      }
+      break;
+
+    case remote_sensor_check:
+      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
+        if (physicalSensorsMatchExpected()) {
+          syncSensorState();
+          finishRemoteComputerTurn();
+        }
+        else showRemoteSensorMismatch();
+      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
+        stopRemoteSession();
+      }
+      break;
+
+    case remote_promotion_wait:
+      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
+        Serial.println(F("PROMOTION OK"));
+        beginRemoteHumanTurn();
+      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
+        stopRemoteSession();
+      }
+      break;
   }
 }
 
+// -------------------------- Windows host protocol -----------------------
+
+void sendHostError(const __FlashStringHelper *message) {
+  Serial.print(F("ERR "));
+  Serial.println(message);
+}
+
+void sendHostStatus() {
+  Serial.print(F("STATUS ACB1 "));
+  Serial.print(sequence);
+  Serial.print(' ');
+  Serial.print(trolley_homed ? 1 : 0);
+  Serial.print(' ');
+  Serial.println(remote_mode ? 1 : 0);
+}
+
+int freeRam() {
+  extern int __heap_start, *__brkval;
+  int stack_top;
+  return (int)&stack_top - (__brkval ? (int)__brkval : (int)&__heap_start);
+}
+
+void sendHostInfo() {
+  Serial.print(F("INFO ACB2 "));
+  Serial.print(F(FIRMWARE_VERSION));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST"));
+}
+
+void sendTelemetry() {
+  int black_raw = analogRead(BUTTON_B_LIMIT_BLACK);
+  Serial.print(F("TELEM ACB2 "));
+  Serial.print(sequence);
+  Serial.print(' ');
+  Serial.print(trolley_homed ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(remote_mode ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(motion_fault ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(magnet_state ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(trolley_coordinate_X);
+  Serial.print(' ');
+  Serial.print(trolley_coordinate_Y);
+  Serial.print(' ');
+  Serial.print(readControlPin(BUTTON_A_LIMIT_WHITE) == HIGH ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(black_raw >= 512 ? 1 : 0);
+  Serial.print(' ');
+  Serial.print(black_raw);
+  Serial.print(' ');
+  Serial.print(freeRam());
+  Serial.print(' ');
+  Serial.println(millis() / 1000UL);
+}
+
+void sendSensorSnapshot() {
+  scanSensors();
+  Serial.print(F("BOARD "));
+  const char hex[] = "0123456789ABCDEF";
+  for (byte row = 0; row < 8; row++) {
+    byte occupied = 0;
+    for (byte column = 0; column < 8; column++) {
+      if (reed_sensor_record[row][column] == LOW) occupied |= 1 << column;
+    }
+    Serial.print(hex[occupied >> 4]);
+    Serial.print(hex[occupied & 15]);
+  }
+  Serial.println();
+}
+
+void testBluetoothModule() {
+  // HC-08 accepts AT only while it is not connected. This diagnostic sends no
+  // newline to the module, captures its short reply, then wraps it for USB.
+  while (bluetoothInput.available()) bluetoothInput.read();
+  Serial.print(F("AT"));
+  Serial.flush();
+  delay(300);
+
+  char reply[13];
+  byte reply_length = 0;
+  while (bluetoothInput.available() && reply_length < sizeof(reply) - 1) {
+    char value = bluetoothInput.read();
+    if (value >= 32 && value <= 126) reply[reply_length++] = value;
+  }
+  reply[reply_length] = 0;
+  Serial.println();
+  Serial.print(F("BT "));
+  if (reply_length) Serial.println(reply);
+  else Serial.println(F("NO REPLY"));
+}
+
+void startRemoteSession(boolean human_white) {
+  if (sequence != main_menu) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+
+  remote_mode = true;
+  remote_human_white = human_white;
+  remote_human_move_pending = false;
+  remote_promotion_piece = 0;
+  AI_reset();
+  resetMoveTracker();
+  Serial.print(F("OK START "));
+  Serial.println(remote_human_white ? 'W' : 'B');
+  requestCalibration(remote_setup_check);
+}
+
+void stopRemoteSession() {
+  returnToMainMenu();
+  Serial.println(F("STOPPED"));
+}
+
+void processHostCommand(char *line) {
+  if (strcmp(line, "PING") == 0 || strcmp(line, "HELLO") == 0) {
+    Serial.println(F("PONG ACB1"));
+    return;
+  }
+  if (strcmp(line, "INFO") == 0) {
+    sendHostInfo();
+    return;
+  }
+  if (strcmp(line, "TELEM") == 0) {
+    sendTelemetry();
+    return;
+  }
+  if (strcmp(line, "STATUS") == 0) {
+    sendHostStatus();
+    return;
+  }
+  if (strcmp(line, "BOARD") == 0) {
+    sendSensorSnapshot();
+    return;
+  }
+  if (strcmp(line, "BTTEST") == 0) {
+    if (sequence == main_menu) testBluetoothModule();
+    else sendHostError(F("BUSY"));
+    return;
+  }
+  if (strcmp(line, "STOP") == 0) {
+    stopRemoteSession();
+    return;
+  }
+  if (strncmp(line, "START ", 6) == 0 &&
+      (line[6] == 'W' || line[6] == 'B') && line[7] == 0) {
+    startRemoteSession(line[6] == 'W');
+    return;
+  }
+  if (strcmp(line, "ACCEPT") == 0) {
+    if (!remote_mode || sequence != remote_wait_host ||
+        !remote_human_move_pending) {
+      sendHostError(F("NO MOVE"));
+      return;
+    }
+    remote_human_move_pending = false;
+    lcd.clear();
+    lcd.print(F("HOST THINKING"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("B=STOP"));
+    Serial.println(F("OK ACCEPT"));
+    return;
+  }
+  if (strcmp(line, "REJECT") == 0) {
+    if (!remote_mode || sequence != remote_wait_host ||
+        !remote_human_move_pending) {
+      sendHostError(F("NO MOVE"));
+      return;
+    }
+    remote_human_move_pending = false;
+    sequence = remote_undo_required;
+    lcd.clear();
+    lcd.print(F("INVALID MOVE"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("UNDO B=STOP"));
+    Serial.println(F("OK REJECT"));
+    return;
+  }
+  if (strncmp(line, "PLAY ", 5) == 0) {
+    if (!remote_mode || sequence != remote_wait_host) {
+      sendHostError(F("NOT READY"));
+      return;
+    }
+    if (remote_human_move_pending) {
+      sendHostError(F("ACCEPT FIRST"));
+      return;
+    }
+
+    char *move_text = line + 5;
+    char *flag_text = strchr(move_text, ' ');
+    if (flag_text) {
+      *flag_text++ = 0;
+      remote_move_flags = *flag_text;
+    }
+    else remote_move_flags = 0;
+
+    if (!validMoveText(move_text)) {
+      sendHostError(F("BAD MOVE"));
+      return;
+    }
+    for (byte i = 0; i < 4; i++) lastM[i] = move_text[i];
+    lastM[4] = 0;
+    remote_promotion_piece = move_text[4];
+    if (remote_promotion_piece == 'q' || remote_promotion_piece == 'r' ||
+        remote_promotion_piece == 'b' || remote_promotion_piece == 'n') {
+      remote_move_flags = 'P';
+    }
+    else remote_promotion_piece = 0;
+    executeRemoteComputerMove();
+    return;
+  }
+  if (strncmp(line, "GAMEOVER", 8) == 0) {
+    if (!remote_mode) {
+      sendHostError(F("NO SESSION"));
+      return;
+    }
+    sequence = game_over_screen;
+    lcd.clear();
+    lcd.print(F("GAME OVER"));
+    if (line[8] == ' ') {
+      lcd.setCursor(0, 1);
+      lcd.print(line + 9);
+    }
+    Serial.println(F("OK GAMEOVER"));
+    return;
+  }
+  sendHostError(F("COMMAND"));
+}
+
+void processHostStream(Stream &input) {
+  while (input.available()) {
+    char value = input.read();
+    if (value == '!') {
+      host_input_length = 0;
+      tripRemoteEmergencyStop();
+      continue;
+    }
+    if (value == '\r' || value == '\n') {
+      if (host_input_length == 0) continue;
+      host_input[host_input_length] = 0;
+      processHostCommand(host_input);
+      host_input_length = 0;
+    }
+    else if (value >= 32 && value <= 126) {
+      if (host_input_length < HOST_INPUT_SIZE - 1) {
+        host_input[host_input_length++] = value;
+      }
+      else {
+        host_input_length = 0;
+        sendHostError(F("LINE LONG"));
+      }
+    }
+  }
+}
+
+void processHostSerial() {
+  processHostStream(Serial);
+  processHostStream(bluetoothInput);
+}
+
+void showRemoteSetupCheck() {
+  lcd.clear();
+  lcd.print(F("SET START PIECES"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A=READY B=STOP"));
+  Serial.println(F("SETUP PRESS A"));
+}
+
+void beginRemoteSession() {
+  Serial.print(F("SESSION "));
+  Serial.println(remote_human_white ? 'W' : 'B');
+  if (remote_human_white) beginRemoteHumanTurn();
+  else {
+    sequence = remote_wait_host;
+    lcd.clear();
+    lcd.print(F("HOST MOVE"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("B=STOP"));
+    Serial.println(F("TURN COMPUTER"));
+  }
+}
+
+void beginRemoteHumanTurn() {
+  copySensorTable(reed_sensor_status, turn_start_status);
+  resetMoveTracker();
+  remote_human_move_pending = false;
+  sequence = remote_human;
+  lcd.clear();
+  lcd.print(F("YOUR MOVE"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A=SEND B=STOP"));
+  Serial.println(F("TURN HUMAN"));
+}
+
+void showRemotePendingMove() {
+  pending_move_displayed = true;
+  lcd.clear();
+  lcd.print(F("SEND "));
+  printSquare(move_from);
+  lcd.print('-');
+  printSquare(move_to);
+  lcd.setCursor(0, 1);
+  lcd.print(F("A=SEND B=STOP"));
+}
+
+void finishRemoteHumanTurn() {
+  if (sensor_tracking_error) {
+    sequence = remote_undo_required;
+    lcd.clear();
+    lcd.print(F("TOO MANY CHANGES"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("UNDO B=STOP"));
+    Serial.println(F("ERR TRACKING"));
+    return;
+  }
+  if (!human_move_ready) {
+    lcd.clear();
+    lcd.print(F("MOVE NOT READY"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("LIFT THEN PLACE"));
+    delay(1000);
+    lcd.clear();
+    lcd.print(F("YOUR MOVE"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("A=SEND B=STOP"));
+    return;
+  }
+
+  squareToMoveChars(move_from, move_to);
+  remote_human_move_pending = true;
+  sequence = remote_wait_host;
+  lcd.clear();
+  lcd.print(F("CHECKING "));
+  printMove(mov);
+  lcd.setCursor(0, 1);
+  lcd.print(F("B=STOP"));
+  Serial.print(F("MOVE "));
+  Serial.println(mov);
+}
+
+void showRemoteSensorMismatch() {
+  lcd.clear();
+  lcd.print(F("CHECK MOVED PIECE"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("A=RETRY B=STOP"));
+}
+
+void executeRemoteComputerMove() {
+  lcd.clear();
+  lcd.print(F("PC MOVE "));
+  printMove(lastM);
+  lcd.setCursor(0, 1);
+  lcd.print(F("KEEP HANDS CLEAR"));
+  Serial.print(F("MOVING "));
+  Serial.println(lastM);
+  delay(500);
+
+  if (!computerPlayerMovement(lastM, remote_move_flags)) {
+    sequence = fault_screen;
+    showMotionFault();
+    sendHostError(F("MOTION"));
+    return;
+  }
+  if (!physicalSensorsMatchExpected()) {
+    sequence = remote_sensor_check;
+    showRemoteSensorMismatch();
+    sendHostError(F("SENSORS"));
+    return;
+  }
+  syncSensorState();
+  finishRemoteComputerTurn();
+}
+
+void finishRemoteComputerTurn() {
+  Serial.print(F("DONE "));
+  Serial.println(lastM);
+  if (remote_move_flags == 'P') {
+    sequence = remote_promotion_wait;
+    lcd.clear();
+    lcd.print(F("REPLACE PAWN "));
+    lcd.print((char)toupper(remote_promotion_piece));
+    lcd.setCursor(0, 1);
+    lcd.print(F("A=READY B=STOP"));
+    Serial.print(F("PROMOTE "));
+    Serial.println(remote_promotion_piece);
+  }
+  else beginRemoteHumanTurn();
+}
+
 // Waits for release so the same input can become an emergency stop during motion.
+byte readControlPin(byte pin) {
+  if (pin == BUTTON_B_LIMIT_BLACK) return analogRead(pin) >= 512 ? HIGH : LOW;
+  return digitalRead(pin);
+}
+
 boolean buttonPressed(byte pin) {
-  if (digitalRead(pin) == HIGH) return false;
+  if (readControlPin(pin) == HIGH) return false;
   delay(20);
-  if (digitalRead(pin) == HIGH) return false;
+  if (readControlPin(pin) == HIGH) return false;
 
   unsigned long started = millis();
-  while (digitalRead(pin) == LOW) {
+  while (readControlPin(pin) == LOW) {
     if (millis() - started > 2000UL) return false;
   }
   delay(20);
@@ -359,6 +835,9 @@ boolean buttonPressed(byte pin) {
 void returnToMainMenu() {
   setMagnet(false);
   motion_fault = false;
+  remote_stop_requested = false;
+  remote_mode = false;
+  remote_human_move_pending = false;
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -672,8 +1151,11 @@ void recordPlacement(byte destination) {
   if (lifted_count == 0) return;
 
   byte source = NO_SQUARE;
-  for (byte i = lifted_count; i > 0; i--) {
-    byte candidate = lifted_squares[i - 1];
+  // Captures are performed by lifting the moving piece first. Prefer that
+  // first lift so en-passant (whose captured pawn is not on the destination)
+  // is reported correctly; fall back for a lift-and-replace gesture.
+  for (byte i = 0; i < lifted_count; i++) {
+    byte candidate = lifted_squares[i];
     if (candidate != destination) {
       source = candidate;
       break;
@@ -715,6 +1197,34 @@ unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
   return MOTOR_START_DELAY - (unsigned int)(delay_range * edge_distance / ramp_steps);
 }
 
+void tripRemoteEmergencyStop() {
+  if (remote_stop_requested) return;
+  remote_stop_requested = true;
+  motion_fault = true;
+  trolley_homed = false;
+  setMagnet(false);
+  sequence = fault_screen;
+  showMotionFault();
+  Serial.println(F("ESTOP REMOTE"));
+}
+
+boolean drainForEmergencyStop(Stream &input) {
+  boolean requested = false;
+  while (input.available()) {
+    if (input.read() == '!') requested = true;
+  }
+  return requested;
+}
+
+boolean pollRemoteEmergencyStop() {
+  if (remote_stop_requested) return true;
+  boolean requested = drainForEmergencyStop(Serial);
+  if (drainForEmergencyStop(bluetoothInput)) requested = true;
+  if (!requested) return false;
+  tripRemoteEmergencyStop();
+  return true;
+}
+
 boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps, boolean monitor_stops) {
   if (monitor_stops && motion_fault) return false;
   if (steps == 0) return true;
@@ -723,8 +1233,10 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
   delayMicroseconds(2);
 
   for (unsigned int step_count = 0; step_count < steps; step_count++) {
+    if ((step_count & 7) == 0 && pollRemoteEmergencyStop()) return false;
     if (monitor_stops &&
-        (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW || digitalRead(BUTTON_B_LIMIT_BLACK) == LOW)) {
+        (readControlPin(BUTTON_A_LIMIT_WHITE) == LOW ||
+         readControlPin(BUTTON_B_LIMIT_BLACK) == LOW)) {
       motion_fault = true;
       trolley_homed = false;
       setMagnet(false);
@@ -769,9 +1281,10 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
   unsigned long white_accumulator = 0;
   unsigned long black_accumulator = 0;
   for (unsigned int event = 0; event < event_count; event++) {
+    if ((event & 7) == 0 && pollRemoteEmergencyStop()) return false;
     if (monitor_stops &&
-        (digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-         digitalRead(BUTTON_B_LIMIT_BLACK) == LOW)) {
+        (readControlPin(BUTTON_A_LIMIT_WHITE) == LOW ||
+         readControlPin(BUTTON_B_LIMIT_BLACK) == LOW)) {
       motion_fault = true;
       trolley_homed = false;
       setMagnet(false);
@@ -891,12 +1404,12 @@ boolean motor(byte direction, unsigned int speed_delay, float distance, boolean 
 boolean prepareFirstCalibrationApproach() {
   // Never seek the first (white) switch while the head is in the lane that
   // leads to the second (black) switch at the calibration corner.
-  if (digitalRead(BUTTON_B_LIMIT_BLACK) == LOW) {
+  if (readControlPin(BUTTON_B_LIMIT_BLACK) == LOW) {
     calibration_lane_confirmed = false;
     trolley_homed = false;
     if (!pulseMotor(R_L, SPEED_SLOW,
                     CALIBRATION_LANE_CLEARANCE_STEPS, false)) return false;
-    return digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
+    return readControlPin(BUTTON_B_LIMIT_BLACK) == HIGH;
   }
 
   // A coordinate restored from EEPROM is enough for this one safe staging
@@ -922,11 +1435,11 @@ boolean prepareFirstCalibrationApproach() {
 boolean homeAxisMeasured(byte direction, byte limit_pin,
                          unsigned int &measured_steps) {
   measured_steps = 0;
-  while (digitalRead(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
+  while (readControlPin(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
     if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
     measured_steps++;
   }
-  return digitalRead(limit_pin) == LOW;
+  return readControlPin(limit_pin) == LOW;
 }
 
 boolean moveCalibrationCornerToPark() {
@@ -935,8 +1448,8 @@ boolean moveCalibrationCornerToPark() {
   if (!motor(R_L, SPEED_FAST, CALIBRATION_PARK_BLACK_OFFSET, false)) return false;
   if (!motor(T_B, SPEED_FAST, CALIBRATION_PARK_WHITE_OFFSET, false)) return false;
 
-  return digitalRead(BUTTON_A_LIMIT_WHITE) == HIGH &&
-         digitalRead(BUTTON_B_LIMIT_BLACK) == HIGH;
+  return readControlPin(BUTTON_A_LIMIT_WHITE) == HIGH &&
+         readControlPin(BUTTON_B_LIMIT_BLACK) == HIGH;
 }
 
 boolean restoreStepTestStart() {
@@ -968,6 +1481,7 @@ boolean measureStepTestReference(unsigned int &white_steps,
 boolean calibrateBoard() {
   setMagnet(false);
   motion_fault = false;
+  remote_stop_requested = false;
 
   if (!prepareFirstCalibrationApproach()) {
     motion_fault = true;
@@ -1077,6 +1591,7 @@ void showStepTestDifference(unsigned int ply, int white_delta, int black_delta) 
 void runStepLossTest() {
   setMagnet(false);
   motion_fault = false;
+  remote_stop_requested = false;
   AI_reset();
   initializeStepTestBoard();
 
@@ -1145,8 +1660,8 @@ void runStepLossTest() {
     lcd.print(F(" A/B=STOP"));
 
     if (!executeSimulatedChessMove(lastM)) {
-      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      aborted = readControlPin(BUTTON_A_LIMIT_WHITE) == LOW ||
+                readControlPin(BUTTON_B_LIMIT_BLACK) == LOW;
       trolley_homed = false;
       lcd.clear();
       lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
@@ -1163,8 +1678,8 @@ void runStepLossTest() {
 
     if (!moveTrolleyStraightTo(CALIBRATION_PARK_FILE,
                                CALIBRATION_PARK_RANK, SPEED_FAST)) {
-      aborted = digitalRead(BUTTON_A_LIMIT_WHITE) == LOW ||
-                digitalRead(BUTTON_B_LIMIT_BLACK) == LOW;
+      aborted = readControlPin(BUTTON_A_LIMIT_WHITE) == LOW ||
+                readControlPin(BUTTON_B_LIMIT_BLACK) == LOW;
       trolley_homed = false;
       lcd.clear();
       lcd.print(aborted ? F("TEST ABORTED") : F("MOTION TEST FAIL"));
@@ -1311,16 +1826,16 @@ boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
   return moveTrolleyStraightTo(to_x, rank, SPEED_FAST);
 }
 
-boolean blackPlayerMovement() {
-  if (!validMoveText(lastM) || !trolley_homed) {
+boolean computerPlayerMovement(const char *move_text, char move_flags) {
+  if (!validMoveText(move_text) || !trolley_homed) {
     motion_fault = true;
     return false;
   }
 
-  byte departure_x = lastM[0] - 'a' + 1;
-  byte departure_y = lastM[1] - '0';
-  byte arrival_x = lastM[2] - 'a' + 1;
-  byte arrival_y = lastM[3] - '0';
+  byte departure_x = move_text[0] - 'a' + 1;
+  byte departure_y = move_text[1] - '0';
+  byte arrival_x = move_text[2] - 'a' + 1;
+  byte arrival_y = move_text[3] - '0';
   byte displacement_x = abs((int)arrival_x - (int)departure_x);
   byte displacement_y = abs((int)arrival_y - (int)departure_y);
 
@@ -1328,22 +1843,25 @@ boolean blackPlayerMovement() {
   byte arrival_column = arrival_x - 1;
   boolean destination_occupied = reed_sensor_status[arrival_row][arrival_column] == LOW;
 
-  // A black en-passant capture lands diagonally on an empty rank-3 square.
-  boolean en_passant = !destination_occupied && departure_y == 4 && arrival_y == 3 &&
-                       displacement_x == 1 && displacement_y == 1 &&
-                       reed_sensor_status[8 - (arrival_y + 1)][arrival_column] == LOW;
+  // In remote mode the Windows rules engine marks en passant explicitly. The
+  // second clause preserves Micro-Max's black-only standalone behavior.
+  boolean en_passant = move_flags == 'E' ||
+                       (!destination_occupied && departure_y == 4 && arrival_y == 3 &&
+                        displacement_x == 1 && displacement_y == 1 &&
+                        reed_sensor_status[8 - departure_y][arrival_column] == LOW);
 
   if (destination_occupied) {
     if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
   }
   else if (en_passant) {
-    if (!removeCapturedPiece(arrival_x, arrival_y + 1)) return false;
+    if (!removeCapturedPiece(arrival_x, departure_y)) return false;
   }
 
   if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
     return false;
-  boolean castling = departure_x == 5 && departure_y == 8 &&
-                     arrival_y == 8 && (arrival_x == 3 || arrival_x == 7);
+  boolean castling = move_flags == 'C' ||
+                     (departure_x == 5 && departure_y == arrival_y &&
+                      displacement_x == 2);
   if (castling) {
     if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
       return false;
@@ -1364,19 +1882,24 @@ boolean blackPlayerMovement() {
   byte departure_column = departure_x - 1;
   reed_sensor_status[departure_row][departure_column] = HIGH;
   reed_sensor_status[arrival_row][arrival_column] = LOW;
-  if (en_passant) reed_sensor_status[8 - (arrival_y + 1)][arrival_column] = HIGH;
+  if (en_passant) reed_sensor_status[8 - departure_y][arrival_column] = HIGH;
 
-  if (departure_x == 5 && departure_y == 8 && arrival_y == 8) {
+  if (castling) {
+    byte castling_row = 8 - departure_y;
     if (arrival_x == 7) {
-      reed_sensor_status[0][7] = HIGH;
-      reed_sensor_status[0][5] = LOW;
+      reed_sensor_status[castling_row][7] = HIGH;
+      reed_sensor_status[castling_row][5] = LOW;
     }
     else if (arrival_x == 3) {
-      reed_sensor_status[0][0] = HIGH;
-      reed_sensor_status[0][3] = LOW;
+      reed_sensor_status[castling_row][0] = HIGH;
+      reed_sensor_status[castling_row][3] = LOW;
     }
   }
   return true;
+}
+
+boolean blackPlayerMovement() {
+  return computerPlayerMovement(lastM, 0);
 }
 
 // ---------------------------- Persistent service mode --------------------
