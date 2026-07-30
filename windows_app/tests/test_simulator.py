@@ -11,8 +11,8 @@ class SimulatorTests(unittest.TestCase):
 
         def on_line(line):
             lines.append(line)
-            if any(value.startswith("TELEM ACB2") for value in lines) and \
-                    any(value.startswith("BOARD ") for value in lines):
+            if all(any(value.startswith(prefix) for value in lines)
+                   for prefix in ("INFO ACB2", "TELEM ACB2", "BOARD ")):
                 received.set()
 
         transport = SimulatorTransport(on_line, lambda _status: None)
