@@ -48,7 +48,13 @@ enum {
   service_menu,
   service_sensors,
   service_move_file,
-  service_move_rank
+  service_move_rank,
+  remote_setup_check,
+  remote_human,
+  remote_wait_host,
+  remote_undo_required,
+  remote_sensor_check,
+  remote_promotion_wait
 };
 byte sequence = start_up;
 byte after_calibration = setup_check;
@@ -103,8 +109,11 @@ const byte MUX_SELECT[4] = {13, 9, 8, 7};
 const byte MUX_OUTPUT = 12;
 
 // Button A shares its input with one limit switch; Button B shares the other.
+// A6 is analog-input-only, so Button B/black limit needs an external 10 kOhm
+// pull-up to 5 V. D10 is reserved for the HC-08 receive-only software UART.
 const byte BUTTON_A_LIMIT_WHITE = 11;
-const byte BUTTON_B_LIMIT_BLACK = 10;
+const byte BUTTON_B_LIMIT_BLACK = A6;
+const byte BLUETOOTH_RX = 10;
 
 extern char lastM[];
 

@@ -1,0 +1,44 @@
+name: Windows companion
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - "windows_app/**"
+      - ".github/workflows/windows-app.yml"
+  pull_request:
+    paths:
+      - "windows_app/**"
+      - ".github/workflows/windows-app.yml"
+
+jobs:
+  test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            windows_app/requirements.txt
+            windows_app/requirements-dev.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q .
+      - run: python -m ruff check .
+      - name: Build public Windows folder
+        shell: pwsh
+        run: .\build.ps1
+      - name: Upload tested Windows folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenAutomaticChessboard-windows
+          path: windows_app/dist/OpenAutomaticChessboard
+          if-no-files-found: error

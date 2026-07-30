@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-automatic-chessboard-monitor"
+version = "1.0.0.dev0"
+description = "Visual Windows monitoring, diagnostics, and Stockfish companion for an Arduino Nano chessboard"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+dependencies = [
+  "bleak==1.1.1",
+  "python-chess==1.999",
+  "pyserial==3.5",
+]
+
+[project.optional-dependencies]
+camera = ["opencv-python>=4.10,<5", "Pillow>=10,<13"]
+dev = ["pyinstaller>=6,<7", "ruff>=0.9,<1"]
+
+[project.scripts]
+automatic-chessboard = "app:main"
+
+[tool.setuptools]
+py-modules = ["app", "camera_source", "model", "protocol", "support", "transports"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [".venv", "stockfish", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
