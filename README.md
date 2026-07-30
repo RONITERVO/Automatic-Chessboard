@@ -46,8 +46,9 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 3.28 adds versioned `INFO`/`TELEM` monitoring and a best-effort `!`
-remote halt checked inside motion loops. Bluetooth and cameras are not safety
+Firmware 3.29 adds versioned `INFO`/`TELEM` monitoring, fixed reed-sensor rank
+normalization for the published hardware, and a best-effort `!` remote halt
+checked inside motion loops. Bluetooth and cameras are not safety
 systems, so a local physical power cutoff remains required for remote operation.
 
 ## Motor-driver configuration

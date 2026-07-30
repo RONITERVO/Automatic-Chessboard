@@ -31,8 +31,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(play_command("e7e8q"), "PLAY e7e8q")
 
     def test_versioned_info_and_telemetry(self):
-        info = parse_info(parse_event("INFO ACB2 3.28 BOARD,TELEM,REMOTE,ESTOP"))
-        self.assertEqual(info.firmware, "3.28")
+        info = parse_info(parse_event("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST"))
+        self.assertEqual(info.firmware, "3.29")
         self.assertIn("ESTOP", info.capabilities)
         telemetry = parse_telemetry(
             parse_event("TELEM ACB2 17 1 1 0 0 5 6 1 1 1023 847 65")

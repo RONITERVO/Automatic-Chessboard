@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 3.28 advertises `ACB2` monitoring while retaining the legacy
+terminator. Firmware 3.29 advertises `ACB2` monitoring while retaining the legacy
 `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 3.28 BOARD,TELEM,REMOTE,ESTOP,BTTEST
+< INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -28,9 +28,10 @@ supports every command. A missing `INFO` response indicates legacy firmware.
 - `BOARD` → sixteen hexadecimal occupancy digits
 - `BTTEST` → idle-only HC-08 AT test; normally run over USB
 
-`BOARD` contains two hexadecimal digits per internal row, rank 8 through rank 1.
+`BOARD` contains two hexadecimal digits per normalized row, rank 8 through rank 1.
 Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a magnetic
-piece. It contains no piece-type or colour information.
+piece. It contains no piece-type or colour information. Firmware applies the
+fixed hardware row map before producing this snapshot.
 
 `TELEM` fields are positional to minimize Nano memory:
 
@@ -43,6 +44,10 @@ TELEM ACB2 sequence homed remote fault magnet x y a_released b_released b_raw fr
 - `b_raw` is the A6 ADC value, normally near 1023 when released and 0 when active.
 - `free_ram` is an instantaneous stack-to-heap estimate.
 - `uptime_s` wraps with the Nano's `millis()` counter.
+
+The fixed reported-to-physical rank mapping is `8->1, 7->2, 2->3, 1->4, 4->5,
+3->6, 6->7, 5->8`; files A-H are unchanged. This is part of the hardware/firmware
+contract and is not a runtime setting.
 
 ## Game and motion commands
 

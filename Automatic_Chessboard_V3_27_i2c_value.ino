@@ -1,11 +1,12 @@
 #include <Wire.h>
 #include <EEPROM.h>
+#include <avr/pgmspace.h>
 #include <SoftwareSerial.h>
 #include <LiquidCrystal_I2C.h>
 #include "global.h"
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "3.28"
+#define FIRMWARE_VERSION "3.29"
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
@@ -48,6 +49,15 @@ int position_record_slot = -1;
 unsigned int position_record_sequence = 0;
 boolean trolley_position_known = false;
 boolean calibration_lane_confirmed = false;
+
+// Raw multiplexer rows follow the glued-tile wiring documented in
+// windows_app/README.md. Normalize them once, before any chess logic or host
+// telemetry sees the board. The eight-byte permutation stays in flash.
+const byte SENSOR_ROW_MAP[8] PROGMEM = {7, 6, 1, 0, 3, 2, 5, 4};
+
+byte logicalSensorRow(byte raw_row) {
+  return pgm_read_byte(&SENSOR_ROW_MAP[raw_row]);
+}
 
 byte positionRecordChecksum(unsigned int record_sequence, byte state,
                             byte coordinate_x, byte coordinate_y) {
@@ -1033,7 +1043,9 @@ void scanSensors() {
       high_votes += digitalRead(MUX_OUTPUT);
       delayMicroseconds(30);
       high_votes += digitalRead(MUX_OUTPUT);
-      reed_sensor_record[7 - column][row] = high_votes >= 2 ? HIGH : LOW;
+      byte raw_row = 7 - column;
+      reed_sensor_record[logicalSensorRow(raw_row)][row] =
+          high_votes >= 2 ? HIGH : LOW;
       row++;
       if (channel == 7) {
         column++;

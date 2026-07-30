@@ -11,3 +11,5 @@
 - Added optional USB/RTSP/HTTP camera view with explicit snapshots only.
 - Added simulator mode and command-risk gating for contributors.
 - Added public documentation, tests, Windows build script, issue template, and CI.
+- Added fixed reed-sensor rank normalization for the published glued-tile wiring
+  in firmware 3.29.

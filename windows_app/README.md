@@ -51,6 +51,30 @@ analog-input-only. The HC-08 service jumper can remain closed during USB uploads
 Use Nano 5 V for HC-08 VCC only if the carrier board explicitly includes a 3.3 V
 regulator and accepts 5 V input. A bare HC-08 requires regulated 3.3 V power.
 
+## Reed-sensor rank wiring (firmware 3.29+)
+
+The firmware is built for the glued-tile wiring used by this project. It
+normalizes raw multiplexer ranks before standalone move recognition, capture
+handling, setup checks, and `BOARD` telemetry. Files A-H are unchanged; ranks
+follow this fixed permutation:
+
+| Previously reported rank | Physical/logical rank |
+| ---: | ---: |
+| 8 | 1 |
+| 7 | 2 |
+| 2 | 3 |
+| 1 | 4 |
+| 4 | 5 |
+| 3 | 6 |
+| 6 | 7 |
+| 5 | 8 |
+
+For example, a raw A8 switch is displayed and interpreted as A1, and raw F4 is
+displayed and interpreted as F5. Builders should follow the hardware files that
+will be published with this repository. If a custom board uses different wiring,
+change the firmware table rather than only flipping the Windows drawing, because
+the Nano also uses these squares for chess logic.
+
 ## Install and run
 
 Install Python 3.11 or newer, then open PowerShell in this directory:
