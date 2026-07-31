@@ -2,13 +2,14 @@
 #include <EEPROM.h>
 #include <avr/pgmspace.h>
 #include <SoftwareSerial.h>
-#include <LiquidCrystal_I2C.h>
+#include <hd44780.h>
+#include <hd44780ioClass/hd44780_I2Cexp.h>
 #include "global.h"
 #include "Micro_Max.h"
 
 #define FIRMWARE_VERSION "3.29"
 
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+hd44780_I2Cexp lcd;
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
 // Bluetooth commands use D10 so the onboard USB bridge cannot fight HC-08 TXD.
 // The transmit argument is D1 but this receive-only object never writes it.
@@ -229,7 +230,11 @@ void setup() {
   // A6 has no digital input buffer or internal pull-up. The external 10 kOhm
   // pull-up makes a released switch read near 1023 and a pressed switch near 0.
 
-  lcd.init();
+  const int lcd_status = lcd.begin(16, 2);
+  if (lcd_status) {
+    Serial.print(F("LCDERR "));
+    Serial.println(lcd_status);
+  }
   lcd.backlight();
   loadPersistedTrolleyPosition();
   showPersistedTrolleyPosition();

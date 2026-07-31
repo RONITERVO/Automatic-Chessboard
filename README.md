@@ -24,9 +24,10 @@ PCB source. The 5 V buck output belongs on the Nano `5V` pin, not `VIN`.
 
 ## Building
 
-Open `Automatic_Chessboard_V3_27_i2c_value.ino` in the Arduino IDE, install a
-compatible `LiquidCrystal_I2C` library, select the board used by the project,
-and compile or upload the sketch.
+Open `Automatic_Chessboard_V3_27_i2c_value.ino` in the Arduino IDE, install the
+`hd44780` library by Bill Perry, select the board used by the project, and
+compile or upload the sketch. The firmware uses `hd44780_I2Cexp` so common
+PCF8574 LCD backpacks are detected without assuming one fixed pin mapping.
 
 Review the pin assignments, travel calibration, limit-switch behavior, driver
 current limit, and microstep settings before powering the motion hardware.
