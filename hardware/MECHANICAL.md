@@ -76,6 +76,38 @@ five longitudinal lengths above. If a printer cannot make a rail in one piece,
 the segment joints need positive alignment and reinforcement; glue-only butt
 joints are not suitable for wheel-bearing or belt loads.
 
+## Enclosure, sliding chassis, and board support
+
+The working mechanism is built as a removable internal body that slides into
+the outer case from the front. Four TPU spacers attach at the front and rear of
+that body. They center it, restrain movement, support the enclosure/chassis
+interface, and reduce vibration. Fit them with light, even compression: the
+body must not rattle, but it must remain removable without bending the frame or
+dragging cables through the case.
+
+The tested case was printed with a 0.8 mm nozzle, three perimeters, and a slicer
+extrusion-width limit of about 0.82 mm, giving a nominal 2.4 mm wall, top, and
+floor. These settings describe the prototype rather than imposing one printer
+profile. A substitute case must remain flat, keep the board and chassis
+supported, and preserve access to the cutoff, fuses, USB connector, driver
+adjusters, and removable harnesses.
+
+The prototype's 2.2 mm tiles are glued to a repurposed 3D-printer glass door.
+Because the glass is about as thick as the 2.4 mm case top, stacking the glass
+board on an intact top would add a second structural layer to the magnetic
+pickup path. The prototype instead supports the glass in an opening cut into
+the printed case, lowering the playing surface while keeping it rigid.
+
+A builder who attaches the tiles and supported reed switches directly to the
+case top does not need that opening: the case top replaces the glass layer.
+Whichever method is used, support the complete 300 x 300 mm field against
+tilting and flex, protect glass edges, retain the board against sliding, and
+test pickup plus sensing with every piece on every square. Never cut or drill a
+glass plate unless its manufacturer explicitly permits that operation.
+
+See the [working prototype photographs](PROTOTYPE.md) for the sliding body,
+TPU spacer function, glass recess, and current enclosure print settings.
+
 ## Reed tile requirements
 
 - Place one normally-open reed switch at each logical square.

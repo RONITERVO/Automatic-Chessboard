@@ -26,8 +26,11 @@ microstep selection are configured on the driver hardware.
 For a complete beginner-oriented build, start with the
 [`hardware` build guide](hardware/README.md). It includes protected power
 wiring, a BOM, exact Nano and 64-square sensor maps, staged assembly,
-commissioning checks, diagrams, and a quarantined copy of the incomplete legacy
-PCB source. The 5 V buck output belongs on the Nano `5V` pin, not `VIN`.
+commissioning checks, diagrams, photographs of the working prototype, and
+rework notes for the operational long PCB whose design predates the current
+Bluetooth and A6 additions. Its archived KiCad source is reference-only, not a
+current fabrication release. The 5 V buck output belongs on the Nano `5V` pin,
+not `VIN`.
 
 ## Building
 

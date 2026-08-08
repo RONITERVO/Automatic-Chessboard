@@ -8,9 +8,16 @@ models that have their own authors and license terms.
 The files in [`project_authored`](project_authored/) were designed for this
 Automatic Chessboard project:
 
-- `enclosure/` contains the tested enclosure model.
+- `enclosure/` contains the tested outer case; the complete mechanism slides
+  into it from the front.
 - `board_tiles/` contains the common chessboard tile with a sensor cutout.
-- `frame_spacers/` contains the TPU spacers pressed between the case and frame.
+- `frame_spacers/` contains the four TPU parts attached at the front and rear
+  of the internal body. They center and support it inside the case while
+  reducing vibration and rattling.
+
+The photographed construction, tested enclosure settings, glass-board recess,
+and direct-to-case tile alternative are documented in
+[`PROTOTYPE.md`](../PROTOTYPE.md).
 
 These project-authored models are covered by the repository's
 [CC BY-NC-SA 4.0 license](../../LICENSE.md). They are part of a modified build

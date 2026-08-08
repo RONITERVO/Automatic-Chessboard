@@ -67,7 +67,7 @@ for its `R100` carriers and donor motors; it is not a universal A4988 setting.
 
 | Qty | Part | Requirement or suggested starting quantity |
 | ---: | --- | --- |
-| 1-3 | Prototyping board | 2.54 mm plated perfboard, or a purpose-built board that implements `connections.csv`; do not manufacture the incomplete legacy PCB |
+| 1 | Controller board | Rework the existing fabricated long PCB as documented, use 2.54 mm plated perfboard, or make a purpose-built board that implements `connections.csv`; the archived KiCad files are not a current fabrication release |
 | as needed | 2.54 mm female headers | Socket the Nano and both StepStick carriers so their labels and orientation remain inspectable |
 | as needed | Locking low-voltage connectors | One connector per motor, switch, magnet, display, BLE module, and removable sensor bank; current rating must suit the circuit |
 | as needed | Screw terminals | Covered terminals rated above the circuit voltage and current for power branches and any non-locking removable wiring |

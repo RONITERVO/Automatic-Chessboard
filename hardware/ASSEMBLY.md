@@ -52,6 +52,13 @@ pull-up. Add the LCD and confirm that the `hd44780_I2Cexp` diagnostic detects
 its backpack; the firmware does not require one fixed PCF8574 address. Add the
 HC-08 resistors and cover each resistor lead and solder joint with heat-shrink.
 
+If reusing the fabricated long PCB, do not use its legacy D10 switch connector.
+Wire HC-08 `TXD` through 1 kohm to D10, move the second switch to A6 with its
+10 kohm pull-up to 5 V, and add the D1-to-HC-08 divider exactly as shown in
+`WIRING.md`. Complete every missing PCB net with secured external wiring and
+continuity-test it against `connections.csv`. The board is proven functional
+with this rework; the archived layout is not correct without it.
+
 ## 7. Build the magnet switch
 
 Wire the TIP120, 1 kohm base resistor, 10 kohm base pull-down, magnet, and
@@ -146,12 +153,40 @@ reinforcement.
    gap does not prevent reed activation or reliable pickup.
 5. Test every finished piece on every square before closing the enclosure.
 
-## 14. Final mechanical and electrical integration
+## 14. Fit the sliding chassis and playing surface
+
+1. Attach the two front and two rear TPU spacers to the completed internal
+   body. Confirm they cannot move into a belt, wheel, or pulley path.
+2. With power removed and service cables disconnected or safely supported,
+   slide the body into the outer case from the front. The spacers should center
+   and steady it without requiring enough force to distort the V-slot frame.
+3. Choose one playing-surface construction:
+   - support the glass-backed tile board in a case-top opening, as on the
+     prototype; or
+   - attach the tiles and supported sensors directly to the intact case top.
+4. For a recessed glass board, support the plate on a level distributed ledge,
+   protect its edges, and retain it against lift and horizontal movement. Cut
+   only the printed case, not glass with unknown tempering.
+5. Reconnect the eight sensor banks with strain relief and enough service loop
+   to remove the body again. Keep every ribbon outside the carriage envelope.
+6. Check board flatness, carriage clearance, sensor operation, and pickup on
+   all 64 squares before fitting cosmetic covers.
+
+The prototype case used a 0.8 mm nozzle, three perimeters, and approximately
+2.4 mm walls/top/floor. Other print settings are valid if they meet the same
+support, clearance, vibration, and serviceability requirements. See
+`PROTOTYPE.md` for photographs and the reason for the recessed glass option.
+
+## 15. Final mechanical and electrical integration
 
 Mount the electromagnet with mechanical retention, add flexible strain relief,
 and verify a uniform under-board gap through the full travel. Install the
 controller so driver potentiometers, fuses, terminals, and the USB connector
 remain serviceable. Keep the latching cutoff reachable with the board closed.
+
+Additional covers may hide the controller and wiring, but they must remain
+removable and must not obstruct cooling, fuse replacement, connector access,
+the cutoff, or the body's front slide-out path.
 
 Repeat the bench continuity tests after installation. Then sign and date the
 commissioning checklist and follow `COMMISSIONING.md` from the logic-only stage;

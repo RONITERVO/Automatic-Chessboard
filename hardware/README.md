@@ -10,8 +10,9 @@ Start with these documents, in order:
 2. [Bill of materials](BOM.md)
 3. [Wiring and pin contract](WIRING.md)
 4. [Mechanical interface](MECHANICAL.md)
-5. [Staged assembly](ASSEMBLY.md)
-6. [First-power commissioning](COMMISSIONING.md)
+5. [Working prototype and enclosure reference](PROTOTYPE.md)
+6. [Staged assembly](ASSEMBLY.md)
+7. [First-power commissioning](COMMISSIONING.md)
 
 The [`printFiles`](printFiles/README.md) directory contains the project's 3D
 print models, separately attributed third-party models, and optional printable
@@ -36,12 +37,14 @@ repository root after changing hardware pins, firmware pins, or the sensor map.
 | `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 3.29 hardware from these |
 | Firmware constants in `global.h` | Current | Pin and motion configuration |
 | Commissioning checklist | Current | Required before first movement |
-| Photographed working build | Tested prototype | Evidence for component choices and the 0.720 V driver setting |
-| `reference/legacy-controller` | Incomplete historical reference | Component placement and trace-routing ideas only |
+| [Photographed working build](PROTOTYPE.md) | Tested prototype | Evidence for the mechanism, enclosure integration, controller rework, component choices, and 0.720 V driver setting |
+| `reference/legacy-controller` | Working fabricated prototype with historical design files | Reuse an existing board only with the documented external rework; do not treat it as a current fabrication release |
 
-Do **not** send the legacy PCB to a manufacturer. It predates the current
-Bluetooth and A6 changes and intentionally leaves external wiring out of the
-board design. No Gerbers are published.
+The fabricated legacy PCB operates in the photographed prototype after adding
+external wiring and resistors. Do **not** send its archived design to a
+manufacturer unchanged: it predates the current Bluetooth and A6 changes and
+intentionally leaves required wiring out of the PCB design. No Gerbers are
+published.
 
 ## System at a glance
 
