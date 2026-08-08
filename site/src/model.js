@@ -350,11 +350,14 @@ function createPieces(parent) {
 }
 
 function createMechanics(parent) {
+  // Model units are centimetres. These are the confirmed five donor-rail cuts:
+  // 350 mm and 315 mm cross rails, two 345 mm sides, and a 395 mm gantry.
   const rails = [
-    [0, 0, -18.5, true], [0, 0, 18.5, true], [-18.5, 0, 0, false], [18.5, 0, 0, false],
+    [0, 0, -18.5, true, 35], [0, 0, 18.5, true, 31.5],
+    [-18.5, 0, 0, false, 34.5], [18.5, 0, 0, false, 34.5],
   ];
-  for (const [x, y, z, alongX] of rails) {
-    const r = rail(39, alongX);
+  for (const [x, y, z, alongX, length] of rails) {
+    const r = rail(length, alongX);
     r.position.set(x, y, z);
     parent.add(r);
   }
@@ -368,7 +371,7 @@ function createMechanics(parent) {
   stepperMotor(-21.3, 0.25, -16.2, 0, parent);
   stepperMotor(21.3, 0.25, 16.2, Math.PI, parent);
 
-  const gantry = rail(34, true);
+  const gantry = rail(39.5, true);
   gantry.position.set(0, 3.4, 2.1);
   parent.add(gantry);
   const trolley = roundedBox(5.3, 0.72, 4.7, materials.black, 0.28);

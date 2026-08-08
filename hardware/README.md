@@ -13,6 +13,18 @@ Start with these documents, in order:
 5. [Staged assembly](ASSEMBLY.md)
 6. [First-power commissioning](COMMISSIONING.md)
 
+The [`printFiles`](printFiles/README.md) directory contains the project's 3D
+print models, separately attributed third-party models, and optional printable
+20 x 20 mm V-slot components for builders evaluating an alternative to
+aluminium extrusions and brackets.
+
+This hardware is a modified 24 V implementation of Greg06's
+[Automated Chessboard](https://www.instructables.com/Automated-Chessboard/),
+rebuilt around salvaged 3D-printer motion parts. The base project is credited
+in the repository's [attribution notice](../ATTRIBUTION.md); its CC BY-NC-SA
+license and this repository's license exceptions are mapped in
+[`LICENSE.md`](../LICENSE.md).
+
 The machine-readable sources of truth are [connections.csv](connections.csv)
 and [sensor-map.csv](sensor-map.csv). Run `./hardware/validate.ps1` from the
 repository root after changing hardware pins, firmware pins, or the sensor map.

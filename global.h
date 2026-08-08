@@ -1,3 +1,9 @@
+/*
+ * Configuration for the modified Automatic Chessboard firmware.
+ * Based on "Automated Chessboard" by Greg06, CC BY-NC-SA 4.0.
+ * See ATTRIBUTION.md and LICENSE.md.
+ */
+
 #ifndef AUTOMATIC_CHESSBOARD_GLOBAL_H
 #define AUTOMATIC_CHESSBOARD_GLOBAL_H
 

@@ -1,0 +1,4 @@
+Corner Bracket (20x20x20mm) by Michaelo on Thingiverse: https://www.thingiverse.com/thing:2504141
+
+Summary:
+Corner brackets (20x20x20mm) for connecting 20x20 aluminium extrusion (sized for M3 and M5 nuts)... The alignment pieces are 6mm wide which should be the gap in the extrusion...The image shows my version of the 20x20 extrusion I purchased from a European supplier, note, the extrusion corners have a tiny radius...The screw holes are a little tight but the screw will make a thread...On a side note, looks like I have my Cura 2.6.2 setting perfect, these printed flawlessly on my CR-10, and I do mean flawlessly... they look like injected molded parts...

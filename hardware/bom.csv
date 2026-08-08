@@ -1,27 +1,59 @@
 category,quantity,item,minimum_specification,tested_reference,status
-controller,1,Arduino Nano,Classic ATmega328P 5V 16MHz,Nano-compatible USB-C clone,required
-sensors,4,16-channel multiplexer breakout,CD74HC4067-compatible 5V active-low enable,WAVGAT CD74HC4067 breakout,required
+controller,1,Arduino Nano,"Classic ATmega328P, 5V, 16MHz",Nano-compatible USB-C clone,required
+controller,1,USB data cable,Connector matches selected Nano and cable carries data,USB-C data cable for prototype clone,required for programming
+sensors,4,16-channel multiplexer breakout,"CD74HC4067-compatible, 5V, active-low enable",WAVGAT CD74HC4067 breakout,required
 sensors,64,Normally-open glass reed switch,Closes reliably through selected tile and piece gap,Glass reed in printed tile slot,required
-motion,2,Stepper driver carrier,A4988 or HR4988 StepStick pinout 24V capable with heatsink,HR4988SQ with two R100 resistors,required
-motion,2,Bipolar stepper motor,4-wire NEMA17 1.8deg preferred >=0.20Nm and current matched to driver,Unlabelled JGAurora A3S donor motor,required
+interface,1,16x2 I2C LCD,5V HD44780 LCD with supported PCF8574-family backpack,Blue 16x2 module with auto-detected backpack,required
+interface,2,Normally-open combination button/endstop,Actuated by player and before carriage hard stop,Shared button and limit switch,required
+interface,1,A6 pull-up resistor,10kohm 0.25W,Inside heat-shrink,required
+bluetooth,1,HC-08 BLE UART carrier,Carrier accepts 5V supply and uses 3.3V UART logic,HC-08 carrier,optional for USB-only build
+bluetooth,2,1kohm resistor,0.25W,Inside heat-shrink,required for BLE
+bluetooth,1,2kohm resistor,0.25W,Inside heat-shrink,required for BLE
+motion,2,Stepper driver carrier,A4988 or HR4988 StepStick pinout and 24V capable,HR4988SQ with two R100 resistors,required
+motion,2,Stepper-driver heatsink,Electrically clear of carrier pins,Adhesive aluminium StepStick heatsink,required
+motion,2,Bipolar stepper motor,"4-wire NEMA17, 1.8deg preferred, >=0.20Nm, current matched to driver",Unlabelled JGAurora A3S donor motor,required
 motion,2,VMOT capacitor,100uF >=50V electrolytic 105C preferred,100uF 50V,required
-magnet,1,Electromagnet,24V DC approximately 2.8W,H2520 24V 2.8W,required
-magnet,1,NPN Darlington,TIP120 or validated logic-level MOSFET alternative,TIP120,required
+magnet,1,Electromagnet,24V DC approximately 2.8W and mechanically compatible,H2520 24V 2.8W,required
+magnet,1,NPN Darlington or validated MOSFET circuit,TIP120 or validated logic-level MOSFET alternative,TIP120,required
 magnet,1,Flyback diode,1A >=50V axial diode,1N4004-1N4007 equivalent,required
 magnet,1,Base resistor,1kohm 0.25W,1kohm,required
 magnet,1,Base pull-down resistor,10kohm 0.25W,None on prototype,safety addition
-interface,1,16x2 I2C LCD,5V PCF8574 backpack address 0x27,Blue 16x2 module,required
-interface,2,Normally-open momentary microswitch,Actuated before mechanical hard stop,Shared button and limit switch,required
-interface,1,A6 pull-up resistor,10kohm 0.25W,Inside heat-shrink,required
-bluetooth,1,HC-08 BLE UART carrier,Carrier accepts 5V supply and uses 3.3V UART logic,HC-08 carrier,required for BLE
-bluetooth,2,1kohm resistor,0.25W,Inside heat-shrink,required for BLE
-bluetooth,1,2kohm resistor,0.25W,Inside heat-shrink,required for BLE
 power,1,24V DC supply,Enclosed regulated isolated 3A minimum 5A recommended,Unbranded 24V 10A brick,required
-power,1,Buck converter,24V input 5.0V output >=1A continuous and >=36V input recommended,Unlabelled adjustable buck,required
-protection,1,Main fuse and holder,3A time-delay starting value >=32VDC; 5A maximum only after load measurement,None on prototype,safety addition
+power,1,Buck converter,"24V input, 5.0V output, >=1A continuous, >=36V input recommended",Unlabelled adjustable buck,required
+protection,1,Main fuse and holder,3A time-delay starting value >=32VDC,None on prototype,safety addition
 protection,1,Latching cutoff,>=30VDC 5A and reachable,None on prototype,safety addition
 protection,1,Reverse-polarity protection,>=30VDC 5A,None on prototype,safety addition
 protection,1,Logic fuse,1A >=32VDC,None on prototype,safety addition
+protection,1,Covered power distribution,Rated above main fuse,Prototype solder distribution,required
 wiring,as needed,Main power wire,0.75mm2 or 18AWG copper recommended,Mixed prototype wire,required
 wiring,as needed,Branch and motor wire,0.34mm2 or 22AWG copper recommended,Mixed prototype wire,required
-wiring,as needed,Logic and sensor wire,0.14-0.25mm2 or 26-24AWG strain-relieved,Ribbon and hookup wire,required
+wiring,as needed,Logic and sensor wire,"0.14-0.25mm2 or 26-24AWG, strain-relieved",Ribbon and hookup wire,required
+wiring,1-3,Prototyping board,2.54mm plated perfboard or purpose-built board,Prototype controller board,required
+wiring,as needed,Female headers,2.54mm sockets for removable Nano and StepStick carriers,Prototype socket headers,recommended
+wiring,as needed,Locking low-voltage connectors,Voltage and current rated for each removable branch,Mixed donor connectors,recommended
+wiring,as needed,Screw terminals,Covered and rated above circuit voltage and current,Mixed prototype terminals,recommended
+wiring,8 banks,Sensor harness,"Eight square signals plus common return, labelled at both ends",Ribbon and hookup wire,required
+mechanical,2,Side frame rail,"20x20mm V-slot, 345mm finished length each",Salvaged JGAurora A3S extrusion,required
+mechanical,1,Long frame cross rail,"20x20mm V-slot, 350mm finished length",Salvaged JGAurora A3S extrusion,required
+mechanical,1,Short frame cross rail,"20x20mm V-slot, 315mm finished length",Salvaged JGAurora A3S extrusion,required
+mechanical,1,Moving gantry rail,"20x20mm V-slot, 395mm finished length and compatible with outer motion system",Salvaged JGAurora A3S extrusion,required
+mechanical,8,Mini V-wheel,Matches selected V-slot with sound bearings,Salvaged printer V-wheels,required
+mechanical,4,M5 eccentric spacer,Compatible with wheel plate,Salvaged printer spacer,required
+mechanical,4,Fixed wheel spacer,"5mm ID, approximately 6mm high",Salvaged printer spacer,required
+mechanical,8,Wheel shim,"Approximately 8mm OD, 5mm ID, 1mm thick",Salvaged printer shim,as required by wheel stack
+mechanical,8,M5 locking nut,Retains V-wheel axle,Salvaged nyloc nut,required
+mechanical,2,GT2 drive pulley,"20 teeth, 2mm pitch, 6mm belt, 5mm motor bore",Salvaged printer pulley,required
+mechanical,up to 8,GT2 idler pulley,"For 6mm belt and M5 axle; smooth or toothed to match contacted belt face",Salvaged printer idler,required by routing
+mechanical,about 4m,GT2 timing belt,"2mm pitch, 6mm wide, reinforced",Salvaged printer belt if undamaged,required
+mechanical,8-10,90-degree frame bracket,Compatible with 20x20 extrusion,Salvaged aluminium or attributed printable bracket,required by layout
+mechanical,about 30,M5 T-nut,Matches extrusion slot,Salvaged printer T-nut,required by layout
+mechanical,assorted,M5 screw assortment,"M5x8/10/12 for brackets and M5x20/25/30/35 for axle stacks",Salvaged printer screws,verify each stack
+mechanical,8,M3 motor screw,M3x8-10 or verified non-bottoming length,Salvaged printer screws,required
+mechanical,as needed,M2/M3 printed-part hardware,Matches switch and printed support holes,Assorted donor hardware,required by layout
+mechanical,1 set,Belt anchors and tensioners,Retains belt without tooth damage and permits adjustment,Printed and donor parts,required
+board,64,Printed board tile,37.5mm pitch and protected reed pocket,Project-authored common tile,required
+board,1,Enclosure and board support,Flat 300x300mm playing field with service access,Project-authored enclosure,required
+board,4,TPU frame spacer,Matches built case and frame,Project-authored front/back left/right spacers,optional by enclosure
+pieces,1 set,Chess pieces,Magnet-ready bases and low-friction movement,Prototype chess set,required
+pieces,32,Piece magnet,"5x2mm neodymium starting option, consistent pole orientation",Magnet option used by project catalog,required
+pieces,as needed,Low-friction base material,Thin enough to preserve reed activation,Felt or equivalent,optional

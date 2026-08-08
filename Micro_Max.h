@@ -1,3 +1,8 @@
+/*
+ * Interface for the local Micro-Max adaptation.
+ * See ATTRIBUTION.md and LICENSE.md for sources and licensing qualifications.
+ */
+
 #ifndef MICRO_MAX_H
 #define MICRO_MAX_H
 

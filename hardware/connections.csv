@@ -57,8 +57,8 @@ MUX-08,Nano,D8,MUX2,EN,MUX2_ENABLE,yes,Active low
 MUX-09,Nano,D7,MUX3,EN,MUX3_ENABLE,yes,Active low
 MUX-10,5V distribution,+,MUX0..MUX3,VCC,VCC_5V,yes,
 MUX-11,Ground distribution,GND,MUX0..MUX3,GND,GND,yes,
-LCD-01,Nano,A4,LCD,SDA,I2C_SDA,yes,Expected address 0x27
-LCD-02,Nano,A5,LCD,SCL,I2C_SCL,yes,Expected address 0x27
+LCD-01,Nano,A4,LCD,SDA,I2C_SDA,yes,Backpack address is detected by firmware
+LCD-02,Nano,A5,LCD,SCL,I2C_SCL,yes,Backpack address is detected by firmware
 LCD-03,5V distribution,+,LCD,VCC,VCC_5V,yes,
 LCD-04,Ground distribution,GND,LCD,GND,GND,yes,
 SW-01,Nano,D11,Switch A,NO,SWITCH_A,yes,Other switch terminal to GND

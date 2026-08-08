@@ -1,3 +1,10 @@
+/*
+ * Micro-Max adaptation used by the modified Automatic Chessboard firmware.
+ * Micro-Max was written by H. G. Muller; this Arduino adaptation descends
+ * from the copy distributed with "Automated Chessboard" by Greg06.
+ * See ATTRIBUTION.md and LICENSE.md for sources and licensing qualifications.
+ */
+
 //******************************  INCLUDING FILES
 #include "Arduino.h"
 #include "Micro_Max.h"
