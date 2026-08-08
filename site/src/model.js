@@ -12,6 +12,8 @@ const materials = {
   aluminum: new THREE.MeshPhysicalMaterial({ color: 0x252c32, metalness: 0.92, roughness: 0.24 }),
   aluminumEdge: new THREE.MeshPhysicalMaterial({ color: 0x78838a, metalness: 1, roughness: 0.2 }),
   belt: new THREE.MeshStandardMaterial({ color: 0x0d1013, roughness: 0.76, metalness: 0.08 }),
+  beltA: new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.82, metalness: 0.04 }),
+  beltB: new THREE.MeshStandardMaterial({ color: 0x211317, roughness: 0.82, metalness: 0.04 }),
   black: new THREE.MeshPhysicalMaterial({ color: 0x11161c, roughness: 0.35, metalness: 0.56 }),
   ceramicLight: new THREE.MeshPhysicalMaterial({ color: 0xf2f1eb, roughness: 0.22, clearcoat: 0.5 }),
   ceramicDark: new THREE.MeshPhysicalMaterial({ color: 0x16191d, roughness: 0.2, clearcoat: 0.55 }),
@@ -22,16 +24,45 @@ const materials = {
   pcbBlack: new THREE.MeshPhysicalMaterial({ color: 0x101820, roughness: 0.34, clearcoat: 0.28 }),
   pcbGreen: new THREE.MeshPhysicalMaterial({ color: 0x0b6846, roughness: 0.4, clearcoat: 0.28 }),
   red: new THREE.MeshPhysicalMaterial({ color: 0xc92f36, roughness: 0.31, clearcoat: 0.45 }),
+  printed: new THREE.MeshPhysicalMaterial({ color: 0xd9d8cf, roughness: 0.52, transmission: 0.08, transparent: true, opacity: 0.92 }),
   resistor: new THREE.MeshPhysicalMaterial({ color: 0xd6ba82, roughness: 0.62 }),
   rubber: new THREE.MeshStandardMaterial({ color: 0x171b20, roughness: 0.88 }),
   screen: new THREE.MeshPhysicalMaterial({ color: 0x0a2a71, emissive: 0x0c4fb6, emissiveIntensity: 0.34, roughness: 0.14, clearcoat: 0.8 }),
   steel: new THREE.MeshPhysicalMaterial({ color: 0xaab5bb, metalness: 0.95, roughness: 0.22 }),
+  tpu: new THREE.MeshPhysicalMaterial({ color: 0xc8c7bd, roughness: 0.78, transparent: true, opacity: 0.74 }),
   whitePiece: new THREE.MeshPhysicalMaterial({ color: 0xe9e4d8, roughness: 0.28, clearcoat: 0.55 }),
   blackPiece: new THREE.MeshPhysicalMaterial({ color: 0x262b31, roughness: 0.26, clearcoat: 0.5 }),
   wireBlue: new THREE.MeshStandardMaterial({ color: 0x208fea, roughness: 0.55 }),
   wireRed: new THREE.MeshStandardMaterial({ color: 0xd94045, roughness: 0.55 }),
   wireYellow: new THREE.MeshStandardMaterial({ color: 0xe4ba42, roughness: 0.55 }),
 };
+
+// Centimetres. The two belt planes are deliberately separated so the two
+// CoreXY paths remain aligned without rubbing where their projected paths meet.
+export const COREXY_LAYOUT = Object.freeze({
+  left: -18.5,
+  right: 18.5,
+  back: -18.5,
+  front: 18.5,
+  motorZ: 20.2,
+  gantryZ: 2.1,
+  trolleyX: 3.4,
+  idlerRadius: 0.78,
+  gantryIdlerOffset: 1.0,
+  beltPlanes: Object.freeze([3.72, 4.28]),
+});
+
+// Visual envelope inferred from the working-prototype photos and motor
+// clearance. It is intentionally not presented as a fabrication dimension.
+const ENCLOSURE_VISUAL = Object.freeze({
+  outer: 49,
+  halfWall: 24.38,
+  height: 10.2,
+  opening: 33.4,
+  rimDepth: 7.8,
+  rimCenter: 20.6,
+  wall: 0.24,
+});
 
 function roundedBox(width, height, depth, material, radius = 0.12, segments = 3) {
   const mesh = new THREE.Mesh(new RoundedBoxGeometry(width, height, depth, segments, radius), material);
@@ -83,6 +114,35 @@ function tube(points, radius, material, closed = false) {
   return mesh;
 }
 
+function beltRoute(points, y, material, name) {
+  const group = new THREE.Group();
+  group.name = name;
+  let routeLength = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const [x1, z1] = points[index];
+    const [x2, z2] = points[index + 1];
+    const dx = x2 - x1;
+    const dz = z2 - z1;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.001) continue;
+    routeLength += length;
+    const segment = roundedBox(length, 0.5, 0.13, material, 0.045, 2);
+    segment.position.set((x1 + x2) / 2, y, (z1 + z2) / 2);
+    segment.rotation.y = -Math.atan2(dz, dx);
+    group.add(segment);
+  }
+  group.userData.routeLength = routeLength;
+  group.userData.pointCount = points.length;
+  return tag(group, "motion");
+}
+
+function arcPoints(centerX, centerZ, radius, startAngle, endAngle, segments = 6) {
+  return Array.from({ length: segments + 1 }, (_, index) => {
+    const angle = THREE.MathUtils.lerp(startAngle, endAngle, index / segments);
+    return [centerX + Math.cos(angle) * radius, centerZ + Math.sin(angle) * radius];
+  });
+}
+
 function rail(length, alongX = true) {
   const group = new THREE.Group();
   const body = roundedBox(alongX ? length : 2, 2, alongX ? 2 : length, materials.aluminum, 0.13);
@@ -114,8 +174,38 @@ function pulley(x, y, z, parent, partId = "motion") {
   parent.add(tag(group, partId));
 }
 
-function stepperMotor(x, y, z, rotation, parent) {
+function pulleyStack(x, z, parent) {
+  for (const y of COREXY_LAYOUT.beltPlanes) pulley(x, y, z, parent);
+  const axle = cylinder(0.16, 1.4, materials.steel, 20);
+  axle.position.set(x, 4, z);
+  parent.add(tag(axle, "motion"));
+}
+
+function vWheel(x, y, z, axle, parent, partId = "motion") {
   const group = new THREE.Group();
+  group.position.set(x, y, z);
+  const tire = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.19, 12, 30), materials.rubber);
+  const bearing = cylinder(0.27, 0.36, materials.steel, 24);
+  if (axle === "x") {
+    tire.rotation.y = Math.PI / 2;
+    bearing.rotation.z = Math.PI / 2;
+  } else if (axle === "z") {
+    bearing.rotation.x = Math.PI / 2;
+  }
+  group.add(tire, bearing);
+  parent.add(tag(group, partId));
+}
+
+function printedPlate(width, height, depth, x, y, z, parent, partId = "frame") {
+  const plate = roundedBox(width, height, depth, materials.printed, 0.24);
+  plate.position.set(x, y, z);
+  parent.add(tag(plate, partId));
+  return plate;
+}
+
+function stepperMotor(x, y, z, rotation, parent, name = "") {
+  const group = new THREE.Group();
+  group.name = name;
   group.position.set(x, y, z);
   group.rotation.y = rotation;
   const body = roundedBox(4.05, 3.3, 4.05, materials.black, 0.24);
@@ -130,8 +220,9 @@ function stepperMotor(x, y, z, rotation, parent) {
   parent.add(tag(group, "motors"));
 }
 
-function microswitch(x, y, z, rotation, parent) {
+function microswitch(x, y, z, rotation, parent, name = "") {
   const group = new THREE.Group();
+  group.name = name;
   group.position.set(x, y, z);
   group.rotation.y = rotation;
   const body = roundedBox(1.4, 0.65, 0.72, materials.black, 0.1);
@@ -361,26 +452,82 @@ function createMechanics(parent) {
     r.position.set(x, y, z);
     parent.add(r);
   }
-  for (const x of [-18.5, 18.5]) for (const z of [-18.5, 18.5]) pulley(x, 1.55, z, parent);
-  const belt = tube([
-    new THREE.Vector3(-18.5, 1.62, -18.5), new THREE.Vector3(18.5, 1.62, -18.5),
-    new THREE.Vector3(18.5, 1.62, 18.5), new THREE.Vector3(-18.5, 1.62, 18.5),
-  ], 0.115, materials.belt, true);
-  parent.add(tag(belt, "motion"));
+  // Both motors sit beside the short 315 mm front rail, while the two stacked
+  // fixed-idler towers are at the far end. This matches the physical layout and
+  // keeps the long return legs parallel to the side rails.
+  for (const x of [COREXY_LAYOUT.left, COREXY_LAYOUT.right]) pulleyStack(x, COREXY_LAYOUT.back, parent);
 
-  stepperMotor(-21.3, 0.25, -16.2, 0, parent);
-  stepperMotor(21.3, 0.25, 16.2, Math.PI, parent);
+  const r = COREXY_LAYOUT.idlerRadius;
+  const frontGantryIdlerZ = COREXY_LAYOUT.gantryZ + COREXY_LAYOUT.gantryIdlerOffset;
+  const rearGantryIdlerZ = COREXY_LAYOUT.gantryZ - COREXY_LAYOUT.gantryIdlerOffset;
+
+  // Each path begins and ends at opposite trolley clamps. The sampled arcs are
+  // tangent to the drive and idler pulleys instead of cutting through their
+  // centres. The two paths occupy separate height planes to avoid belt rub.
+  const beltA = beltRoute([
+    [COREXY_LAYOUT.trolleyX - 1.85, frontGantryIdlerZ + r],
+    ...arcPoints(COREXY_LAYOUT.left, frontGantryIdlerZ, r, Math.PI / 2, 0),
+    ...arcPoints(COREXY_LAYOUT.left, COREXY_LAYOUT.motorZ, r, 0, Math.PI, 10),
+    ...arcPoints(COREXY_LAYOUT.left, COREXY_LAYOUT.back, r, Math.PI, Math.PI * 1.5),
+    ...arcPoints(COREXY_LAYOUT.right, COREXY_LAYOUT.back, r, -Math.PI / 2, 0),
+    ...arcPoints(COREXY_LAYOUT.right, rearGantryIdlerZ, r, 0, -Math.PI / 2),
+    [COREXY_LAYOUT.trolleyX + 1.85, rearGantryIdlerZ - r],
+  ], COREXY_LAYOUT.beltPlanes[0], materials.beltA, "corexy-belt-a");
+  const beltB = beltRoute([
+    [COREXY_LAYOUT.trolleyX + 1.85, frontGantryIdlerZ + r],
+    ...arcPoints(COREXY_LAYOUT.right, frontGantryIdlerZ, r, Math.PI / 2, Math.PI),
+    ...arcPoints(COREXY_LAYOUT.right, COREXY_LAYOUT.motorZ, r, Math.PI, 0, 10),
+    ...arcPoints(COREXY_LAYOUT.right, COREXY_LAYOUT.back, r, 0, -Math.PI / 2),
+    ...arcPoints(COREXY_LAYOUT.left, COREXY_LAYOUT.back, r, -Math.PI / 2, -Math.PI),
+    ...arcPoints(COREXY_LAYOUT.left, rearGantryIdlerZ, r, Math.PI, Math.PI * 1.5),
+    [COREXY_LAYOUT.trolleyX - 1.85, rearGantryIdlerZ - r],
+  ], COREXY_LAYOUT.beltPlanes[1], materials.beltB, "corexy-belt-b");
+  parent.add(beltA, beltB);
+
+  printedPlate(5.3, 0.58, 5.3, COREXY_LAYOUT.left, 2.08, COREXY_LAYOUT.motorZ, parent);
+  printedPlate(5.3, 0.58, 5.3, COREXY_LAYOUT.right, 2.08, COREXY_LAYOUT.motorZ, parent);
+  stepperMotor(COREXY_LAYOUT.left, 0.25, COREXY_LAYOUT.motorZ, 0, parent, "corexy-motor-a");
+  stepperMotor(COREXY_LAYOUT.right, 0.25, COREXY_LAYOUT.motorZ, Math.PI, parent, "corexy-motor-b");
+  pulley(COREXY_LAYOUT.left, COREXY_LAYOUT.beltPlanes[0], COREXY_LAYOUT.motorZ, parent);
+  pulley(COREXY_LAYOUT.right, COREXY_LAYOUT.beltPlanes[1], COREXY_LAYOUT.motorZ, parent);
 
   const gantry = rail(39.5, true);
-  gantry.position.set(0, 3.4, 2.1);
+  gantry.position.set(0, 3.05, COREXY_LAYOUT.gantryZ);
   parent.add(gantry);
-  const trolley = roundedBox(5.3, 0.72, 4.7, materials.black, 0.28);
-  trolley.position.set(3.4, 4.72, 2.1);
+
+  for (const x of [-18.2, 18.2]) {
+    printedPlate(3.35, 0.52, 5.6, x, 2.62, COREXY_LAYOUT.gantryZ, parent);
+    for (const zOffset of [-1.45, 1.45]) vWheel(x, 2.0, COREXY_LAYOUT.gantryZ + zOffset, "x", parent);
+  }
+  const gantryHomeStriker = roundedBox(0.72, 0.78, 3.2, materials.printed, 0.14);
+  gantryHomeStriker.position.set(-16.75, 2.72, COREXY_LAYOUT.gantryZ - 3.35);
+  parent.add(tag(gantryHomeStriker, "frame"));
+  pulley(COREXY_LAYOUT.left, COREXY_LAYOUT.beltPlanes[0], frontGantryIdlerZ, parent);
+  pulley(COREXY_LAYOUT.right, COREXY_LAYOUT.beltPlanes[0], rearGantryIdlerZ, parent);
+  pulley(COREXY_LAYOUT.right, COREXY_LAYOUT.beltPlanes[1], frontGantryIdlerZ, parent);
+  pulley(COREXY_LAYOUT.left, COREXY_LAYOUT.beltPlanes[1], rearGantryIdlerZ, parent);
+
+  const trolley = roundedBox(5.3, 0.66, 4.7, materials.black, 0.28);
+  trolley.position.set(COREXY_LAYOUT.trolleyX, 4.63, COREXY_LAYOUT.gantryZ);
   parent.add(tag(trolley, "motion"));
-  for (const x of [1.45, 5.35]) for (const z of [0.55, 3.65]) pulley(x, 4.78, z, parent);
+  for (const xOffset of [-1.7, 1.7]) {
+    for (const zOffset of [-1.2, 1.2]) {
+      vWheel(COREXY_LAYOUT.trolleyX + xOffset, 3.86, COREXY_LAYOUT.gantryZ + zOffset, "z", parent);
+    }
+  }
+  for (const [xOffset, z, beltY] of [
+    [-1.85, frontGantryIdlerZ + r, COREXY_LAYOUT.beltPlanes[0]],
+    [1.85, rearGantryIdlerZ - r, COREXY_LAYOUT.beltPlanes[0]],
+    [1.85, frontGantryIdlerZ + r, COREXY_LAYOUT.beltPlanes[1]],
+    [-1.85, rearGantryIdlerZ - r, COREXY_LAYOUT.beltPlanes[1]],
+  ]) {
+    const clamp = roundedBox(0.62, 0.68, 0.38, materials.printed, 0.09);
+    clamp.position.set(COREXY_LAYOUT.trolleyX + xOffset, beltY, z);
+    parent.add(tag(clamp, "motion"));
+  }
 
   const magnetGroup = new THREE.Group();
-  magnetGroup.position.set(3.4, 6.2, 2.1);
+  magnetGroup.position.set(COREXY_LAYOUT.trolleyX, 6.12, COREXY_LAYOUT.gantryZ);
   const coil = cylinder(1.25, 2.0, materials.black, 40);
   const face = cylinder(1.14, 0.08, materials.steel, 40);
   face.position.y = 1.03;
@@ -388,29 +535,53 @@ function createMechanics(parent) {
   parent.add(tag(magnetGroup, "magnet"));
   axialPart(parent, 5.4, 6.55, 2.1, "magnetDriver", materials.black, true);
 
-  microswitch(-16.7, 2.4, -16.0, Math.PI / 2, parent);
-  microswitch(16.7, 2.4, 16.0, -Math.PI / 2, parent);
+  // Homing is sequential at the back edge: first the extension on the left
+  // gantry holder trips the Y/gantry switch, then the magnet trolley travels
+  // right and trips the X/trolley switch. Both switches are fixed at the back.
+  const backSwitchZ = COREXY_LAYOUT.back + 2.25;
+  microswitch(-16.7, 2.4, backSwitchZ, Math.PI / 2, parent, "corexy-endstop-gantry");
+  microswitch(16.7, 4.28, backSwitchZ, Math.PI, parent, "corexy-endstop-trolley");
+
+  // The printed/TPE chassis members are what let the complete mechanism slide
+  // into the enclosure while staying centred and damping vibration.
+  for (const z of [-20.25, 20.25]) {
+    const spacer = roundedBox(39.5, 1.15, 3.1, materials.tpu, 0.38);
+    spacer.position.set(0, 0.2, z);
+    parent.add(tag(spacer, "enclosure"));
+  }
 }
 
 function createDeck(parent) {
-  const base = roundedBox(32.3, 0.65, 32.3, materials.black, 0.45);
-  base.position.y = 8.82;
+  // The working build recesses a repurposed printer glass plate into the case
+  // top. Its 2.4 mm glass plus 2.2 mm tiles preserve the magnet air gap.
+  const base = roundedBox(32.3, 0.24, 32.3, materials.glass, 0.2);
+  base.position.y = 8.86;
   parent.add(tag(base, "deck"));
   xrayMeshes.push(base);
   for (let rank = 0; rank < 8; rank += 1) {
     for (let file = 0; file < 8; file += 1) {
-      const tile = roundedBox(3.68, 0.42, 3.68, (file + rank) % 2 ? materials.ceramicDark : materials.ceramicLight, 0.13);
-      tile.position.set((file - 3.5) * 3.75, 9.34, (rank - 3.5) * 3.75);
+      const tile = roundedBox(3.68, 0.22, 3.68, (file + rank) % 2 ? materials.ceramicDark : materials.ceramicLight, 0.1);
+      tile.position.set((file - 3.5) * 3.75, 9.09, (rank - 3.5) * 3.75);
       parent.add(tag(tile, "deck"));
       xrayMeshes.push(tile);
     }
   }
-  const borderMaterial = new THREE.MeshPhysicalMaterial({ color: 0xa72128, roughness: 0.25, clearcoat: 0.65 });
-  for (const [x, z, w, d] of [[0, -16, 32.6, 1.7], [0, 16, 32.6, 1.7], [-16, 0, 1.7, 32.6], [16, 0, 1.7, 32.6]]) {
-    const border = roundedBox(w, 0.75, d, borderMaterial, 0.32);
-    border.position.set(x, 9.05, z);
-    parent.add(tag(border, "deck"));
+  for (const [x, z, w, d] of [
+    [0, -ENCLOSURE_VISUAL.rimCenter, ENCLOSURE_VISUAL.outer, ENCLOSURE_VISUAL.rimDepth],
+    [0, ENCLOSURE_VISUAL.rimCenter, ENCLOSURE_VISUAL.outer, ENCLOSURE_VISUAL.rimDepth],
+    [-ENCLOSURE_VISUAL.rimCenter, 0, ENCLOSURE_VISUAL.rimDepth, ENCLOSURE_VISUAL.opening],
+    [ENCLOSURE_VISUAL.rimCenter, 0, ENCLOSURE_VISUAL.rimDepth, ENCLOSURE_VISUAL.opening],
+  ]) {
+    const border = roundedBox(w, 0.24, d, materials.red, 0.28);
+    border.position.set(x, 8.82, z);
+    parent.add(tag(border, "enclosure"));
     xrayMeshes.push(border);
+  }
+
+  for (const [x, z, w, d] of [[0, -16.35, 32.8, 0.48], [0, 16.35, 32.8, 0.48], [-16.35, 0, 0.48, 32.8], [16.35, 0, 0.48, 32.8]]) {
+    const support = roundedBox(w, 0.36, d, materials.printed, 0.12);
+    support.position.set(x, 8.67, z);
+    parent.add(tag(support, "enclosure"));
   }
 }
 
@@ -461,8 +632,8 @@ function createElectronics(parent) {
 
   const harnesses = [
     [materials.wireRed, [new THREE.Vector3(8, 2.2, 22), new THREE.Vector3(7, 1.2, 14), new THREE.Vector3(3.4, 5.2, 2.1)]],
-    [materials.wireYellow, [new THREE.Vector3(-11.9, 2.4, 20.2), new THREE.Vector3(-15, 1.8, 14), new THREE.Vector3(-21.3, 1.1, -16.2)]],
-    [materials.wireBlue, [new THREE.Vector3(11.9, 2.4, 20.2), new THREE.Vector3(17, 1.8, 13), new THREE.Vector3(21.3, 1.1, 16.2)]],
+    [materials.wireYellow, [new THREE.Vector3(-11.9, 2.4, 20.2), new THREE.Vector3(-15, 1.8, 19), new THREE.Vector3(COREXY_LAYOUT.left, 1.1, COREXY_LAYOUT.motorZ)]],
+    [materials.wireBlue, [new THREE.Vector3(11.9, 2.4, 20.2), new THREE.Vector3(15, 1.8, 19), new THREE.Vector3(COREXY_LAYOUT.right, 1.1, COREXY_LAYOUT.motorZ)]],
   ];
   for (const [material, points] of harnesses) {
     const harness = tag(tube(points, 0.095, material), "pcb");
@@ -528,6 +699,26 @@ function createPower(parent) {
   parent.add(tag(powerCable, "powerSupply"));
 }
 
+function createCaseBase(parent) {
+  const floor = roundedBox(ENCLOSURE_VISUAL.outer, ENCLOSURE_VISUAL.wall, ENCLOSURE_VISUAL.outer, materials.red, 0.65);
+  floor.position.y = -1.48;
+  floor.receiveShadow = true;
+  parent.add(tag(floor, "enclosure"));
+  xrayMeshes.push(floor);
+
+  // Cutaway at the front keeps the slide-in chassis visible in the explorer.
+  for (const [x, z, w, h, d] of [
+    [-ENCLOSURE_VISUAL.halfWall, 0, ENCLOSURE_VISUAL.wall, ENCLOSURE_VISUAL.height, ENCLOSURE_VISUAL.outer],
+    [ENCLOSURE_VISUAL.halfWall, 0, ENCLOSURE_VISUAL.wall, ENCLOSURE_VISUAL.height, ENCLOSURE_VISUAL.outer],
+    [0, -ENCLOSURE_VISUAL.halfWall, ENCLOSURE_VISUAL.outer, ENCLOSURE_VISUAL.height, ENCLOSURE_VISUAL.wall],
+  ]) {
+    const wall = roundedBox(w, h, d, materials.red, 0.18);
+    wall.position.set(x, 3.5, z);
+    parent.add(tag(wall, "enclosure"));
+    xrayMeshes.push(wall);
+  }
+}
+
 export function createBoardModel(scene) {
   const root = new THREE.Group();
   root.name = "automatic-chessboard";
@@ -542,16 +733,12 @@ export function createBoardModel(scene) {
   root.add(mechanics, sensors, deck, pieces, electronics, power);
 
   createMechanics(mechanics);
+  createCaseBase(mechanics);
   createSensors(sensors);
   createDeck(deck);
   createPieces(pieces);
   createElectronics(electronics);
   createPower(power);
-
-  const undertray = roundedBox(43, 0.42, 43, new THREE.MeshPhysicalMaterial({ color: 0x080b0f, metalness: 0.35, roughness: 0.48 }), 1.0);
-  undertray.position.y = -1.25;
-  undertray.receiveShadow = true;
-  root.add(tag(undertray, "frame"));
 
   return root;
 }

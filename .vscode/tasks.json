@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Site: Start development server",
+      "type": "npm",
+      "script": "dev:open",
+      "path": "site",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "Site: Validate",
+      "type": "npm",
+      "script": "validate",
+      "path": "site",
+      "problemMatcher": []
+    },
+    {
+      "label": "Site: Production build",
+      "type": "npm",
+      "script": "build",
+      "path": "site",
+      "problemMatcher": [],
+      "group": "build"
+    }
+  ]
+}

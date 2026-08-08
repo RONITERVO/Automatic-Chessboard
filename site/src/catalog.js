@@ -49,9 +49,14 @@ export const PARTS = Object.freeze({
     name: "Twenty by twenty V-Slot rails: two 345, one 350, one 315, and one 395 millimetres",
     url: "https://us.openbuilds.com/v-slot-20x20-linear-rail.html",
   },
+  enclosure: {
+    color: "#c92f36",
+    name: "Printed slide-in enclosure and vibration-damping chassis spacers",
+    url: "https://github.com/RONITERVO/Automatic-Chessboard/tree/main/hardware/printFiles",
+  },
   motion: {
     color: "#15191d",
-    name: "Two millimetre pitch GT2 belt and twenty-tooth pulleys",
+    name: "CoreXY GT2 belts, twenty-tooth pulleys, idlers and V-wheels",
     url: "https://www.omc-stepperonline.com/2gt-timing-belt",
   },
   magnet: {
