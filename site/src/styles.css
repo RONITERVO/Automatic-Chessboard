@@ -406,8 +406,8 @@ button svg {
   }
 
   #toolbar button {
-    width: min(46px, calc((100vw - 71px) / 6));
-    height: min(46px, calc((100vw - 71px) / 6));
+    width: min(46px, calc((100vw - 64px) / 5));
+    height: min(46px, calc((100vw - 64px) / 5));
   }
 
   #part-actions {
