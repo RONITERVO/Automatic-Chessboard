@@ -8,6 +8,13 @@ Arduino firmware for a CoreXY automatic chessboard with:
 - a 16x2 I2C LCD and two-button interface; and
 - the Micro-Max chess engine.
 
+This is a substantially modified implementation of Greg06's
+[Automated Chessboard](https://www.instructables.com/Automated-Chessboard/),
+adapted around salvaged 3D-printer mechanics and the tested electronics
+documented in this repository. See [design lineage and
+attribution](ATTRIBUTION.md) and the repository's
+[multi-license map](LICENSE.md) before redistributing it.
+
 The [interactive 3D build explorer](https://ronitervo.github.io/Automatic-Chessboard/) turns the complete assembly into a rotatable, zoomable, parts-level build checklist. It is published automatically from `site/` after changes reach `main`.
 
 ## Hardware assumptions
@@ -19,8 +26,11 @@ microstep selection are configured on the driver hardware.
 For a complete beginner-oriented build, start with the
 [`hardware` build guide](hardware/README.md). It includes protected power
 wiring, a BOM, exact Nano and 64-square sensor maps, staged assembly,
-commissioning checks, diagrams, and a quarantined copy of the incomplete legacy
-PCB source. The 5 V buck output belongs on the Nano `5V` pin, not `VIN`.
+commissioning checks, diagrams, photographs of the working prototype, and
+rework notes for the operational long PCB whose design predates the current
+Bluetooth and A6 additions. Its archived KiCad source is reference-only, not a
+current fabrication release. The 5 V buck output belongs on the Nano `5V` pin,
+not `VIN`.
 
 ## Building
 

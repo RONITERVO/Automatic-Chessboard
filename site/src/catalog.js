@@ -46,7 +46,7 @@ export const PARTS = Object.freeze({
   },
   frame: {
     color: "#20262c",
-    name: "OpenBuilds V-Slot twenty by twenty rail",
+    name: "Twenty by twenty V-Slot rails: two 345, one 350, one 315, and one 395 millimetres",
     url: "https://us.openbuilds.com/v-slot-20x20-linear-rail.html",
   },
   motion: {

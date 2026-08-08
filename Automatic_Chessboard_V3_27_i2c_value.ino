@@ -1,3 +1,12 @@
+/*
+ * Automatic Chessboard firmware 3.29.
+ *
+ * Substantially modified from "Automated Chessboard" by Greg06:
+ * https://www.instructables.com/Automated-Chessboard/
+ * Source and this adaptation: CC BY-NC-SA 4.0.
+ * See ATTRIBUTION.md and LICENSE.md for lineage, changes, and exceptions.
+ */
+
 #include <Wire.h>
 #include <EEPROM.h>
 #include <avr/pgmspace.h>
