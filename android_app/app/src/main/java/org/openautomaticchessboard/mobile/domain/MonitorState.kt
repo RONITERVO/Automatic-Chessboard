@@ -29,9 +29,10 @@ data class MonitorState(
         val sensorAge = sensorUpdatedMs?.let { ((nowMs - it).coerceAtLeast(0L)) / 1000.0 }
         return when {
             !connected -> "Disconnected" to HealthLevel.BAD
-            age == null || age > 12 -> "Connection stale" to HealthLevel.BAD
+            age == null || (!motionExpected && age > 12) -> "Connection stale" to HealthLevel.BAD
             telemetry?.motionFault == true -> "Motion fault" to HealthLevel.BAD
             telemetry?.let { !it.buttonAReleased || !it.buttonBReleased } == true -> "Limit/button active" to HealthLevel.WARN
+            motionExpected -> "Motion in progress" to HealthLevel.WARN
             sensorSquares != null && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
                 "Physical/logical position differs" to HealthLevel.WARN
             firmware == null -> "Firmware identity unavailable" to HealthLevel.WARN

@@ -39,13 +39,16 @@ class BleBoardTransport(
     private val main = Handler(Looper.getMainLooper())
     private val lineBuffer = LineBuffer()
     private val writes = ConcurrentLinkedQueue<ByteArray>()
-    private var gatt: BluetoothGatt? = null
-    private var characteristic: BluetoothGattCharacteristic? = null
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var characteristic: BluetoothGattCharacteristic? = null
     @Volatile private var connected = false
-    private var closing = false
+    @Volatile private var closing = false
     private var reconnectDelayMs = 1_000L
     @Volatile private var writeActive = false
     private val writeLock = Any()
+    private var nextWriteToken = 0L
+    private var activeWriteToken: Long? = null
+    private val callbackTokens = ConcurrentLinkedQueue<Long>()
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -115,11 +118,10 @@ class BleBoardTransport(
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            finishWrite()
+            val token = callbackTokens.poll() ?: return
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                writes.clear()
-                listener.onStatus("BLE write failed ($status)", connected)
-            } else drainWrites()
+                rejectQueuedWrite(token, "BLE write failed ($status)")
+            } else if (finishWrite(token)) drainWrites()
         }
     }
 
@@ -173,57 +175,71 @@ class BleBoardTransport(
     }
 
     private fun drainWrites() {
-        val value = beginWrite() ?: return
+        val pendingWrite = beginWrite() ?: return
         val c = characteristic
         if (c == null) {
-            rejectQueuedWrite("BLE characteristic is unavailable")
+            rejectQueuedWrite(pendingWrite.token, "BLE characteristic is unavailable")
             return
         }
         val g = gatt
         if (g == null) {
-            rejectQueuedWrite("BLE connection is unavailable")
+            rejectQueuedWrite(pendingWrite.token, "BLE connection is unavailable")
             return
         }
         c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        trackCallbackToken(pendingWrite.token)
         val accepted = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(c, value, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) ==
+            g.writeCharacteristic(c, pendingWrite.value, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) ==
                 BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
-            c.value = value
+            c.value = pendingWrite.value
             @Suppress("DEPRECATION")
             g.writeCharacteristic(c)
         }
         if (!accepted) {
-            rejectQueuedWrite("Android rejected BLE write")
+            callbackTokens.remove(pendingWrite.token)
+            rejectQueuedWrite(pendingWrite.token, "Android rejected BLE write")
             return
         }
         // WRITE_NO_RESPONSE callbacks vary by vendor. This fallback cannot overlap
         // at 9600 baud and keeps multi-packet developer commands portable.
         main.postDelayed({
-            if (finishWrite()) {
+            if (finishWrite(pendingWrite.token)) {
                 drainWrites()
             }
         }, 35)
     }
 
-    private fun beginWrite(): ByteArray? = synchronized(writeLock) {
+    private fun beginWrite(): PendingWrite? = synchronized(writeLock) {
         if (writeActive) return@synchronized null
         val value = writes.poll() ?: return@synchronized null
+        val token = ++nextWriteToken
         writeActive = true
-        value
+        activeWriteToken = token
+        PendingWrite(token, value)
     }
 
-    private fun finishWrite(): Boolean = synchronized(writeLock) {
-        if (!writeActive) return@synchronized false
+    private fun finishWrite(token: Long): Boolean = synchronized(writeLock) {
+        if (!writeActive || activeWriteToken != token) return@synchronized false
         writeActive = false
+        activeWriteToken = null
         true
     }
 
-    private fun resetWriteState() = synchronized(writeLock) { writeActive = false }
+    private fun resetWriteState() = synchronized(writeLock) {
+        writeActive = false
+        activeWriteToken = null
+        callbackTokens.clear()
+    }
 
-    private fun rejectQueuedWrite(reason: String) {
-        resetWriteState()
+    private fun trackCallbackToken(token: Long) {
+        callbackTokens.add(token)
+        while (callbackTokens.size > MAX_CALLBACK_TOKENS) callbackTokens.poll()
+    }
+
+    private fun rejectQueuedWrite(token: Long, reason: String) {
+        if (!finishWrite(token)) return
         writes.clear()
         listener.onStatus(reason, connected)
     }
@@ -247,6 +263,7 @@ class BleBoardTransport(
 
     companion object {
         private val CLIENT_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        private const val MAX_CALLBACK_TOKENS = 256
 
         @SuppressLint("MissingPermission")
         fun scan(context: Context, durationMs: Long = 7_000L, result: (Result<List<BleDevice>>) -> Unit): () -> Unit {
@@ -285,4 +302,6 @@ class BleBoardTransport(
             return { finish() }
         }
     }
+
+    private data class PendingWrite(val token: Long, val value: ByteArray)
 }

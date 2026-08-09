@@ -1069,10 +1069,10 @@ class AutomaticChessboardApp:
         connected = bool(self.transport and self.transport.is_connected)
         self._set_diag("connection", "Pass" if connected else "Fail",
                        self.model.connection_text, "pass" if connected else "fail")
+        expected = ("PONG", "INFO", "TELEM", "BOARD")
+        baseline = {kind: self.response_counts.get(kind, 0) for kind in expected}
+        self.diagnostic_batch = (baseline, time.monotonic() + (18.0 if connected else 0.0))
         if connected:
-            expected = ("PONG", "INFO", "TELEM", "BOARD")
-            baseline = {kind: self.response_counts.get(kind, 0) for kind in expected}
-            self.diagnostic_batch = (baseline, time.monotonic() + 18.0)
             self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
         for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
@@ -1100,7 +1100,6 @@ class AutomaticChessboardApp:
     def _check_diagnostic_batch(self) -> None:
         batch = self.diagnostic_batch
         if batch is None:
-            self._evaluate_diagnostics()
             return
         baseline, deadline = batch
         all_received = all(self.response_counts.get(kind, 0) > count
@@ -1108,20 +1107,27 @@ class AutomaticChessboardApp:
         requests_finished = not self.safe_request_pending and not self.safe_request_queue
         if all_received or requests_finished or time.monotonic() >= deadline:
             self.diagnostic_batch = None
-            self._evaluate_diagnostics()
+            self._evaluate_diagnostics(baseline)
         else:
             self.root.after(100, self._check_diagnostic_batch)
 
-    def _evaluate_diagnostics(self) -> None:
-        info = self.model.firmware
+    def _evaluate_diagnostics(self, baseline: dict[str, int]) -> None:
+        def fresh(kind: str) -> bool:
+            return self.response_counts.get(kind, 0) > baseline.get(kind, 0)
+
+        connected = bool(self.transport and self.transport.is_connected and fresh("PONG"))
+        self._set_diag("connection", "Pass" if connected else "Fail",
+                       self.model.connection_text if connected else "No current PONG response",
+                       "pass" if connected else "fail")
+        info = self.model.firmware if fresh("INFO") else None
         self._set_diag("firmware", "Pass" if info else "Fail",
                        f"Firmware {info.firmware}, protocol {info.protocol}" if info else "No INFO response",
                        "pass" if info else "fail")
-        telemetry = self.model.telemetry
+        telemetry = self.model.telemetry if fresh("TELEM") else None
         self._set_diag("telemetry", "Pass" if telemetry else "Fail",
                        self.model.sequence_name() if telemetry else "No TELEM response",
                        "pass" if telemetry else "fail")
-        sensors = self.model.sensor_squares
+        sensors = self.model.sensor_squares if fresh("BOARD") else None
         self._set_diag("sensors", "Pass" if sensors is not None else "Fail",
                        f"Read all 64 squares; {len(sensors)} currently occupied" if sensors is not None else "No BOARD response",
                        "pass" if sensors is not None else "fail")

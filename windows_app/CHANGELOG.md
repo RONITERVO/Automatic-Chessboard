@@ -19,3 +19,5 @@
   discovery ranking.
 - Made diagnostic completion response-driven and removed disconnected request
   paths that bypassed the safe queue.
+- Required fresh PONG, INFO, TELEM, and BOARD evidence from the current
+  diagnostic batch so timed-out requests cannot pass using cached data.

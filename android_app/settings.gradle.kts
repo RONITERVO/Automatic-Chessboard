@@ -11,7 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven(url = "https://jitpack.io")
+        exclusiveContent {
+            forRepository { maven(url = "https://jitpack.io") }
+            filter { includeModule("com.github.bhlangonijr", "chesslib") }
+        }
     }
 }
 

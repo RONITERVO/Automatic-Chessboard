@@ -1,6 +1,7 @@
 import unittest
 from collections import deque
 import time
+from types import SimpleNamespace
 
 from app import AutomaticChessboardApp
 
@@ -52,7 +53,7 @@ class SafeRequestQueueTests(unittest.TestCase):
         self.app.diagnostic_batch = ({"PONG": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}, time.monotonic() + 10)
         self.app.safe_request_pending = ("INFO", "INFO", time.monotonic())
         self.app.safe_request_queue = deque(("TELEM", "BOARD"))
-        self.app._evaluate_diagnostics = lambda: evaluated.append(True)
+        self.app._evaluate_diagnostics = lambda value: evaluated.append(value)
 
         self.app._check_diagnostic_batch()
         self.assertEqual(evaluated, [])
@@ -60,7 +61,33 @@ class SafeRequestQueueTests(unittest.TestCase):
 
         self.app.response_counts.update({"INFO": 1, "TELEM": 1, "BOARD": 1})
         callbacks.pop()()
-        self.assertEqual(evaluated, [True])
+        self.assertEqual(evaluated, [{"PONG": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}])
+
+    def test_diagnostics_reject_stale_cached_data_after_request_timeouts(self):
+        baseline = {"PONG": 4, "INFO": 4, "TELEM": 4, "BOARD": 4}
+        self.app.response_counts = baseline.copy()
+        self.app.diagnostic_batch = (baseline, time.monotonic() - 1)
+        self.app.safe_request_pending = None
+        self.app.safe_request_queue = deque()
+        self.app.model = SimpleNamespace(
+            connection_text="Board connected and responding",
+            firmware=SimpleNamespace(firmware="3.29", protocol="ACB2"),
+            telemetry=SimpleNamespace(
+                button_a_released=True, button_b_released=True, button_b_raw=1023,
+            ),
+            sensor_squares=set(),
+            sequence_name=lambda: "Main menu / idle",
+        )
+        results = {}
+        self.app._set_diag = lambda key, result, details, tag: results.__setitem__(key, (result, details, tag))
+
+        self.app._check_diagnostic_batch()
+
+        self.assertEqual(results["connection"][0], "Fail")
+        self.assertEqual(results["firmware"][0], "Fail")
+        self.assertEqual(results["telemetry"][0], "Fail")
+        self.assertEqual(results["sensors"][0], "Fail")
+        self.assertEqual(results["controls"][0], "Unknown")
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ val generatedNoticeAssets = layout.buildDirectory.dir("generated/third-party-not
 android.sourceSets["main"].assets.srcDir(generatedNoticeAssets)
 val copyThirdPartyNotices by tasks.registering(Copy::class) {
     from(rootProject.file("THIRD_PARTY_NOTICES.md"))
+    from(rootProject.file("third_party")) { into("third_party") }
     into(generatedNoticeAssets)
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(copyThirdPartyNotices) }

@@ -36,6 +36,12 @@ class MonitorStateTest {
         assertEquals("Connection stale", state.health(20_000).first)
     }
 
+    @Test fun expectedMotionExplainsSuppressedPolling() {
+        val state = MonitorState(connected = true, lastSeenMs = 1_000, motionExpected = true)
+        assertEquals("Motion in progress", state.health(20_000).first)
+        assertEquals(HealthLevel.WARN, state.health(20_000).second)
+    }
+
     @Test fun freshHealthyStateIsReady() {
         val now = 10_000L
         val state = MonitorState(

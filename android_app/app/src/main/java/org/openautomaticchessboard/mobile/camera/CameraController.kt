@@ -207,12 +207,12 @@ class CameraController(
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
         if (uri == null || scheme !in setOf("rtsp", "http", "https")) {
-            fail(token, "Enter 0 for local camera, or an RTSP/HTTPS URL")
+            fail(token, "Enter 0, an HTTPS URL, or trusted-network RTSP")
             return
         }
         if (scheme == "http") {
             val credentialNote = if (!uri.userInfo.isNullOrBlank()) " URLs containing credentials are also rejected." else ""
-            fail(token, "Insecure HTTP camera transport is blocked.$credentialNote Use HTTPS or RTSP.")
+            fail(token, "Insecure HTTP camera transport is blocked.$credentialNote Use HTTPS, or trusted-network RTSP.")
             return
         }
         val texture = view.surfaceTexture

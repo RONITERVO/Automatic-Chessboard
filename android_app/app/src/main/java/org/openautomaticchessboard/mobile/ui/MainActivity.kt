@@ -73,7 +73,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var currentTab = 0
     private var simulatorActive = false
     private var cameraController: CameraController? = null
-    private var cameraTexture: TextureView? = null
     private var cameraSource = "0"
     private var pendingSnapshot: Bitmap? = null
     private var devCommand = "TELEM"
@@ -82,9 +81,8 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var historyPage = 0
     private var devLog: TextView? = null
     private var devPageLabel: TextView? = null
-    private var monitorBoard: ChessboardView? = null
     private var monitorUpdater: (() -> Unit)? = null
-    private var playBoard: ChessboardView? = null
+    private var playUpdater: (() -> Unit)? = null
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
         override fun run() {
@@ -168,9 +166,8 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun selectTab(index: Int) {
         if (currentTab == 3 && index != 3) closeCamera()
-        monitorBoard = null
-        playBoard = null
         monitorUpdater = null
+        playUpdater = null
         currentTab = index
         content.removeAllViews()
         val page = when (index) {
@@ -184,7 +181,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun buildMonitor(): View {
-        val board = ChessboardView(this).also { monitorBoard = it }
+        val board = ChessboardView(this)
         val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val health = text("", 19f, Color.WHITE, true)
         val guidance = text("", 14f, Color.WHITE).apply { maxLines = 3 }
@@ -219,51 +216,99 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun buildPlay(): View {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val board = ChessboardView(this).also { playBoard = it }.apply {
+        val board = ChessboardView(this).apply {
             pieces = gameState.pieces; sensors = monitorState.sensorSquares; flipped = !gameState.humanWhite
             trolley = monitorState.telemetry?.let { it.trolleyX to it.trolleyY }
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        controls.addView(text(gameState.status, if (landscape) 12f else 15f, Color.WHITE, true).apply { maxLines = 2 },
+        val status = text(gameState.status, if (landscape) 12f else 15f, Color.WHITE, true).apply { maxLines = 2 }
+        controls.addView(status,
             if (landscape) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28))
             else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, .8f))
-        val sideRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val white = button("Human: White", if (gameState.humanWhite) ACCENT_DARK else SURFACE) {
-            if (!gameState.active) { prefs.edit().putBoolean("human_white", true).apply(); game.chooseHumanSide(true) }
-        }
-        val black = button("Human: Black", if (!gameState.humanWhite) ACCENT_DARK else SURFACE) {
-            if (!gameState.active) { prefs.edit().putBoolean("human_white", false).apply(); game.chooseHumanSide(false) }
-        }
-        sideRow.addView(white, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        sideRow.addView(black, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
-        controls.addView(sideRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 30 else 42)))
-        val eloSlider = sliderRow("Elo", 1320, 3190, game.elo) {
-            game.elo = it; prefs.edit().putInt("elo", it).apply()
-        }
-        val thinkSlider = sliderRow("Think", 50, 5000, game.thinkMillis.toInt()) {
-            game.thinkMillis = it.toLong(); prefs.edit().putLong("think_ms", it.toLong()).apply()
-        }
-        if (landscape) {
-            val settingsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            settingsRow.addView(eloSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            settingsRow.addView(thinkSlider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            controls.addView(settingsRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)))
-        } else {
-            controls.addView(eloSlider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
-            controls.addView(thinkSlider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
-        }
-        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actionRow.addView(button("Start + calibrate", ACCENT_DARK) { confirmStartGame() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.35f))
-        actionRow.addView(button("Stop") { game.stop() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .72f).apply { marginStart = dp(4) })
-        actionRow.addView(button("PGN") { createPgn() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .65f).apply { marginStart = dp(4) })
-        controls.addView(actionRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44)))
+        val side = buildSideSelector()
+        controls.addView(side.view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 30 else 42)))
+        controls.addView(buildPlaySliders(landscape), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 32 else 84),
+        ))
+        controls.addView(buildPlayActions(), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44),
+        ))
         val history = text(historyPageText(), 13f, MUTED).apply { typeface = android.graphics.Typeface.MONOSPACE; maxLines = 4 }
         controls.addView(history, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, if (landscape) 1f else 1.3f))
-        val pages = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        pages.addView(button("◀ moves") { historyPage = (historyPage - 1).coerceAtLeast(0); selectTab(1) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        pages.addView(button("moves ▶") { historyPage++; selectTab(1) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
-        controls.addView(pages, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 25 else 38)))
+        controls.addView(buildHistoryPager { playUpdater?.invoke() }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 25 else 38),
+        ))
+        playUpdater = {
+            board.pieces = gameState.pieces
+            board.sensors = monitorState.sensorSquares
+            board.flipped = !gameState.humanWhite
+            board.trolley = monitorState.telemetry?.let { it.trolleyX to it.trolleyY }
+            status.text = gameState.status
+            side.white.background = rounded(if (gameState.humanWhite) ACCENT_DARK else SURFACE)
+            side.black.background = rounded(if (!gameState.humanWhite) ACCENT_DARK else SURFACE)
+            history.text = historyPageText()
+        }
+        playUpdater?.invoke()
         return adaptive(board, controls, .52f)
+    }
+
+    private fun buildSideSelector(): SideSelector {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val white = button("Human: White") {
+            if (!gameState.active) {
+                prefs.edit().putBoolean("human_white", true).apply()
+                game.chooseHumanSide(true)
+            }
+        }
+        val black = button("Human: Black") {
+            if (!gameState.active) {
+                prefs.edit().putBoolean("human_white", false).apply()
+                game.chooseHumanSide(false)
+            }
+        }
+        row.addView(white, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        row.addView(black, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
+        return SideSelector(row, white, black)
+    }
+
+    private fun buildPlaySliders(landscape: Boolean): View {
+        val elo = sliderRow("Elo", 1320, 3190, game.elo) {
+            game.elo = it
+            prefs.edit().putInt("elo", it).apply()
+        }
+        val think = sliderRow("Think", 50, 5000, game.thinkMillis.toInt()) {
+            game.thinkMillis = it.toLong()
+            prefs.edit().putLong("think_ms", it.toLong()).apply()
+        }
+        return LinearLayout(this).apply {
+            orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            addView(elo, LinearLayout.LayoutParams(
+                if (landscape) 0 else ViewGroup.LayoutParams.MATCH_PARENT,
+                if (landscape) ViewGroup.LayoutParams.MATCH_PARENT else 0, 1f,
+            ))
+            addView(think, LinearLayout.LayoutParams(
+                if (landscape) 0 else ViewGroup.LayoutParams.MATCH_PARENT,
+                if (landscape) ViewGroup.LayoutParams.MATCH_PARENT else 0, 1f,
+            ))
+        }
+    }
+
+    private fun buildPlayActions(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(button("Start + calibrate", ACCENT_DARK) { confirmStartGame() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.35f))
+        addView(button("Stop") { game.stop() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .72f).apply { marginStart = dp(4) })
+        addView(button("PGN") { createPgn() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .65f).apply { marginStart = dp(4) })
+    }
+
+    private fun buildHistoryPager(update: () -> Unit): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        addView(button("◀ moves") { historyPage = (historyPage - 1).coerceAtLeast(0); update() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        addView(button("moves ▶") { historyPage++; update() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
     }
 
     private fun buildDiagnostics(): View {
@@ -302,7 +347,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val source = EditText(this).apply {
-            setText(cameraSource); setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = "0 or RTSP/HTTPS URL"; setSingleLine(true)
+            setText(cameraSource); setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = "0, HTTPS, or local RTSP"; setSingleLine(true)
             background = rounded(SURFACE); setPadding(dp(8), 0, dp(8), 0)
         }
         row.addView(source, LinearLayout.LayoutParams(0, dp(44), 1f))
@@ -312,8 +357,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val texture = TextureView(this).apply { isOpaque = true; contentDescription = "Live camera preview" }
         cameraController?.close()
         cameraController = null
-        cameraTexture = null
-        cameraTexture = texture
         val preview = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(texture, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -379,10 +422,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         connectionBadge.text = if (state.connected) "CONNECTED • ${state.health().first}" else "DISCONNECTED • ${state.connectionText}"
         connectionBadge.setTextColor(if (state.connected) GOOD else DANGER)
         if (currentTab == 0) monitorUpdater?.invoke()
-        playBoard?.apply {
-            sensors = state.sensorSquares
-            trolley = state.telemetry?.let { it.trolleyX to it.trolleyY }
-        }
+        if (currentTab == 1) playUpdater?.invoke()
     }
 
     override fun onBoardEvent(event: BoardEvent) { game.handle(event) }
@@ -395,7 +435,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun onGameChanged(snapshot: GameSnapshot) {
         gameState = snapshot
         repository.setExpectedSquares(snapshot.expectedSquares)
-        if (currentTab == 1) selectTab(1)
+        if (currentTab == 1) playUpdater?.invoke()
         else if (currentTab == 0) monitorUpdater?.invoke()
     }
 
@@ -684,7 +724,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         super.onPause()
     }
 
-    private fun closeCamera() { cameraController?.close(); cameraController = null; cameraTexture = null }
+    private fun closeCamera() { cameraController?.close(); cameraController = null }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -714,4 +754,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
         private const val REQ_SUPPORT = 202
         private const val REQ_SNAPSHOT = 203
     }
+
+    private data class SideSelector(val view: View, val white: Button, val black: Button)
 }

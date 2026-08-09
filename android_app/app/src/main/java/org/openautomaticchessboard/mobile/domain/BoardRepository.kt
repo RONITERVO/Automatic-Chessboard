@@ -58,7 +58,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
             requestQueue.clear()
             responseCounts.clear()
             motionStartedMs = null
-            state = state.copy(connected = false, connectionText = "Connectingâ€¦", lastError = "")
+            state = state.copy(connected = false, connectionText = "Connecting\u2026", lastError = "")
             stateLock.notifyAll()
             if (pollFuture == null) {
                 pollFuture = scheduler.scheduleWithFixedDelay(::pollTick, 500, 500, TimeUnit.MILLISECONDS)
@@ -171,36 +171,14 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                 val current = transport ?: return
                 if (!current.isConnected) return
                 val now = System.currentTimeMillis()
-                if (state.motionExpected) {
-                    val started = motionStartedMs ?: now.also { motionStartedMs = it }
-                    if (now - started <= MAX_MOTION_DURATION_MS) return
-                    motionStartedMs = null
-                    motionTimedOut = true
-                    state = state.copy(
-                        motionExpected = false,
-                        lastError = "Motion status timed out; live polling resumed",
-                    )
+                when (handleMotionTimeoutLocked(now)) {
+                    MotionPollState.WAITING -> return
+                    MotionPollState.TIMED_OUT -> motionTimedOut = true
+                    MotionPollState.READY -> Unit
                 }
-                pending?.let { entry ->
-                    if (now - entry.startedMs < REQUEST_TIMEOUT_MS) return
-                    timedOutRequest = entry
-                    pending = null
-                    stateLock.notifyAll()
-                }
+                timedOutRequest = expirePendingRequestLocked(now)
                 if (pending != null) return
-                val queued = if (requestQueue.isEmpty()) null else requestQueue.removeFirst()
-                if (queued == null && now - lastPeriodicPollMs < PERIODIC_POLL_INTERVAL_MS) {
-                    if (motionTimedOut) publishState()
-                    return
-                }
-                val capabilities = state.firmware?.capabilities.orEmpty()
-                command = queued ?: when {
-                    capabilities.isEmpty() -> "INFO"
-                    pollBoardNext && "BOARD" in capabilities -> "BOARD"
-                    "TELEM" in capabilities -> "TELEM"
-                    "BOARD" in capabilities -> "BOARD"
-                    else -> "STATUS"
-                }
+                command = selectNextCommandLocked(now) ?: return
                 pollBoardNext = !pollBoardNext
                 current.send(command)
                 pending = PendingRequest(expectedResponse(command), command, now)
@@ -228,6 +206,40 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                 recorder.record("error", "poll_failed", mapOf("command" to command, "error" to error.toString()))
             }
             publishState()
+        }
+    }
+
+    private fun handleMotionTimeoutLocked(now: Long): MotionPollState {
+        if (!state.motionExpected) return MotionPollState.READY
+        val started = motionStartedMs ?: now.also { motionStartedMs = it }
+        if (now - started <= MAX_MOTION_DURATION_MS) return MotionPollState.WAITING
+        motionStartedMs = null
+        state = state.copy(
+            motionExpected = false,
+            lastError = "Motion status timed out; live polling resumed",
+        )
+        return MotionPollState.TIMED_OUT
+    }
+
+    private fun expirePendingRequestLocked(now: Long): PendingRequest? {
+        val entry = pending ?: return null
+        if (now - entry.startedMs < REQUEST_TIMEOUT_MS) return null
+        pending = null
+        stateLock.notifyAll()
+        return entry
+    }
+
+    private fun selectNextCommandLocked(now: Long): String? {
+        val queued = if (requestQueue.isEmpty()) null else requestQueue.removeFirst()
+        if (queued != null) return queued
+        if (now - lastPeriodicPollMs < PERIODIC_POLL_INTERVAL_MS) return null
+        val capabilities = state.firmware?.capabilities.orEmpty()
+        return when {
+            capabilities.isEmpty() -> "INFO"
+            pollBoardNext && "BOARD" in capabilities -> "BOARD"
+            "TELEM" in capabilities -> "TELEM"
+            "BOARD" in capabilities -> "BOARD"
+            else -> "STATUS"
         }
     }
 
@@ -338,4 +350,6 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
         const val MAX_MOTION_DURATION_MS = 10 * 60_000L
         private val SAFE_REFRESH_COMMANDS = arrayOf("PING", "INFO", "TELEM", "BOARD")
     }
+
+    private enum class MotionPollState { READY, WAITING, TIMED_OUT }
 }

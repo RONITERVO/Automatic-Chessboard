@@ -58,7 +58,8 @@ delay. Structured log writes use one daemon writer and bounded rollover files.
 1. chesslib owns legal position and piece identity.
 2. BOARD owns physical occupancy after firmware rank normalization.
 3. TELEM reports commanded/calculated mechanism state, not physical proof.
-4. A timestamp older than 12 seconds is stale, never ready.
+4. A timestamp older than 12 seconds is stale, never ready, except while expected
+   motion deliberately suppresses polling; that state is reported as a warning.
 5. Movement-capable developer commands require an unlock and confirmation.
 6. Unknown real-hardware commands are blocked.
 7. `!` is unframed and available independently of normal newline commands.

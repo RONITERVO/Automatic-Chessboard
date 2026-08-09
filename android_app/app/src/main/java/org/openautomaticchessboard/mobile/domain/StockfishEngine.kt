@@ -33,7 +33,7 @@ class StockfishEngine(context: Context) : Closeable {
         engineName
     }
 
-    /** Returns null only for the valid UCI `bestmove (none)` response. */
+    /** Returns null for the valid UCI no-move responses `(none)` and `0000`. */
     fun bestMove(fen: String, elo: Int, thinkMillis: Long): String? = synchronized(lock) {
         val active = ensureStarted()
         drainOutput(active)
@@ -47,7 +47,7 @@ class StockfishEngine(context: Context) : Closeable {
             .lastOrNull { it.startsWith("bestmove ") }
             ?: error("Stockfish did not return a move")
         val move = line.split(' ').getOrNull(1).orEmpty()
-        if (move == "(none)") return@synchronized null
+        if (move == "(none)" || move == "0000") return@synchronized null
         require(move.matches(Regex("[a-h][1-8][a-h][1-8][qrbn]?"))) { "Invalid engine move: $line" }
         move
     }
@@ -73,11 +73,16 @@ class StockfishEngine(context: Context) : Closeable {
         }, "stockfish-output").apply { isDaemon = true; start() }
         val active = Session(process, input, output, reader)
         session = active
-        send(active, "uci")
-        val lines = readUntil(active, "uciok", 8_000)
-        engineName = lines.firstOrNull { it.startsWith("id name ") }
-            ?.removePrefix("id name ") ?: "Stockfish"
-        return active
+        return try {
+            send(active, "uci")
+            val lines = readUntil(active, "uciok", 8_000)
+            engineName = lines.firstOrNull { it.startsWith("id name ") }
+                ?.removePrefix("id name ") ?: "Stockfish"
+            active
+        } catch (error: Exception) {
+            shutdownSession(active)
+            throw error
+        }
     }
 
     private fun send(active: Session, command: String) {
@@ -100,7 +105,7 @@ class StockfishEngine(context: Context) : Closeable {
     }
 
     private fun drainOutput(active: Session) {
-        while (active.output.poll()?.takeUnless { it == END_OF_STREAM } != null) Unit
+        while (active.output.peek()?.let { it != END_OF_STREAM } == true) active.output.poll()
     }
 
     private fun shutdownSession(active: Session) {

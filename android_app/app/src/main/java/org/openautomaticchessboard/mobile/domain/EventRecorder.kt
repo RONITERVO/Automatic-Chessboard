@@ -95,12 +95,18 @@ class EventRecorder(context: Context) : Closeable {
         accepting = false
         runCatching { worker.execute { runCatching { writer.close() } } }
         worker.shutdown()
+        try {
+            worker.awaitTermination(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     companion object {
         const val MAX_SESSION_BYTES = 512 * 1024
         const val MAX_SUPPORT_LOG_BYTES = 256 * 1024
         private const val MAX_LOG_FILES = 20
+        private const val CLOSE_TIMEOUT_SECONDS = 2L
 
         private fun readFileTail(source: File, maximumBytes: Int): ByteArray {
             if (!source.isFile || maximumBytes <= 0) return byteArrayOf()
