@@ -4,19 +4,47 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import androidx.customview.widget.ExploreByTouchHelper
 import com.github.bhlangonijr.chesslib.Piece
 import kotlin.math.min
 
 class ChessboardView(context: Context) : View(context) {
-    var pieces: Map<Int, Piece> = emptyMap(); set(value) { field = value; invalidate(); updateDescription() }
-    var sensors: Set<Int>? = null; set(value) { field = value; invalidate(); updateDescription() }
-    var flipped: Boolean = false; set(value) { field = value; invalidate() }
-    var trolley: Pair<Int, Int>? = null; set(value) { field = value; invalidate() }
-    var selectedSquares: Set<Int> = emptySet(); set(value) { field = value; invalidate() }
-    var onSquareTapped: ((Int) -> Unit)? = null; set(value) { field = value; isClickable = value != null }
+    var pieces: Map<Int, Piece> = emptyMap(); set(value) {
+        if (field == value) return
+        field = value; invalidate(); updateDescription(); accessibilityHelper.invalidateRoot()
+    }
+    var sensors: Set<Int>? = null; set(value) {
+        if (field == value) return
+        field = value; invalidate(); updateDescription(); accessibilityHelper.invalidateRoot()
+    }
+    var flipped: Boolean = false; set(value) {
+        if (field == value) return
+        field = value; invalidate(); accessibilityHelper.invalidateRoot()
+    }
+    var trolley: Pair<Int, Int>? = null; set(value) {
+        if (field == value) return
+        field = value; invalidate()
+    }
+    var selectedSquares: Set<Int> = emptySet(); set(value) {
+        if (field == value) return
+        field = value
+        invalidate()
+        updateDescription()
+        accessibilityHelper.invalidateRoot()
+        if (isAttachedToWindow) announceForAccessibility(selectionDescription())
+    }
+    var onSquareTapped: ((Int) -> Unit)? = null; set(value) {
+        field = value
+        isClickable = value != null
+        accessibilityHelper.invalidateRoot()
+    }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val light = Color.rgb(227, 215, 190)
@@ -27,8 +55,42 @@ class ChessboardView(context: Context) : View(context) {
     private val carriage = Color.rgb(45, 210, 226)
     private val selection = Color.rgb(255, 213, 79)
     private val cellRect = RectF()
+    private val accessibilityHelper = object : ExploreByTouchHelper(this) {
+        override fun getVirtualViewAt(x: Float, y: Float): Int =
+            squareAt(x, y) ?: INVALID_ID
 
-    init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES; updateDescription() }
+        override fun getVisibleVirtualViews(virtualViewIds: MutableList<Int>) {
+            virtualViewIds.addAll(0..63)
+        }
+
+        override fun onPopulateNodeForVirtualView(
+            virtualViewId: Int,
+            node: AccessibilityNodeInfoCompat,
+        ) {
+            node.contentDescription = squareDescription(virtualViewId)
+            node.setBoundsInParent(squareBounds(virtualViewId))
+            node.isClickable = onSquareTapped != null
+            node.isSelected = virtualViewId in selectedSquares
+            if (onSquareTapped != null) node.addAction(AccessibilityNodeInfoCompat.ACTION_CLICK)
+        }
+
+        override fun onPerformActionForVirtualView(
+            virtualViewId: Int,
+            action: Int,
+            arguments: Bundle?,
+        ): Boolean {
+            if (action != AccessibilityNodeInfoCompat.ACTION_CLICK || onSquareTapped == null) return false
+            activateSquare(virtualViewId)
+            return true
+        }
+    }
+
+    init {
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        isFocusable = true
+        ViewCompat.setAccessibilityDelegate(this, accessibilityHelper)
+        updateDescription()
+    }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val availableWidth = MeasureSpec.getSize(widthMeasureSpec)
@@ -72,23 +134,69 @@ class ChessboardView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (onSquareTapped == null) return super.onTouchEvent(event)
         if (event.action != MotionEvent.ACTION_UP) return true
-        val size = min(width, height).toFloat()
-        val left = (width - size) / 2f
-        val top = (height - size) / 2f
-        if (event.x !in left..(left + size) || event.y !in top..(top + size)) return true
-        val screenFile = ((event.x - left) / (size / 8f)).toInt().coerceIn(0, 7)
-        val screenRank = ((event.y - top) / (size / 8f)).toInt().coerceIn(0, 7)
-        val file = if (flipped) 7 - screenFile else screenFile
-        val rank = if (flipped) screenRank else 7 - screenRank
-        onSquareTapped?.invoke(rank * 8 + file)
+        val square = squareAt(event.x, event.y) ?: return true
+        onSquareTapped?.invoke(square)
         performClick()
         return true
     }
+
+    override fun dispatchHoverEvent(event: MotionEvent): Boolean =
+        accessibilityHelper.dispatchHoverEvent(event) || super.dispatchHoverEvent(event)
 
     override fun performClick(): Boolean {
         super.performClick()
         return true
     }
+
+    private fun activateSquare(square: Int) {
+        onSquareTapped?.invoke(square)
+        performClick()
+    }
+
+    private fun squareAt(x: Float, y: Float): Int? {
+        val size = min(width, height).toFloat()
+        val left = (width - size) / 2f
+        val top = (height - size) / 2f
+        if (size <= 0f || x < left || x >= left + size || y < top || y >= top + size) return null
+        val screenFile = ((x - left) / (size / 8f)).toInt().coerceIn(0, 7)
+        val screenRank = ((y - top) / (size / 8f)).toInt().coerceIn(0, 7)
+        val file = if (flipped) 7 - screenFile else screenFile
+        val rank = if (flipped) screenRank else 7 - screenRank
+        return rank * 8 + file
+    }
+
+    private fun squareBounds(square: Int): Rect {
+        val file = square % 8
+        val rank = square / 8
+        val screenFile = if (flipped) 7 - file else file
+        val screenRank = if (flipped) rank else 7 - rank
+        val size = min(width, height).toFloat()
+        val left = (width - size) / 2f
+        val top = (height - size) / 2f
+        val cell = size / 8f
+        return Rect(
+            (left + screenFile * cell).toInt(),
+            (top + screenRank * cell).toInt(),
+            (left + (screenFile + 1) * cell).toInt(),
+            (top + (screenRank + 1) * cell).toInt(),
+        )
+    }
+
+    private fun squareDescription(square: Int): String = buildString {
+        append(squareName(square))
+        pieces[square]?.let { append(", ${it.name.lowercase().replace('_', ' ')}") }
+        sensors?.let { append(if (square in it) ", sensor occupied" else ", sensor empty") }
+        if (square in selectedSquares) append(", selected")
+    }
+
+    private fun selectionDescription(): String = if (selectedSquares.isEmpty()) {
+        "Square selection cleared"
+    } else {
+        "Selected ${selectedSquares.sorted().joinToString(" and ") { squareName(it) }}"
+    }
+
+    private fun squareName(square: Int): String =
+        "${('a'.code + square % 8).toChar()}${square / 8 + 1}"
 
     private fun drawSquare(canvas: Canvas, rect: RectF, file: Int, rank: Int) {
         paint.style = Paint.Style.FILL
@@ -138,8 +246,11 @@ class ChessboardView(context: Context) : View(context) {
 
     private fun updateDescription() {
         val sensed = sensors
-        val description = if (sensed == null) "Chessboard. Sensor state unavailable."
-        else "Chessboard. ${sensed.size} occupied sensors. ${(pieces.keys - sensed).size} missing and ${(sensed - pieces.keys).size} unexpected."
+        val sensorDescription = if (sensed == null) "Sensor state unavailable."
+        else "${sensed.size} occupied sensors. ${(pieces.keys - sensed).size} missing and ${(sensed - pieces.keys).size} unexpected."
+        val selectedDescription = if (selectedSquares.isEmpty()) "No squares selected."
+        else "Selected ${selectedSquares.sorted().joinToString(" and ") { squareName(it) }}."
+        val description = "Chessboard. $sensorDescription $selectedDescription"
         if (contentDescription != description) contentDescription = description
     }
 

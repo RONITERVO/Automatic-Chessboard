@@ -133,6 +133,7 @@ class MonitorModel:
     last_seen: float | None = None
     firmware: FirmwareInfo | None = None
     telemetry: Telemetry | None = None
+    telemetry_updated: float | None = None
     sensor_squares: frozenset[int] | None = None
     sensor_hex: str = ""
     sensor_updated: float | None = None
@@ -145,6 +146,9 @@ class MonitorModel:
 
     def age_seconds(self) -> float | None:
         return None if self.last_seen is None else max(0.0, monotonic() - self.last_seen)
+
+    def telemetry_age_seconds(self) -> float | None:
+        return None if self.telemetry_updated is None else max(0.0, monotonic() - self.telemetry_updated)
 
     def missing_squares(self) -> frozenset[int]:
         if self.sensor_squares is None:

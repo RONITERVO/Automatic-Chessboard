@@ -304,6 +304,8 @@ class SimulatorTransport:
         upper = text.upper()
         if text.startswith("!"):
             self._fault = True
+            self._homed = False
+            self._trolley_x, self._trolley_y = 0, 0
             self._sequence = 10
             self._emit("ESTOP REMOTE")
         elif upper in ("PING", "HELLO"):
@@ -319,21 +321,27 @@ class SimulatorTransport:
         elif upper == "BTTEST":
             self._emit("BT SIMULATED")
         elif upper == "CALIBRATE":
-            self._sequence = 3
-            self._emit("CALIBRATING")
-            self._homed = True
-            self._trolley_x, self._trolley_y = 5, 6
-            self._sequence = 1
-            self._emit("CALIBRATED e6", 0.25)
+            if self._fault:
+                self._emit("ERR FAULT")
+            else:
+                self._sequence = 3
+                self._emit("CALIBRATING")
+                self._homed = True
+                self._trolley_x, self._trolley_y = 5, 6
+                self._sequence = 1
+                self._emit("CALIBRATED e6", 0.25)
         elif upper.startswith("START "):
-            self._board.reset()
-            self._human_white = upper.endswith("W")
-            self._sequence = 15
-            self._emit(f"OK START {'W' if self._human_white else 'B'}")
-            self._emit("SETUP PRESS A", 0.15)
-            self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.5)
-            self._sequence = 16 if self._human_white else 17
-            self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.65)
+            if self._fault:
+                self._emit("ERR FAULT")
+            else:
+                self._board.reset()
+                self._human_white = upper.endswith("W")
+                self._sequence = 15
+                self._emit(f"OK START {'W' if self._human_white else 'B'}")
+                self._emit("SETUP PRESS A", 0.15)
+                self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.5)
+                self._sequence = 16 if self._human_white else 17
+                self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.65)
         elif upper.startswith("SIMMOVE "):
             try:
                 move = chess.Move.from_uci(text.split(maxsplit=1)[1].lower())
@@ -355,6 +363,8 @@ class SimulatorTransport:
             self._emit("OK REJECT")
         elif upper.startswith("PLAY "):
             try:
+                if self._fault:
+                    raise RuntimeError("FAULT")
                 uci = text.split()[1].lower()
                 move = chess.Move.from_uci(uci)
                 if move not in self._board.legal_moves:
@@ -373,7 +383,9 @@ class SimulatorTransport:
                 self._emit(f"ERR PLAY {error}")
         elif upper.startswith("HEAD "):
             square = text.split(maxsplit=1)[1].lower()
-            if not self._homed:
+            if self._fault:
+                self._emit("ERR FAULT")
+            elif not self._homed:
                 self._emit("ERR CALIBRATE")
             elif len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
                 self._emit("ERR COMMAND")
@@ -384,6 +396,8 @@ class SimulatorTransport:
         elif upper.startswith("PIECE "):
             move = text.split(maxsplit=1)[1].lower()
             try:
+                if self._fault:
+                    raise RuntimeError("FAULT")
                 if not self._homed:
                     raise RuntimeError("CALIBRATE")
                 if len(move) != 4:

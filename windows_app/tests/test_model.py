@@ -1,4 +1,5 @@
 import unittest
+from time import monotonic
 
 import chess
 
@@ -50,6 +51,13 @@ class MonitorModelTests(unittest.TestCase):
                               5, 6, True, True, 1023, 700, 1)
         self.assertTrue(calibration_matches("e6", telemetry))
         self.assertTrue(piece_move_matches(chess.E2, chess.E4, frozenset({chess.E4})))
+
+    def test_telemetry_freshness_is_independent_of_other_board_messages(self):
+        model = MonitorModel(connected=True)
+        model.mark_seen()
+        self.assertIsNone(model.telemetry_age_seconds())
+        model.telemetry_updated = monotonic() - 6.0
+        self.assertGreater(model.telemetry_age_seconds(), 5.0)
 
 
 if __name__ == "__main__":

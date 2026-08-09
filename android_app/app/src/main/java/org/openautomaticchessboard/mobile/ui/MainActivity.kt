@@ -75,7 +75,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private lateinit var gameState: GameSnapshot
     private var timeline: List<TimelineEntry> = emptyList()
     private var diagnostics: List<DiagnosticResult> = emptyList()
-    private var currentTab = 0
+    private var currentTab = TAB_BOARD
     private var simulatorActive = false
     private var cameraController: CameraController? = null
     private var cameraSource = "0"
@@ -93,6 +93,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var manualStatus = "Calibrate from this page before moving the head."
     private var manualCalibrationVerified = false
     private var manualPending = ManualPending.NONE
+    private var manualPendingSelection: ManualSelection? = null
     private var calibrationReportedSquare: String? = null
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
@@ -122,7 +123,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         diagnosticsRunner = DiagnosticsRunner(this, repository, engine)
         buildShell()
         repository.addObserver(this)
-        selectTab(0)
+        selectTab(TAB_BOARD)
     }
 
     private fun buildShell() {
@@ -166,9 +167,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
         content = FrameLayout(this).apply { setPadding(dp(8), dp(4), dp(8), dp(4)) }
         root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4), dp(2), dp(4), dp(4)) }
-        listOf("Board", "Play", "Move", "Checks", "Cam", "Dev").forEachIndexed { index, label ->
+        TAB_LABELS.forEach { (index, label) ->
             nav.addView(button(label, SURFACE) { selectTab(index) }, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-                if (index > 0) marginStart = dp(3)
+                if (index != TAB_BOARD) marginStart = dp(3)
             })
         }
         root.addView(nav, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)))
@@ -176,18 +177,18 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun selectTab(index: Int) {
-        if (currentTab == 4 && index != 4) closeCamera()
+        if (currentTab == TAB_CAMERA && index != TAB_CAMERA) closeCamera()
         monitorUpdater = null
         playUpdater = null
         manualUpdater = null
         currentTab = index
         content.removeAllViews()
         val page = when (index) {
-            0 -> buildMonitor()
-            1 -> buildPlay()
-            2 -> buildManualControl()
-            3 -> buildDiagnostics()
-            4 -> buildCamera()
+            TAB_BOARD -> buildMonitor()
+            TAB_PLAY -> buildPlay()
+            TAB_MOVE -> buildManualControl()
+            TAB_CHECKS -> buildDiagnostics()
+            TAB_CAMERA -> buildCamera()
             else -> buildDeveloper()
         }
         content.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -209,8 +210,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             board.pieces = gameState.pieces
             board.sensors = state.sensorSquares
             board.flipped = !gameState.humanWhite
-            board.trolley = state.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-                ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+            board.trolley = trolleyPosition(state)
             val (label, level) = state.health()
             health.text = label
             health.setTextColor(when (level) { HealthLevel.GOOD -> GOOD; HealthLevel.WARN -> WARN; HealthLevel.BAD -> DANGER })
@@ -232,8 +232,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val board = ChessboardView(this).apply {
             pieces = gameState.pieces; sensors = monitorState.sensorSquares; flipped = !gameState.humanWhite
-            trolley = monitorState.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-                ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+            trolley = trolleyPosition()
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = text(gameState.status, if (landscape) 12f else 15f, Color.WHITE, true).apply { maxLines = 2 }
@@ -257,8 +256,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             board.pieces = gameState.pieces
             board.sensors = monitorState.sensorSquares
             board.flipped = !gameState.humanWhite
-            board.trolley = monitorState.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-                ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+            board.trolley = trolleyPosition()
             status.text = gameState.status
             side.white.background = rounded(if (gameState.humanWhite) ACCENT_DARK else SURFACE)
             side.black.background = rounded(if (!gameState.humanWhite) ACCENT_DARK else SURFACE)
@@ -333,8 +331,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             pieces = gameState.pieces
             sensors = monitorState.sensorSquares
             flipped = !gameState.humanWhite
-            trolley = monitorState.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-                ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+            trolley = trolleyPosition()
             selectedSquares = manualSelection.highlighted
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -342,11 +339,21 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val selectionText = text("", 13f, MUTED).apply { maxLines = 2 }
         val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val headMode = button("Head only") {
+            if (manualPending != ManualPending.NONE) {
+                manualStatus = "An operation is in progress; wait for verification."
+                manualUpdater?.invoke()
+                return@button
+            }
             manualSelection = manualSelection.withMode(ManualMoveMode.HEAD_ONLY)
             manualStatus = "Tap one destination. The electromagnet will stay off."
             manualUpdater?.invoke()
         }
         val pieceMode = button("Move piece") {
+            if (manualPending != ManualPending.NONE) {
+                manualStatus = "An operation is in progress; wait for verification."
+                manualUpdater?.invoke()
+                return@button
+            }
             manualSelection = manualSelection.withMode(ManualMoveMode.MOVE_PIECE)
             manualStatus = "Tap an occupied source, then an empty destination."
             manualUpdater?.invoke()
@@ -360,6 +367,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
         actions.addView(button("Calibrate", ACCENT_DARK) { confirmManualCalibration() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         actions.addView(button("Clear") {
+            if (manualPending != ManualPending.NONE) {
+                manualStatus = "An operation is in progress; wait for verification."
+                manualUpdater?.invoke()
+                return@button
+            }
             manualSelection = ManualSelection(manualSelection.mode)
             manualStatus = if (manualCalibrationVerified) "Choose squares." else "Calibrate before moving."
             manualUpdater?.invoke()
@@ -367,7 +379,12 @@ class MainActivity : Activity(), BoardRepository.Observer {
         actions.addView(button("Move", WARN) { confirmManualMove() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .82f).apply { marginStart = dp(4) })
         controls.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 36 else 46)))
-        board.onSquareTapped = { square ->
+        board.onSquareTapped = squareTap@ { square ->
+            if (manualPending != ManualPending.NONE) {
+                manualStatus = "An operation is in progress; wait for verification."
+                manualUpdater?.invoke()
+                return@squareTap
+            }
             val result = manualSelection.choose(square, monitorState.sensorSquares)
             manualSelection = result.selection
             manualStatus = result.message
@@ -376,8 +393,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         manualUpdater = {
             board.pieces = gameState.pieces
             board.sensors = monitorState.sensorSquares
-            board.trolley = monitorState.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-                ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+            board.trolley = trolleyPosition()
             board.selectedSquares = manualSelection.highlighted
             status.text = manualStatus
             val calibration = if (manualCalibrationVerified) "Calibrated and verified" else "Calibration required"
@@ -499,6 +515,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         if (!state.connected && monitorState.connected) {
             manualCalibrationVerified = false
             manualPending = ManualPending.NONE
+            manualPendingSelection = null
             manualSelection = ManualSelection(manualSelection.mode)
             manualStatus = "Connection lost; calibrate again after reconnecting."
         }
@@ -508,9 +525,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
         monitorState = state
         connectionBadge.text = if (state.connected) "CONNECTED • ${state.health().first}" else "DISCONNECTED • ${state.connectionText}"
         connectionBadge.setTextColor(if (state.connected) GOOD else DANGER)
-        if (currentTab == 0) monitorUpdater?.invoke()
-        if (currentTab == 1) playUpdater?.invoke()
-        if (currentTab == 2) manualUpdater?.invoke()
+        if (currentTab == TAB_BOARD) monitorUpdater?.invoke()
+        if (currentTab == TAB_PLAY) playUpdater?.invoke()
+        if (currentTab == TAB_MOVE) manualUpdater?.invoke()
     }
 
     override fun onBoardEvent(event: BoardEvent) {
@@ -518,10 +535,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
         when (event.kind) {
             "CALIBRATING" -> manualStatus = "Calibrating; keep the mechanism clear."
             "CALIBRATED" -> {
-                calibrationReportedSquare = event.args.firstOrNull()
-                manualPending = ManualPending.CALIBRATION
-                manualStatus = "Calibration ended at ${calibrationReportedSquare ?: "unknown"}; checking fresh telemetry."
-                repository.enqueueRequests("TELEM", "BOARD")
+                if (manualPending == ManualPending.CALIBRATION) {
+                    calibrationReportedSquare = event.args.firstOrNull()
+                    manualStatus = "Calibration ended at ${calibrationReportedSquare ?: "unknown"}; checking fresh telemetry."
+                    repository.enqueueRequests("TELEM", "BOARD")
+                }
             }
             "MOVING" -> if (event.args.firstOrNull() in setOf("HEAD", "PIECE")) {
                 manualStatus = "${event.args.first()} movement in progress; keep hands clear."
@@ -531,21 +549,20 @@ class MainActivity : Activity(), BoardRepository.Observer {
             "BOARD" -> handleManualBoard(event)
             "ERR" -> if (manualPending != ManualPending.NONE || event.args.joinToString(" ").contains("CALIBRATE")) {
                 manualPending = ManualPending.NONE
+                manualPendingSelection = null
                 manualStatus = "Board rejected the operation: ${event.args.joinToString(" ")}"
             }
         }
-        if (currentTab == 2) manualUpdater?.invoke()
+        if (currentTab == TAB_MOVE) manualUpdater?.invoke()
     }
 
     private fun handleManualMoved(args: List<String>) {
         when (args.firstOrNull()) {
-            "HEAD" -> {
-                manualPending = ManualPending.HEAD
+            "HEAD" -> if (manualPending == ManualPending.HEAD) {
                 manualStatus = "Head stopped at ${args.getOrNull(1) ?: "unknown"}; verifying telemetry."
                 repository.enqueueRequests("TELEM")
             }
-            "PIECE" -> {
-                manualPending = ManualPending.PIECE
+            "PIECE" -> if (manualPending == ManualPending.PIECE) {
                 manualStatus = "Piece movement finished; verifying both sensors and head position."
                 repository.enqueueRequests("TELEM", "BOARD")
             }
@@ -561,19 +578,38 @@ class MainActivity : Activity(), BoardRepository.Observer {
                     "Calibration verified: board and app agree the head is at e6, homed, with magnet off."
                 } else "Calibration report disagrees with telemetry; do not move."
                 manualPending = ManualPending.NONE
+                manualPendingSelection = null
             }
-            ManualPending.HEAD -> manualSelection.target?.let { target ->
+            ManualPending.HEAD -> {
+                val target = manualPendingSelection?.target
+                if (target == null) {
+                    manualStatus = "The requested head destination was lost; recalibrate before another move."
+                    manualCalibrationVerified = false
+                    manualPending = ManualPending.NONE
+                    manualPendingSelection = null
+                    return
+                }
                 val verified = ManualVerification.headMoveMatches(target, telemetry)
                 manualStatus = if (verified) "Head position verified at ${ManualSelection.squareName(target)}; magnet remained off."
                 else "Head position could not be verified; recalibrate before another move."
                 if (!verified) manualCalibrationVerified = false
                 manualPending = ManualPending.NONE
+                manualPendingSelection = null
             }
-            ManualPending.PIECE -> manualSelection.target?.let { target ->
+            ManualPending.PIECE -> {
+                val target = manualPendingSelection?.target
+                if (target == null) {
+                    manualStatus = "The requested piece destination was lost; inspect and recalibrate."
+                    manualCalibrationVerified = false
+                    manualPending = ManualPending.NONE
+                    manualPendingSelection = null
+                    return
+                }
                 if (!ManualVerification.headMoveMatches(target, telemetry)) {
                     manualStatus = "Head telemetry disagrees with the requested destination; inspect and recalibrate."
                     manualCalibrationVerified = false
                     manualPending = ManualPending.NONE
+                    manualPendingSelection = null
                 } else manualStatus = "Head is at ${ManualSelection.squareName(target)}; checking piece sensors."
             }
             else -> Unit
@@ -583,26 +619,35 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun handleManualBoard(event: BoardEvent) {
         if (manualPending != ManualPending.PIECE || event.args.isEmpty()) return
         val sensors = runCatching { Protocol.parseBoardHex(event.args[0]) }.getOrNull() ?: return
-        val source = manualSelection.source ?: return
-        val target = manualSelection.target ?: return
+        val pendingSelection = manualPendingSelection
+        val source = pendingSelection?.source
+        val target = pendingSelection?.target
+        if (source == null || target == null) {
+            manualStatus = "The requested piece squares were lost; inspect the board before continuing."
+            manualCalibrationVerified = false
+            manualPending = ManualPending.NONE
+            manualPendingSelection = null
+            return
+        }
         val verified = ManualVerification.pieceMoveMatches(source, target, sensors)
         manualStatus = if (verified) "Piece verified at ${ManualSelection.squareName(target)}; source is clear."
         else "Sensors do not confirm the piece move; inspect the board before continuing."
         manualPending = ManualPending.NONE
-        if (verified) manualSelection = ManualSelection(manualSelection.mode)
+        manualPendingSelection = null
+        if (verified) manualSelection = ManualSelection(pendingSelection.mode)
     }
 
     override fun onTimelineChanged(entries: List<TimelineEntry>) {
         timeline = entries
-        if (currentTab == 5) updateDeveloperLog()
+        if (currentTab == TAB_DEVELOPER) updateDeveloperLog()
     }
 
     private fun onGameChanged(snapshot: GameSnapshot) {
         gameState = snapshot
         repository.setExpectedSquares(snapshot.expectedSquares)
-        if (currentTab == 1) playUpdater?.invoke()
-        else if (currentTab == 0) monitorUpdater?.invoke()
-        else if (currentTab == 2) manualUpdater?.invoke()
+        if (currentTab == TAB_PLAY) playUpdater?.invoke()
+        else if (currentTab == TAB_BOARD) monitorUpdater?.invoke()
+        else if (currentTab == TAB_MOVE) manualUpdater?.invoke()
     }
 
     private fun showConnectionMenu() {
@@ -710,20 +755,35 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun confirmManualCalibration() {
+        if (manualPending != ManualPending.NONE) {
+            manualStatus = "An operation is already in progress; wait for verification."
+            manualUpdater?.invoke()
+            return
+        }
         if (!manualCapabilityReady()) return
         AlertDialog.Builder(this).setTitle("Calibrate carriage from app?")
             .setMessage("Calibration moves the head to its limit references and parks at e6. Clear the mechanism, keep physical power cutoff accessible, and watch the board throughout.")
             .setPositiveButton("Calibrate") { _, _ ->
                 manualCalibrationVerified = false
                 manualPending = ManualPending.CALIBRATION
+                manualPendingSelection = null
                 calibrationReportedSquare = null
                 manualStatus = "Calibration command sent; keep hands clear."
-                repository.sendCommand("CALIBRATE").onFailure { manualStatus = it.message ?: "Calibration send failed" }
+                repository.sendCommand("CALIBRATE").onFailure {
+                    manualPending = ManualPending.NONE
+                    manualPendingSelection = null
+                    manualStatus = it.message ?: "Calibration send failed"
+                }
                 manualUpdater?.invoke()
             }.setNegativeButton("Cancel", null).show()
     }
 
     private fun confirmManualMove() {
+        if (manualPending != ManualPending.NONE) {
+            manualStatus = "An operation is already in progress; wait for verification."
+            manualUpdater?.invoke()
+            return
+        }
         if (!manualCapabilityReady()) return
         if (!manualCalibrationVerified) { alert("Calibrate first", "Use Calibrate on this page and wait for the e6 telemetry check to pass."); return }
         val telemetry = monitorState.telemetry
@@ -742,22 +802,33 @@ class MainActivity : Activity(), BoardRepository.Observer {
         }
         val source = manualSelection.source
         val target = manualSelection.target
-        if (manualSelection.mode == ManualMoveMode.MOVE_PIECE &&
-            (source !in monitorState.sensorSquares.orEmpty() || target in monitorState.sensorSquares.orEmpty())) {
-            alert("Sensor check changed", "The source must contain a piece and the destination must be empty. Refresh or choose again.")
-            return
+        if (manualSelection.mode == ManualMoveMode.MOVE_PIECE) {
+            if (source == null || target == null) {
+                toast("Select an occupied source and empty destination first")
+                return
+            }
+            val occupied = monitorState.sensorSquares.orEmpty()
+            if (source !in occupied || target in occupied) {
+                alert("Sensor check changed", "The source must contain a piece and the destination must be empty. Refresh or choose again.")
+                return
+            }
         }
-        val description = if (manualSelection.mode == ManualMoveMode.HEAD_ONLY) {
-            "Move the head to ${ManualSelection.squareName(checkNotNull(target))} with the electromagnet OFF?"
+        val requestedSelection = manualSelection
+        val description = if (requestedSelection.mode == ManualMoveMode.HEAD_ONLY) {
+            val requestedTarget = target ?: run { toast("Select a destination first"); return }
+            "Move the head to ${ManualSelection.squareName(requestedTarget)} with the electromagnet OFF?"
         } else {
             "Move the piece ${ManualSelection.squareName(checkNotNull(source))} to ${ManualSelection.squareName(checkNotNull(target))}? The magnet will energize only after the head reaches the occupied source."
         }
         AlertDialog.Builder(this).setTitle("Confirm physical movement").setMessage(description)
             .setPositiveButton("Move") { _, _ ->
-                manualPending = if (manualSelection.mode == ManualMoveMode.HEAD_ONLY) ManualPending.HEAD else ManualPending.PIECE
+                if (manualPending != ManualPending.NONE) return@setPositiveButton
+                manualPending = if (requestedSelection.mode == ManualMoveMode.HEAD_ONLY) ManualPending.HEAD else ManualPending.PIECE
+                manualPendingSelection = requestedSelection
                 manualStatus = "Movement command sent; keep hands clear."
                 repository.sendCommand(command).onFailure {
                     manualPending = ManualPending.NONE
+                    manualPendingSelection = null
                     manualStatus = it.message ?: "Movement send failed"
                 }
                 manualUpdater?.invoke()
@@ -765,7 +836,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun runDiagnostics() {
-        diagnosticsRunner.run { results -> diagnostics = results; if (currentTab == 3) selectTab(3) }
+        diagnosticsRunner.run { results -> diagnostics = results; if (currentTab == TAB_CHECKS) selectTab(TAB_CHECKS) }
     }
 
     private fun copyDiagnostics() {
@@ -939,6 +1010,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun released(value: Boolean) = if (value) "released" else "ACTIVE"
     private fun fileRank(x: Int, y: Int) = if (x in 1..8 && y in 1..8) "${('a'.code + x - 1).toChar()}$y" else "unknown"
+    private fun trolleyPosition(state: MonitorState = monitorState): Pair<Int, Int>? =
+        state.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
+            ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
     private fun stamp(seconds: Boolean = false) = SimpleDateFormat(if (seconds) "yyyyMMdd-HHmmss" else "yyyyMMdd-HHmm", Locale.US).format(Date())
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun alert(title: String, message: String) = AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
@@ -984,6 +1058,20 @@ class MainActivity : Activity(), BoardRepository.Observer {
         private const val WARN = 0xffffb84d.toInt()
         private const val DANGER = 0xffdb3e4d.toInt()
         private const val ACCENT_DARK = 0xff167c70.toInt()
+        private const val TAB_BOARD = 0
+        private const val TAB_PLAY = 1
+        private const val TAB_MOVE = 2
+        private const val TAB_CHECKS = 3
+        private const val TAB_CAMERA = 4
+        private const val TAB_DEVELOPER = 5
+        private val TAB_LABELS = listOf(
+            TAB_BOARD to "Board",
+            TAB_PLAY to "Play",
+            TAB_MOVE to "Move",
+            TAB_CHECKS to "Checks",
+            TAB_CAMERA to "Cam",
+            TAB_DEVELOPER to "Dev",
+        )
         private const val REQ_BLE = 100
         private const val REQ_CAMERA = 101
         private const val REQ_PGN = 201

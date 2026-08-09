@@ -13,6 +13,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var trolleyX = 5
     private var trolleyY = 6
     private var homed = false
+    private var fault = false
     private var sequence = 1
 
     override fun start() {
@@ -24,23 +25,34 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     override fun send(line: String) {
         check(isConnected) { "Simulator is disconnected" }
         when (val command = line.trim()) {
-            "!" -> emit("ESTOP REMOTE", 30)
+            "!" -> {
+                fault = true
+                homed = false
+                trolleyX = 0
+                trolleyY = 0
+                sequence = 10
+                emit("ESTOP REMOTE", 30)
+            }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
             "INFO" -> emit("INFO ACB2 SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} 0", 30)
-            "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} 0 0 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
+            "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} 0 ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
             "BTTEST" -> emit("BT SKIP SIMULATOR", 30)
             "STOP" -> emit("STOPPED", 30)
             "REJECT" -> emit("UNDO REQUIRED", 30)
             "ACCEPT" -> emit("TURN COMPUTER", 30)
             "CALIBRATE" -> {
-                sequence = 3
-                emit("CALIBRATING", 30)
-                trolleyX = 5; trolleyY = 6; homed = true; sequence = 1
-                emit("CALIBRATED e6", 220)
+                if (fault) emit("ERR FAULT", 30) else {
+                    sequence = 3
+                    emit("CALIBRATING", 30)
+                    trolleyX = 5; trolleyY = 6; homed = true; sequence = 1
+                    emit("CALIBRATED e6", 220)
+                }
             }
             else -> when {
+                fault && command.startsWith("START ") -> emit("ERR FAULT", 30)
+                fault && command.startsWith("PLAY ") -> emit("ERR FAULT", 30)
                 command.startsWith("START ") -> {
                     occupied.clear()
                     occupied.addAll(MonitorStateDefaults.START_SQUARES)
@@ -56,7 +68,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     emit("DONE $move", 250)
                 }
                 command.matches(Regex("HEAD [a-h][1-8]")) -> {
-                    if (!homed) emit("ERR CALIBRATE", 30) else {
+                    if (fault) emit("ERR FAULT", 30) else if (!homed) emit("ERR CALIBRATE", 30) else {
                         val square = command.substringAfter(' ')
                         emit("MOVING HEAD $square", 30)
                         trolleyX = square[0] - 'a' + 1; trolleyY = square[1] - '0'
@@ -67,6 +79,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     val move = command.substringAfter(' ')
                     val from = square(move, 0); val to = square(move, 2)
                     when {
+                        fault -> emit("ERR FAULT", 30)
                         !homed -> emit("ERR CALIBRATE", 30)
                         from !in occupied -> emit("ERR SOURCE EMPTY", 30)
                         to in occupied -> emit("ERR TARGET FULL", 30)

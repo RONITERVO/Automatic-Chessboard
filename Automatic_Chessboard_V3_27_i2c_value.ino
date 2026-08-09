@@ -689,6 +689,7 @@ void runHostPieceMove(const char *move) {
   sequence = host_manual_motion;
   Serial.print(F("MOVING PIECE "));
   Serial.println(move);
+  setMagnet(false);
   boolean moved = moveTrolleyStraightTo(from_file, from_rank, SPEED_FAST);
   if (moved) {
     setMagnet(true);
@@ -703,6 +704,10 @@ void runHostPieceMove(const char *move) {
                           sensorSquareOccupied(to_file, to_rank);
   syncSensorState();
   if (!sensors_agree) {
+    trolley_homed = false;
+    motion_fault = true;
+    sequence = fault_screen;
+    showMotionFault();
     sendHostError(F("SENSORS"));
     return;
   }

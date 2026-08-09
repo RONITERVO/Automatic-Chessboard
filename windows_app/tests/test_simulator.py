@@ -38,6 +38,16 @@ class SimulatorTests(unittest.TestCase):
         transport.send("!")
         self.assertTrue(received.wait(1.0))
         self.assertIn("ESTOP REMOTE", lines)
+        transport.send("CALIBRATE")
+        transport.send("HEAD e4")
+        transport.send("PIECE e2e4")
+        transport.send("TELEM")
+        threading.Event().wait(0.2)
+        self.assertGreaterEqual(lines.count("ERR FAULT"), 3)
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        fields = telemetry.split()
+        self.assertEqual(fields[2:9], ["10", "0", "0", "1", "0", "0", "0"])
+        transport.close()
 
     def test_manual_calibration_head_and_piece_commands(self):
         lines = []

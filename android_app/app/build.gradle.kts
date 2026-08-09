@@ -36,6 +36,7 @@ android {
 kotlin { jvmToolchain(17) }
 
 dependencies {
+    implementation("androidx.customview:customview:1.2.0")
     implementation("com.github.bhlangonijr:chesslib:1.3.7")
     testImplementation("junit:junit:4.13.2")
 }
