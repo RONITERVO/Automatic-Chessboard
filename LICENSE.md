@@ -28,6 +28,10 @@ summary of the changes.
   **GNU GPL 3.0 or later**. Its full license and dependency notices are in
   [`windows_app/LICENSE`](windows_app/LICENSE) and
   [`windows_app/THIRD_PARTY_NOTICES.md`](windows_app/THIRD_PARTY_NOTICES.md).
+- [`android_app`](android_app/) is a separate program distributed under
+  **GNU GPL 3.0 or later**. Its full license and dependency notices are in
+  [`android_app/LICENSE`](android_app/LICENSE) and
+  [`android_app/THIRD_PARTY_NOTICES.md`](android_app/THIRD_PARTY_NOTICES.md).
 - Every package under
   [`hardware/printFiles/third_party`](hardware/printFiles/third_party/) retains
   the license stated in that package. The currently included Thingiverse

@@ -13,3 +13,11 @@
 - Added public documentation, tests, Windows build script, issue template, and CI.
 - Added fixed reed-sensor rank normalization for the published glued-tile wiring
   in firmware 3.29.
+- Serialized every read-only request path so setup, diagnostics, developer reads,
+  and background monitoring cannot overlap on a slow BLE link.
+- Added atomic settings saves, bounded session-log retention, and board-aware BLE
+  discovery ranking.
+- Made diagnostic completion response-driven and removed disconnected request
+  paths that bypassed the safe queue.
+- Required fresh PONG, INFO, TELEM, and BOARD evidence from the current
+  diagnostic batch so timed-out requests cannot pass using cached data.
