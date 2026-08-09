@@ -66,6 +66,9 @@ delay. Structured log writes use one daemon writer and bounded rollover files.
 8. No UI path remotely clears a motion fault.
 9. Ordinary polling pauses for calibration and automatic movement.
 10. Diagnostics contains read-only protocol commands only.
+11. `ManualControl` owns square selection and verification. Movement remains
+    disabled until `CALIBRATED e6` agrees with fresh homed, fault-free,
+    magnet-off telemetry; piece moves additionally require fresh occupancy.
 
 ## Extending the protocol
 
@@ -76,7 +79,7 @@ prefer a new optional response line when a change cannot be backward compatible.
 
 ## Fixed-layout rule
 
-All five pages divide the available window with weights after applying status
+All six pages divide the available window with weights after applying status
 and navigation bar insets. Do not introduce `ScrollView`, `RecyclerView`, or
 horizontal scrolling. Add pagination or a focused secondary page when data can
 grow. Test at 320dp-wide portrait and short landscape sizes with large system

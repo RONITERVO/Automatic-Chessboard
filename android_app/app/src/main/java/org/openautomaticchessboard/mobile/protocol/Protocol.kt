@@ -32,7 +32,7 @@ object Protocol {
 
     private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
-    private val motion = setOf("START", "PLAY", "ACCEPT")
+    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE")
 
     fun parseEvent(line: String): BoardEvent {
         val fields = line.trim().split(Regex("\\s+")).filter(String::isNotBlank)
@@ -97,6 +97,18 @@ object Protocol {
         require(uci.matches(Regex("[a-h][1-8][a-h][1-8][qrbn]?"))) { "Invalid UCI move: $uci" }
         val flag = if (castling) " C" else if (enPassant) " E" else ""
         return "PLAY $uci$flag"
+    }
+
+    fun headCommand(square: String): String {
+        require(square.matches(Regex("[a-h][1-8]"))) { "Invalid square: $square" }
+        return "HEAD $square"
+    }
+
+    fun pieceCommand(from: String, to: String): String {
+        require(from != to && from.matches(Regex("[a-h][1-8]")) && to.matches(Regex("[a-h][1-8]"))) {
+            "Invalid manual piece move: $from$to"
+        }
+        return "PIECE $from$to"
     }
 }
 

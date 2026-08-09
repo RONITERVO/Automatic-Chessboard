@@ -269,6 +269,9 @@ class SimulatorTransport:
         self._human_white = True
         self._sequence = 1
         self._fault = False
+        self._homed = False
+        self._trolley_x = 5
+        self._trolley_y = 6
 
     @property
     def is_connected(self) -> bool:
@@ -289,8 +292,8 @@ class SimulatorTransport:
 
     def _telemetry(self) -> str:
         uptime = int(time.monotonic() - self._started)
-        return (f"TELEM ACB2 {self._sequence} 1 {int(self._sequence >= 15)} "
-                f"{int(self._fault)} 0 5 6 1 1 1023 900 {uptime}")
+        return (f"TELEM ACB2 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)} "
+                f"{int(self._fault)} 0 {self._trolley_x} {self._trolley_y} 1 1 1023 900 {uptime}")
 
     def send(self, line: str) -> None:
         import chess
@@ -306,15 +309,22 @@ class SimulatorTransport:
         elif upper in ("PING", "HELLO"):
             self._emit("PONG ACB1")
         elif upper == "INFO":
-            self._emit("INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST")
+            self._emit("INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL")
         elif upper == "STATUS":
-            self._emit(f"STATUS ACB1 {self._sequence} 1 {int(self._sequence >= 15)}")
+            self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)}")
         elif upper == "TELEM":
             self._emit(self._telemetry())
         elif upper == "BOARD":
             self._emit(f"BOARD {self._board_hex()}")
         elif upper == "BTTEST":
             self._emit("BT SIMULATED")
+        elif upper == "CALIBRATE":
+            self._sequence = 3
+            self._emit("CALIBRATING")
+            self._homed = True
+            self._trolley_x, self._trolley_y = 5, 6
+            self._sequence = 1
+            self._emit("CALIBRATED e6", 0.25)
         elif upper.startswith("START "):
             self._board.reset()
             self._human_white = upper.endswith("W")
@@ -361,6 +371,37 @@ class SimulatorTransport:
                 timer.start()
             except Exception as error:
                 self._emit(f"ERR PLAY {error}")
+        elif upper.startswith("HEAD "):
+            square = text.split(maxsplit=1)[1].lower()
+            if not self._homed:
+                self._emit("ERR CALIBRATE")
+            elif len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
+                self._emit("ERR COMMAND")
+            else:
+                self._emit(f"MOVING HEAD {square}")
+                self._trolley_x, self._trolley_y = ord(square[0]) - 96, int(square[1])
+                self._emit(f"MOVED HEAD {square}", 0.25)
+        elif upper.startswith("PIECE "):
+            move = text.split(maxsplit=1)[1].lower()
+            try:
+                if not self._homed:
+                    raise RuntimeError("CALIBRATE")
+                if len(move) != 4:
+                    raise ValueError("COMMAND")
+                source = chess.parse_square(move[:2])
+                target = chess.parse_square(move[2:])
+                if source not in self._board.piece_map():
+                    raise ValueError("SOURCE EMPTY")
+                if target in self._board.piece_map():
+                    raise ValueError("TARGET FULL")
+                self._emit(f"MOVING PIECE {move}")
+                piece = self._board.remove_piece_at(source)
+                self._board.set_piece_at(target, piece)
+                self._trolley_x = chess.square_file(target) + 1
+                self._trolley_y = chess.square_rank(target) + 1
+                self._emit(f"MOVED PIECE {move}", 0.25)
+            except Exception as error:
+                self._emit(f"ERR {error}")
         elif upper == "STOP":
             self._sequence = 1
             self._emit("STOPPED")

@@ -2,7 +2,13 @@ import unittest
 
 import chess
 
-from model import MonitorModel, expected_occupancy
+from model import (
+    ManualSelection,
+    MonitorModel,
+    calibration_matches,
+    expected_occupancy,
+    piece_move_matches,
+)
 from protocol import Telemetry
 
 
@@ -34,6 +40,16 @@ class MonitorModelTests(unittest.TestCase):
                                     5, 6, True, True, 1023, 800, 10)
         self.assertEqual(model.overall_health(), ("Motion fault", "bad"))
         self.assertIn("switch off physical motor power", model.guidance())
+
+    def test_manual_selection_and_calibration_verification(self):
+        occupied = frozenset({chess.E2, chess.A7})
+        selection, _ = ManualSelection("piece").choose(chess.E2, occupied)
+        selection, _ = selection.choose(chess.E4, occupied)
+        self.assertEqual(selection.command(), "PIECE e2e4")
+        telemetry = Telemetry("ACB2", 1, True, False, False, False,
+                              5, 6, True, True, 1023, 700, 1)
+        self.assertTrue(calibration_matches("e6", telemetry))
+        self.assertTrue(piece_move_matches(chess.E2, chess.E4, frozenset({chess.E4})))
 
 
 if __name__ == "__main__":

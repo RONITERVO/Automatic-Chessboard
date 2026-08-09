@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.view.View
 import com.github.bhlangonijr.chesslib.Piece
 import kotlin.math.min
@@ -14,6 +15,8 @@ class ChessboardView(context: Context) : View(context) {
     var sensors: Set<Int>? = null; set(value) { field = value; invalidate(); updateDescription() }
     var flipped: Boolean = false; set(value) { field = value; invalidate() }
     var trolley: Pair<Int, Int>? = null; set(value) { field = value; invalidate() }
+    var selectedSquares: Set<Int> = emptySet(); set(value) { field = value; invalidate() }
+    var onSquareTapped: ((Int) -> Unit)? = null; set(value) { field = value; isClickable = value != null }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val light = Color.rgb(227, 215, 190)
@@ -22,6 +25,7 @@ class ChessboardView(context: Context) : View(context) {
     private val unexpected = Color.rgb(245, 157, 56)
     private val occupied = Color.rgb(48, 191, 133)
     private val carriage = Color.rgb(45, 210, 226)
+    private val selection = Color.rgb(255, 213, 79)
     private val cellRect = RectF()
 
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES; updateDescription() }
@@ -49,10 +53,41 @@ class ChessboardView(context: Context) : View(context) {
                 left + (screenFile + 1) * cell, top + (screenRank + 1) * cell)
             val rect = cellRect
             drawSquare(canvas, rect, file, rank)
+            drawSelection(canvas, rect, cell, index)
             drawSensorMarkers(canvas, rect, cell, index)
             pieces[index]?.let { drawPiece(canvas, rect, cell, it) }
             drawTrolley(canvas, rect, cell, file, rank)
         } }
+    }
+
+    private fun drawSelection(canvas: Canvas, rect: RectF, cell: Float, index: Int) {
+        if (index !in selectedSquares) return
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = maxOf(4f, cell * .09f)
+        paint.color = selection
+        val inset = paint.strokeWidth / 2f
+        canvas.drawRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, paint)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (onSquareTapped == null) return super.onTouchEvent(event)
+        if (event.action != MotionEvent.ACTION_UP) return true
+        val size = min(width, height).toFloat()
+        val left = (width - size) / 2f
+        val top = (height - size) / 2f
+        if (event.x !in left..(left + size) || event.y !in top..(top + size)) return true
+        val screenFile = ((event.x - left) / (size / 8f)).toInt().coerceIn(0, 7)
+        val screenRank = ((event.y - top) / (size / 8f)).toInt().coerceIn(0, 7)
+        val file = if (flipped) 7 - screenFile else screenFile
+        val rank = if (flipped) screenRank else 7 - screenRank
+        onSquareTapped?.invoke(rank * 8 + file)
+        performClick()
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     private fun drawSquare(canvas: Canvas, rect: RectF, file: Int, rank: Int) {

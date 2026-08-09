@@ -32,6 +32,7 @@ SEQUENCE_NAMES = {
     18: "Remote move must be undone",
     19: "Checking remote computer move",
     20: "Waiting for promotion piece",
+    21: "Direct app movement",
 }
 
 SEQUENCE_GUIDANCE = {
@@ -48,11 +49,81 @@ SEQUENCE_GUIDANCE = {
     18: "The reported move was invalid. Restore the pieces physically.",
     19: "The board is checking the completed automatic move.",
     20: "Replace the promoted pawn, then press physical Button A.",
+    21: "The companion requested direct movement. Keep hands clear.",
 }
 
 
 def expected_occupancy(board: chess.Board) -> frozenset[int]:
     return frozenset(board.piece_map())
+
+
+def square_name(square: int) -> str:
+    if square not in range(64):
+        raise ValueError("Square is outside the board")
+    return chess.square_name(square)
+
+
+@dataclass(frozen=True)
+class ManualSelection:
+    mode: str = "head"
+    source: int | None = None
+    target: int | None = None
+
+    @property
+    def highlighted(self) -> frozenset[int]:
+        return frozenset(value for value in (self.source, self.target) if value is not None)
+
+    def with_mode(self, mode: str) -> "ManualSelection":
+        if mode not in ("head", "piece"):
+            raise ValueError(f"Unknown manual mode: {mode}")
+        return self if mode == self.mode else ManualSelection(mode)
+
+    def choose(self, square: int, occupied: frozenset[int] | None) -> tuple["ManualSelection", str]:
+        square_name(square)
+        if self.mode == "head":
+            return ManualSelection("head", target=square), f"Head target {square_name(square)}"
+        if self.source is None:
+            if occupied is None:
+                return self, "Refresh board sensors before choosing a piece"
+            if square not in occupied:
+                return self, "Choose a square that currently contains a piece"
+            return ManualSelection("piece", source=square), (
+                f"Piece selected at {square_name(square)}; choose an empty destination"
+            )
+        if square == self.source:
+            return ManualSelection("piece"), "Source cleared; choose a piece"
+        if occupied is not None and square in occupied:
+            return self, f"Destination {square_name(square)} is occupied"
+        return ManualSelection("piece", self.source, square), (
+            f"Move {square_name(self.source)} to {square_name(square)}"
+        )
+
+    def command(self) -> str | None:
+        if self.mode == "head":
+            return None if self.target is None else f"HEAD {square_name(self.target)}"
+        if self.source is None or self.target is None:
+            return None
+        return f"PIECE {square_name(self.source)}{square_name(self.target)}"
+
+
+def calibration_matches(reported_square: str | None, telemetry: Telemetry | None) -> bool:
+    return bool(
+        reported_square and reported_square.lower() == "e6" and telemetry and
+        telemetry.homed and not telemetry.motion_fault and not telemetry.magnet_on and
+        telemetry.trolley_x == 5 and telemetry.trolley_y == 6
+    )
+
+
+def head_move_matches(target: int, telemetry: Telemetry | None) -> bool:
+    return bool(
+        telemetry and telemetry.homed and not telemetry.motion_fault and not telemetry.magnet_on and
+        telemetry.trolley_x == chess.square_file(target) + 1 and
+        telemetry.trolley_y == chess.square_rank(target) + 1
+    )
+
+
+def piece_move_matches(source: int, target: int, sensors: frozenset[int] | None) -> bool:
+    return sensors is not None and source not in sensors and target in sensors
 
 
 @dataclass

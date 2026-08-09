@@ -39,6 +39,19 @@ class SimulatorTests(unittest.TestCase):
         self.assertTrue(received.wait(1.0))
         self.assertIn("ESTOP REMOTE", lines)
 
+    def test_manual_calibration_head_and_piece_commands(self):
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("CALIBRATE")
+        transport.send("HEAD e4")
+        transport.send("PIECE e2e4")
+        threading.Event().wait(0.5)
+        self.assertIn("CALIBRATED e6", lines)
+        self.assertIn("MOVED HEAD e4", lines)
+        self.assertIn("MOVED PIECE e2e4", lines)
+        transport.close()
+
 
 if __name__ == "__main__":
     unittest.main()

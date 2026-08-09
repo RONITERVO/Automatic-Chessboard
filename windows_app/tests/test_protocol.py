@@ -5,10 +5,12 @@ from protocol import (
     LineBuffer,
     board_hex_from_squares,
     classify_command,
+    head_command,
     parse_board_hex,
     parse_event,
     parse_info,
     parse_telemetry,
+    piece_command,
     play_command,
 )
 
@@ -19,6 +21,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(lines.feed(b"MOVE e2"), [])
         self.assertEqual(lines.feed(b"e4\r\nTURN HU"), ["MOVE e2e4"])
         self.assertEqual(lines.feed(b"MAN\n"), ["TURN HUMAN"])
+
+    def test_overflowed_line_tail_is_discarded(self):
+        lines = LineBuffer(maximum=8)
+        self.assertEqual(lines.feed(b"123456789HEAD e4"), [])
+        self.assertEqual(lines.feed(b"\nPING\n"), ["PING"])
 
     def test_event_fields(self):
         event = parse_event("STATUS ACB1 17 1 1")
@@ -54,6 +61,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("PLAY e2e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("ACCEPT"), CommandRisk.MOTION)
         self.assertEqual(classify_command("!"), CommandRisk.EMERGENCY)
+        self.assertEqual(classify_command("CALIBRATE"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("HEAD e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("PIECE e2e4"), CommandRisk.MOTION)
+        self.assertEqual(head_command("e6"), "HEAD e6")
+        self.assertEqual(piece_command("e2", "e4"), "PIECE e2e4")
 
 
 if __name__ == "__main__":
