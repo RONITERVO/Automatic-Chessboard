@@ -60,7 +60,8 @@ enum {
   remote_wait_host,
   remote_undo_required,
   remote_sensor_check,
-  remote_promotion_wait
+  remote_promotion_wait,
+  host_manual_motion
 };
 byte sequence = start_up;
 byte after_calibration = setup_check;

@@ -282,7 +282,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                         "INFO" -> next.copy(firmware = Protocol.parseInfo(event), lastError = "")
                         "TELEM" -> {
                             val telemetry = Protocol.parseTelemetry(event)
-                            val moving = telemetry.sequence in setOf(3, 8, 19)
+                            val moving = telemetry.sequence in setOf(3, 8, 19, 21)
                             motionStartedMs = if (moving) motionStartedMs ?: now else null
                             next.copy(telemetry = telemetry, motionExpected = moving, lastError = "")
                         }
@@ -293,11 +293,11 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")
-                        "SETUP", "DONE", "ESTOP", "ERR", "STOPPED" -> {
+                        "SETUP", "DONE", "MOVED", "CALIBRATED", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
                         }
-                        "MOVING" -> {
+                        "MOVING", "CALIBRATING" -> {
                             motionStartedMs = motionStartedMs ?: now
                             next.copy(motionExpected = true)
                         }

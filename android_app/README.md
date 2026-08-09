@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.29+. It covers the Windows
+This is the phone-first companion for firmware 3.30+. It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
 
@@ -10,6 +10,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | --- | --- |
 | Connection | Native BLE scan, saved-device reconnect, HC-08 FFE0/FFE1 GATT, exponential retry, 20-byte writes |
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
+| Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
 | Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, castling/en-passant/promotion flags, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |

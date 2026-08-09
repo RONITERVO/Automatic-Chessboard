@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 3.29 advertises `ACB2` monitoring while retaining the legacy
+terminator. Firmware 3.30 advertises `ACB2` monitoring while retaining the legacy
 `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST
+< INFO ACB2 3.30 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -65,6 +65,27 @@ Important events include `SETUP PRESS A`, `SESSION W|B`, `TURN HUMAN|COMPUTER`,
 
 `PLAY` is accepted only in the remote wait-host state. A host must never send a
 second automatic move before receiving `DONE`.
+
+## App calibration and direct square movement
+
+Firmware 3.30 adds guarded maintenance commands. They are accepted only from the
+idle main menu, outside a remote game, and never while a motion fault is latched.
+
+- `CALIBRATE` performs the complete reference routine. It emits `CALIBRATING`,
+  then `CALIBRATED e6` only when the head is homed, parked at e6, and the magnet
+  is off. The companion requests fresh `TELEM` and independently confirms
+  `homed=1`, `fault=0`, `magnet=0`, `x=5`, and `y=6` before enabling movement.
+- `HEAD e4` moves only the head and keeps the electromagnet off. It emits
+  `MOVING HEAD e4`, then `MOVED HEAD e4`.
+- `PIECE e2e4` scans the reed matrix before moving. The source must be occupied
+  and the destination empty. The head first reaches e2 with the magnet off,
+  energizes it only for the carried segment, and verifies that e2 became empty
+  and e4 occupied before emitting `MOVED PIECE e2e4`.
+
+Possible rejections include `ERR CALIBRATE`, `ERR SOURCE EMPTY`,
+`ERR TARGET FULL`, `ERR SENSORS`, `ERR BUSY`, `ERR FAULT`, and `ERR MOTION`.
+Manual motion uses telemetry sequence 21 while active. `!` remains the immediate
+best-effort remote halt during calibration and direct movement.
 
 ## Best-effort emergency halt
 

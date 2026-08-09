@@ -42,12 +42,17 @@ class ProtocolTest {
     @Test fun classifiesAndBuildsGuardedCommands() {
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("TELEM"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAY e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("CALIBRATE"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("HEAD e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PIECE e2e4"))
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
         assertEquals("PLAY e1g1 C", Protocol.playCommand("e1g1", castling = true))
         assertEquals("PLAY e5d6 E", Protocol.playCommand("e5d6", enPassant = true))
         assertThrows(IllegalArgumentException::class.java) { Protocol.playCommand("z9z8") }
+        assertEquals("HEAD e6", Protocol.headCommand("e6"))
+        assertEquals("PIECE e2e4", Protocol.pieceCommand("e2", "e4"))
     }
 
     @Test fun telemetryPreservesReleasedAndFaultFlags() {

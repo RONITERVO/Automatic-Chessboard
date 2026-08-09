@@ -45,6 +45,9 @@ terminal timeouts; it never relies on a fixed BLE timing delay.
   row map before any move logic or `BOARD` telemetry consumes them.
 - Nano telemetry reports commanded/calculated controller state.
 - The visual model displays disagreement instead of silently choosing one source.
+- `ManualSelection` owns direct-control mode and square selection. The UI enables
+  movement only after e6 calibration agrees with fresh telemetry, while both
+  app and firmware enforce source/destination occupancy for piece movement.
 
 ## Extensibility
 

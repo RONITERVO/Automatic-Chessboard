@@ -49,7 +49,7 @@ READ_ONLY_COMMANDS = frozenset({"PING", "HELLO", "INFO", "STATUS", "TELEM", "BOA
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
-MOTION_COMMANDS = frozenset({"START", "PLAY", "ACCEPT"})
+MOTION_COMMANDS = frozenset({"START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE"})
 
 
 class LineBuffer:
@@ -58,19 +58,22 @@ class LineBuffer:
     def __init__(self, maximum: int = 256) -> None:
         self._data = bytearray()
         self._maximum = maximum
+        self._overflowed = False
 
     def feed(self, data: bytes) -> list[str]:
         lines: list[str] = []
         for value in data:
             if value in (10, 13):
-                if self._data:
+                if self._data and not self._overflowed:
                     lines.append(self._data.decode("ascii", errors="replace").strip())
-                    self._data.clear()
-            elif 32 <= value <= 126:
+                self._data.clear()
+                self._overflowed = False
+            elif 32 <= value <= 126 and not self._overflowed:
                 if len(self._data) < self._maximum:
                     self._data.append(value)
                 else:
                     self._data.clear()
+                    self._overflowed = True
         return [line for line in lines if line]
 
 
@@ -155,3 +158,17 @@ def play_command(uci: str, *, castling: bool = False,
         raise ValueError(f"Invalid UCI move: {uci!r}")
     flag = "C" if castling else "E" if en_passant else ""
     return f"PLAY {uci}{' ' + flag if flag else ''}"
+
+
+def head_command(square: str) -> str:
+    if len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
+        raise ValueError(f"Invalid square: {square!r}")
+    return f"HEAD {square}"
+
+
+def piece_command(source: str, target: str) -> str:
+    head_command(source)
+    head_command(target)
+    if source == target:
+        raise ValueError("Source and target must differ")
+    return f"PIECE {source}{target}"

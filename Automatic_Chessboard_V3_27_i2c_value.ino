@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 3.29.
+ * Automatic Chessboard firmware 3.30.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -16,7 +16,7 @@
 #include "global.h"
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "3.29"
+#define FIRMWARE_VERSION "3.30"
 
 hd44780_I2Cexp lcd;
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
@@ -27,8 +27,13 @@ SoftwareSerial bluetoothInput(BLUETOOTH_RX, 1);
 // The compact line protocol keeps the Nano responsible for motion and safety
 // while a Windows host can provide full chess rules and Stockfish.
 const byte HOST_INPUT_SIZE = 32;
-char host_input[HOST_INPUT_SIZE];
-byte host_input_length = 0;
+struct HostInputBuffer {
+  char data[HOST_INPUT_SIZE];
+  byte length;
+  boolean overflowed;
+};
+HostInputBuffer usb_host_input = {{0}, 0, false};
+HostInputBuffer bluetooth_host_input = {{0}, 0, false};
 boolean remote_mode = false;
 boolean remote_human_white = true;
 boolean remote_human_move_pending = false;
@@ -473,7 +478,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL"));
 }
 
 void sendTelemetry() {
@@ -541,6 +546,10 @@ void testBluetoothModule() {
 }
 
 void startRemoteSession(boolean human_white) {
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
+    return;
+  }
   if (sequence != main_menu) {
     sendHostError(F("BUSY"));
     return;
@@ -560,6 +569,150 @@ void startRemoteSession(boolean human_white) {
 void stopRemoteSession() {
   returnToMainMenu();
   Serial.println(F("STOPPED"));
+}
+
+boolean validSquareText(const char *square) {
+  return square[0] >= 'a' && square[0] <= 'h' &&
+         square[1] >= '1' && square[1] <= '8' && square[2] == 0;
+}
+
+void printHostSquare(byte file, byte rank) {
+  Serial.print((char)('a' + file - 1));
+  Serial.print(rank);
+}
+
+boolean sensorSquareOccupied(byte file, byte rank) {
+  return reed_sensor_record[8 - rank][file - 1] == LOW;
+}
+
+void finishHostManualMotion(boolean succeeded) {
+  setMagnet(false);
+  if (!succeeded || motion_fault) {
+    motion_fault = true;
+    trolley_homed = false;
+    sequence = fault_screen;
+    showMotionFault();
+    sendHostError(F("MOTION"));
+    return;
+  }
+  sequence = main_menu;
+  showMainMenu();
+}
+
+void runHostCalibration() {
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
+    return;
+  }
+  if (sequence != main_menu || remote_mode) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+
+  sequence = calibration;
+  showCalibration();
+  Serial.println(F("CALIBRATING"));
+  if (!calibrateBoard() || !trolley_homed || magnet_state ||
+      trolley_coordinate_X != CALIBRATION_PARK_FILE ||
+      trolley_coordinate_Y != CALIBRATION_PARK_RANK) {
+    finishHostManualMotion(false);
+    return;
+  }
+
+  sequence = main_menu;
+  showMainMenu();
+  Serial.print(F("CALIBRATED "));
+  printHostSquare(trolley_coordinate_X, trolley_coordinate_Y);
+  Serial.println();
+}
+
+void runHostHeadMove(const char *square) {
+  if (sequence != main_menu || remote_mode) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
+    return;
+  }
+  if (!trolley_homed) {
+    sendHostError(F("CALIBRATE"));
+    return;
+  }
+
+  byte target_file = square[0] - 'a' + 1;
+  byte target_rank = square[1] - '0';
+  setMagnet(false);
+  sequence = host_manual_motion;
+  Serial.print(F("MOVING HEAD "));
+  Serial.println(square);
+  boolean moved = moveTrolleyStraightTo(target_file, target_rank, SPEED_FAST);
+  finishHostManualMotion(moved);
+  if (!moved || motion_fault) return;
+  Serial.print(F("MOVED HEAD "));
+  Serial.println(square);
+}
+
+void runHostPieceMove(const char *move) {
+  if (sequence != main_menu || remote_mode) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
+    return;
+  }
+  if (!trolley_homed) {
+    sendHostError(F("CALIBRATE"));
+    return;
+  }
+
+  byte from_file = move[0] - 'a' + 1;
+  byte from_rank = move[1] - '0';
+  byte to_file = move[2] - 'a' + 1;
+  byte to_rank = move[3] - '0';
+  if (from_file == to_file && from_rank == to_rank) {
+    sendHostError(F("SAME SQUARE"));
+    return;
+  }
+
+  scanSensors();
+  if (!sensorSquareOccupied(from_file, from_rank)) {
+    sendHostError(F("SOURCE EMPTY"));
+    return;
+  }
+  if (sensorSquareOccupied(to_file, to_rank)) {
+    sendHostError(F("TARGET FULL"));
+    return;
+  }
+
+  sequence = host_manual_motion;
+  Serial.print(F("MOVING PIECE "));
+  Serial.println(move);
+  setMagnet(false);
+  boolean moved = moveTrolleyStraightTo(from_file, from_rank, SPEED_FAST);
+  if (moved) {
+    setMagnet(true);
+    moved = magnet_state && moveHeldPieceSmooth(from_file, from_rank, to_file, to_rank);
+  }
+  setMagnet(false);
+  finishHostManualMotion(moved);
+  if (!moved || motion_fault) return;
+
+  scanSensors();
+  boolean sensors_agree = !sensorSquareOccupied(from_file, from_rank) &&
+                          sensorSquareOccupied(to_file, to_rank);
+  syncSensorState();
+  if (!sensors_agree) {
+    trolley_homed = false;
+    motion_fault = true;
+    sequence = fault_screen;
+    showMotionFault();
+    sendHostError(F("SENSORS"));
+    return;
+  }
+  Serial.print(F("MOVED PIECE "));
+  Serial.println(move);
 }
 
 void processHostCommand(char *line) {
@@ -590,6 +743,19 @@ void processHostCommand(char *line) {
   }
   if (strcmp(line, "STOP") == 0) {
     stopRemoteSession();
+    return;
+  }
+  if (strcmp(line, "CALIBRATE") == 0) {
+    runHostCalibration();
+    return;
+  }
+  if (strncmp(line, "HEAD ", 5) == 0 && validSquareText(line + 5)) {
+    runHostHeadMove(line + 5);
+    return;
+  }
+  if (strncmp(line, "PIECE ", 6) == 0 && line[10] == 0 &&
+      validMoveText(line + 6)) {
+    runHostPieceMove(line + 6);
     return;
   }
   if (strncmp(line, "START ", 6) == 0 &&
@@ -677,26 +843,30 @@ void processHostCommand(char *line) {
   sendHostError(F("COMMAND"));
 }
 
-void processHostStream(Stream &input) {
+void processHostStream(Stream &input, HostInputBuffer &buffer) {
   while (input.available()) {
     char value = input.read();
     if (value == '!') {
-      host_input_length = 0;
+      buffer.length = 0;
+      buffer.overflowed = false;
       tripRemoteEmergencyStop();
       continue;
     }
     if (value == '\r' || value == '\n') {
-      if (host_input_length == 0) continue;
-      host_input[host_input_length] = 0;
-      processHostCommand(host_input);
-      host_input_length = 0;
+      if (!buffer.overflowed && buffer.length) {
+        buffer.data[buffer.length] = 0;
+        processHostCommand(buffer.data);
+      }
+      buffer.length = 0;
+      buffer.overflowed = false;
     }
-    else if (value >= 32 && value <= 126) {
-      if (host_input_length < HOST_INPUT_SIZE - 1) {
-        host_input[host_input_length++] = value;
+    else if (value >= 32 && value <= 126 && !buffer.overflowed) {
+      if (buffer.length < HOST_INPUT_SIZE - 1) {
+        buffer.data[buffer.length++] = value;
       }
       else {
-        host_input_length = 0;
+        buffer.length = 0;
+        buffer.overflowed = true;
         sendHostError(F("LINE LONG"));
       }
     }
@@ -704,8 +874,8 @@ void processHostStream(Stream &input) {
 }
 
 void processHostSerial() {
-  processHostStream(Serial);
-  processHostStream(bluetoothInput);
+  processHostStream(Serial, usb_host_input);
+  processHostStream(bluetoothInput, bluetooth_host_input);
 }
 
 void showRemoteSetupCheck() {
@@ -858,8 +1028,6 @@ boolean buttonPressed(byte pin) {
 
 void returnToMainMenu() {
   setMagnet(false);
-  motion_fault = false;
-  remote_stop_requested = false;
   remote_mode = false;
   remote_human_move_pending = false;
   AI_reset();
@@ -1234,18 +1402,22 @@ void tripRemoteEmergencyStop() {
   Serial.println(F("ESTOP REMOTE"));
 }
 
-boolean drainForEmergencyStop(Stream &input) {
+boolean drainForEmergencyStop(Stream &input, HostInputBuffer &buffer) {
   boolean requested = false;
   while (input.available()) {
-    if (input.read() == '!') requested = true;
+    char value = input.read();
+    if (value == '!') requested = true;
+    if (value == '\r' || value == '\n') buffer.overflowed = false;
+    else if (value >= 32 && value <= 126 && value != '!') buffer.overflowed = true;
+    buffer.length = 0;
   }
   return requested;
 }
 
 boolean pollRemoteEmergencyStop() {
   if (remote_stop_requested) return true;
-  boolean requested = drainForEmergencyStop(Serial);
-  if (drainForEmergencyStop(bluetoothInput)) requested = true;
+  boolean requested = drainForEmergencyStop(Serial, usb_host_input);
+  if (drainForEmergencyStop(bluetoothInput, bluetooth_host_input)) requested = true;
   if (!requested) return false;
   tripRemoteEmergencyStop();
   return true;
@@ -1765,9 +1937,9 @@ void setMagnet(boolean enabled) {
     delay(600);
   }
   else {
-    if (magnet_state) delay(600);
     digitalWrite(MAGNET, LOW);
     magnet_state = false;
+    delay(600);
   }
 }
 

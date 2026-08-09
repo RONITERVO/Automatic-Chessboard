@@ -18,7 +18,15 @@ import chess.engine
 import chess.pgn
 
 from camera_source import CameraWorker
-from model import MonitorModel, expected_occupancy
+from model import (
+    ManualSelection,
+    MonitorModel,
+    calibration_matches,
+    expected_occupancy,
+    head_move_matches,
+    piece_move_matches,
+    square_name,
+)
 from protocol import (
     CommandRisk,
     classify_command,
@@ -71,7 +79,10 @@ class ChessboardCanvas(tk.Canvas):
         self.flipped = False
         self.last_move: chess.Move | None = None
         self.carriage: tuple[int, int] | None = None
+        self.selected_squares: frozenset[int] = frozenset()
+        self.on_square_clicked = None
         self.bind("<Configure>", lambda _event: self.redraw())
+        self.bind("<Button-1>", self._clicked)
 
     def set_state(self, board: chess.Board, sensors: frozenset[int] | None,
                   flipped: bool, carriage: tuple[int, int] | None = None) -> None:
@@ -81,6 +92,28 @@ class ChessboardCanvas(tk.Canvas):
         self.last_move = board.peek() if board.move_stack else None
         self.carriage = carriage
         self.redraw()
+
+    def set_interaction(self, selected: frozenset[int], callback) -> None:
+        changed = selected != self.selected_squares or callback != self.on_square_clicked
+        self.selected_squares = selected
+        self.on_square_clicked = callback
+        self.configure(cursor="hand2" if callback else "")
+        if changed:
+            self.redraw()
+
+    def _clicked(self, event) -> None:
+        if not self.on_square_clicked:
+            return
+        width, height = max(self.winfo_width(), 160), max(self.winfo_height(), 160)
+        size = min(width, height)
+        offset_x, offset_y = (width - size) / 2, (height - size) / 2
+        if not (offset_x <= event.x < offset_x + size and offset_y <= event.y < offset_y + size):
+            return
+        display_file = min(7, int((event.x - offset_x) / (size / 8)))
+        display_rank = min(7, int((event.y - offset_y) / (size / 8)))
+        file_index = 7 - display_file if self.flipped else display_file
+        rank_index = display_rank if self.flipped else 7 - display_rank
+        self.on_square_clicked(chess.square(file_index, rank_index))
 
     def _display_coordinates(self, square: int) -> tuple[int, int]:
         file_index = chess.square_file(square)
@@ -113,6 +146,13 @@ class ChessboardCanvas(tk.Canvas):
                     fill = "#d7c75b" if fill == "#f0d9b5" else "#aa9b3d"
                 self.create_rectangle(x0, y0, x0 + square_size, y0 + square_size,
                                       fill=fill, outline=fill)
+                if square in self.selected_squares:
+                    inset = max(2, square_size * 0.04)
+                    self.create_rectangle(
+                        x0 + inset, y0 + inset, x0 + square_size - inset,
+                        y0 + square_size - inset, outline="#f4c542",
+                        width=max(3, int(square_size / 14)),
+                    )
 
                 piece = self.board.piece_at(square)
                 if piece:
@@ -224,6 +264,11 @@ class AutomaticChessboardApp:
         self.settings = self._load_settings()
         self.recorder = EventRecorder()
         self.diag_results: dict[str, tuple[str, str]] = {}
+        self.manual_selection = ManualSelection()
+        self.manual_calibration_verified = False
+        self.manual_pending = ""
+        self.manual_pending_selection: ManualSelection | None = None
+        self.calibration_reported_square: str | None = None
 
         self._configure_style()
         self._build_menu()
@@ -304,17 +349,20 @@ class AutomaticChessboardApp:
         self.notebook.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self.monitor_tab = ttk.Frame(self.notebook, padding=8)
         self.play_tab = ttk.Frame(self.notebook, padding=10)
+        self.manual_tab = ttk.Frame(self.notebook, padding=8)
         self.diagnostics_tab = ttk.Frame(self.notebook, padding=10)
         self.camera_tab = ttk.Frame(self.notebook, padding=10)
         self.developer_tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.monitor_tab, text="Monitor")
         self.notebook.add(self.play_tab, text="Play")
+        self.notebook.add(self.manual_tab, text="Move head / piece")
         self.notebook.add(self.diagnostics_tab, text="Diagnostics")
         self.notebook.add(self.camera_tab, text="Camera")
         self.notebook.add(self.developer_tab, text="Developer")
 
         self._build_monitor_tab()
         self._build_play_tab()
+        self._build_manual_tab()
         self._build_diagnostics_tab()
         self._build_camera_tab()
         self._build_developer_tab()
@@ -434,6 +482,58 @@ class AutomaticChessboardApp:
         self.play_tab.rowconfigure(1, weight=1)
         self.move_history = tk.Text(history, height=15, state="disabled", font=("Consolas", 10))
         self.move_history.pack(fill="both", expand=True)
+
+    def _build_manual_tab(self) -> None:
+        self.manual_tab.columnconfigure(0, weight=3)
+        self.manual_tab.columnconfigure(1, weight=2)
+        self.manual_tab.rowconfigure(0, weight=1)
+
+        self.manual_board = ChessboardCanvas(self.manual_tab)
+        self.manual_board.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.manual_board.set_interaction(frozenset(), self._manual_square_clicked)
+
+        controls = ttk.Frame(self.manual_tab, padding=8)
+        controls.grid(row=0, column=1, sticky="nsew")
+        controls.columnconfigure(0, weight=1)
+        controls.rowconfigure(5, weight=1)
+        ttk.Label(controls, text="Direct board control", style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            controls,
+            text=("Calibrate here before using manual movement. Head only never energizes the magnet. "
+                  "Move piece requires an occupied source and empty destination."),
+            wraplength=430,
+        ).grid(row=1, column=0, sticky="ew", pady=(5, 10))
+
+        self.manual_mode = tk.StringVar(value="head")
+        modes = ttk.LabelFrame(controls, text="Operation", padding=8)
+        modes.grid(row=2, column=0, sticky="ew")
+        ttk.Radiobutton(modes, text="Head only (magnet off)", variable=self.manual_mode,
+                        value="head", command=self._manual_mode_changed).pack(anchor="w")
+        ttk.Radiobutton(modes, text="Move a sensed piece", variable=self.manual_mode,
+                        value="piece", command=self._manual_mode_changed).pack(anchor="w")
+
+        self.manual_status = tk.StringVar(value="Calibrate from this page before moving the head.")
+        self.manual_selection_text = tk.StringVar(value="Tap a target square")
+        ttk.Label(controls, textvariable=self.manual_status, wraplength=430,
+                  style="Heading.TLabel").grid(row=3, column=0, sticky="ew", pady=(12, 5))
+        ttk.Label(controls, textvariable=self.manual_selection_text, wraplength=430,
+                  style="Quiet.TLabel").grid(row=4, column=0, sticky="new")
+
+        actions = ttk.Frame(controls)
+        actions.grid(row=6, column=0, sticky="ew", pady=(12, 0))
+        for column in range(3):
+            actions.columnconfigure(column, weight=1)
+        ttk.Button(actions, text="Calibrate", command=self._manual_calibrate).grid(
+            row=0, column=0, sticky="ew", padx=(0, 3)
+        )
+        ttk.Button(actions, text="Clear selection", command=self._manual_clear).grid(
+            row=0, column=1, sticky="ew", padx=3
+        )
+        ttk.Button(actions, text="Move", command=self._manual_move).grid(
+            row=0, column=2, sticky="ew", padx=(3, 0)
+        )
 
     def _build_diagnostics_tab(self) -> None:
         self.diagnostics_tab.columnconfigure(0, weight=1)
@@ -748,11 +848,19 @@ class AutomaticChessboardApp:
         lower = status.lower()
         if "connected" in lower and "disconnected" not in lower:
             self.model.connected = True
+            if not self.manual_calibration_verified:
+                self.manual_status.set("Connected; calibrate from this page before moving.")
             self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
         elif any(word in lower for word in ("disconnected", "interrupted", "stopped", "reconnecting")):
             self.model.connected = False
             self.safe_request_queue.clear()
             self.safe_request_pending = None
+            self.manual_calibration_verified = False
+            self.manual_pending = ""
+            self.manual_pending_selection = None
+            self.model.telemetry_updated = None
+            self.manual_selection = ManualSelection(self.manual_selection.mode)
+            self.manual_status.set("Connection lost; calibrate again after reconnecting.")
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
         self._refresh_visual_state()
@@ -772,9 +880,12 @@ class AutomaticChessboardApp:
         elif event.kind == "TELEM":
             try:
                 self.model.telemetry = parse_telemetry(event)
-                self.motion_expected = self.model.telemetry.sequence in (3, 8, 19)
+                self.model.telemetry_updated = time.monotonic()
+                self.motion_expected = self.model.telemetry.sequence in (3, 8, 19, 21)
             except ValueError as error:
                 self.model.last_error = str(error)
+            else:
+                self._verify_manual_telemetry()
         elif event.kind == "BOARD" and event.args:
             try:
                 self.model.sensor_hex = event.args[0]
@@ -782,6 +893,8 @@ class AutomaticChessboardApp:
                 self.model.sensor_updated = time.monotonic()
             except ValueError as error:
                 self.model.last_error = str(error)
+            else:
+                self._verify_manual_sensors()
         elif event.kind in ("READY", "PONG"):
             self._set_connection_text("Board connected and responding")
         elif event.kind == "SETUP":
@@ -796,9 +909,31 @@ class AutomaticChessboardApp:
                 self.game_status.set("Your move. Press Button A on the board when complete.")
         elif event.kind == "MOVE" and event.args:
             self._accept_human_move(event.args[0])
+        elif event.kind == "CALIBRATING":
+            self.motion_expected = True
+            self.manual_status.set("Calibrating; keep the mechanism clear.")
+        elif event.kind == "CALIBRATED":
+            self.motion_expected = False
+            if self.manual_pending == "calibration":
+                self.calibration_reported_square = event.args[0] if event.args else None
+                self.manual_status.set(
+                    f"Calibration ended at {self.calibration_reported_square or 'unknown'}; checking fresh telemetry."
+                )
+                self._queue_safe_requests("TELEM", "BOARD")
         elif event.kind == "MOVING":
             self.motion_expected = True
-            self.game_status.set("The carriage is moving. Keep hands clear.")
+            if event.args and event.args[0] in ("HEAD", "PIECE"):
+                self.manual_status.set(f"{event.args[0].title()} movement in progress; keep hands clear.")
+            else:
+                self.game_status.set("The carriage is moving. Keep hands clear.")
+        elif event.kind == "MOVED" and event.args:
+            self.motion_expected = False
+            if event.args[0] == "HEAD" and self.manual_pending == "head":
+                self.manual_status.set("Head stopped; checking fresh telemetry.")
+                self._queue_safe_requests("TELEM")
+            elif event.args[0] == "PIECE" and self.manual_pending == "piece":
+                self.manual_status.set("Piece movement finished; checking head and sensors.")
+                self._queue_safe_requests("TELEM", "BOARD")
         elif event.kind == "DONE" and event.args:
             self.motion_expected = False
             self._complete_engine_move(event.args[0])
@@ -817,6 +952,9 @@ class AutomaticChessboardApp:
         elif event.kind == "ERR":
             self.model.last_error = " ".join(event.args)
             self.motion_expected = False
+            if self.manual_pending:
+                self._clear_manual_pending()
+                self.manual_status.set(f"Board rejected the operation: {' '.join(event.args)}")
         elif event.kind == "STOPPED":
             self.session_active = False
             self.motion_expected = False
@@ -872,6 +1010,239 @@ class AutomaticChessboardApp:
             unexpected = len(self.model.unexpected_squares())
             self.state_values["sensors"].set(f"{count} occupied · {missing} missing · {unexpected} extra")
         self.mechanism_canvas.set_telemetry(telemetry)
+        self._refresh_manual_control()
+
+    def _refresh_manual_control(self) -> None:
+        if not hasattr(self, "manual_board"):
+            return
+        telemetry = self.model.telemetry
+        carriage = None if not telemetry else (telemetry.trolley_x, telemetry.trolley_y)
+        self.manual_board.set_state(
+            self.board, self.model.sensor_squares, self.human_color == chess.BLACK, carriage
+        )
+        callback = None if self.manual_pending else self._manual_square_clicked
+        self.manual_board.set_interaction(self.manual_selection.highlighted, callback)
+        calibration = "Calibration verified" if self.manual_calibration_verified else "Calibration required"
+        prompt = "Tap a target square" if self.manual_selection.mode == "head" else "Tap occupied source, then empty target"
+        self.manual_selection_text.set(
+            f"{calibration}\n{self.manual_selection.command() or prompt}"
+        )
+
+    def _manual_mode_changed(self) -> None:
+        if self.manual_pending:
+            self.manual_mode.set(self.manual_selection.mode)
+            self.manual_status.set("An operation is in progress; wait for verification.")
+            self._refresh_manual_control()
+            return
+        self.manual_selection = self.manual_selection.with_mode(self.manual_mode.get())
+        self.manual_status.set(
+            "Tap one destination; the electromagnet will stay off."
+            if self.manual_selection.mode == "head" else
+            "Tap an occupied source, then an empty destination."
+        )
+        self._refresh_manual_control()
+
+    def _manual_square_clicked(self, square: int) -> None:
+        if self.manual_pending:
+            self.manual_status.set("An operation is in progress; wait for verification.")
+            return
+        self.manual_selection, message = self.manual_selection.choose(square, self.model.sensor_squares)
+        self.manual_status.set(message)
+        self._refresh_manual_control()
+
+    def _manual_clear(self) -> None:
+        if self.manual_pending:
+            self.manual_status.set("An operation is in progress; wait for verification.")
+            return
+        self.manual_selection = ManualSelection(self.manual_selection.mode)
+        self.manual_status.set("Choose squares." if self.manual_calibration_verified else "Calibrate before moving.")
+        self._refresh_manual_control()
+
+    def _manual_capability_ready(self) -> bool:
+        if not self.transport or not self.transport.is_connected:
+            messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
+            return False
+        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
+        if not {"CALIBRATE", "MANUAL"}.issubset(capabilities):
+            messagebox.showerror(
+                "Firmware update required",
+                "Install firmware 3.30 or newer to use in-app calibration and square movement.",
+                parent=self.root,
+            )
+            return False
+        if self.session_active:
+            messagebox.showwarning("Game active", "Stop the game before manual movement.", parent=self.root)
+            return False
+        telemetry = self.model.telemetry
+        if telemetry and telemetry.motion_fault:
+            messagebox.showerror(
+                "Motion fault", "Inspect and recover the fault locally before remote movement.", parent=self.root
+            )
+            return False
+        telemetry_age = self.model.telemetry_age_seconds()
+        if telemetry is None or telemetry_age is None or telemetry_age > 5.0:
+            self._queue_safe_requests("TELEM")
+            messagebox.showwarning(
+                "Fresh telemetry required",
+                "Refresh live telemetry and try again before allowing calibration or movement.",
+                parent=self.root,
+            )
+            return False
+        return True
+
+    def _manual_calibrate(self) -> None:
+        if self.manual_pending:
+            self.manual_status.set("An operation is already in progress; wait for verification.")
+            return
+        if not self._manual_capability_ready():
+            return
+        if not messagebox.askokcancel(
+            "Calibrate carriage from Windows?",
+            "Calibration moves to the limit references and parks at e6. Clear the mechanism, keep the "
+            "physical power cutoff accessible, and watch the board throughout.",
+            parent=self.root,
+        ):
+            return
+        self.manual_calibration_verified = False
+        self.manual_pending = "calibration"
+        self.manual_pending_selection = None
+        self.calibration_reported_square = None
+        self.manual_status.set("Calibration command sent; keep hands clear.")
+        if not self._send("CALIBRATE"):
+            self._clear_manual_pending()
+
+    def _manual_move(self) -> None:
+        if self.manual_pending:
+            self.manual_status.set("An operation is already in progress; wait for verification.")
+            return
+        if not self._manual_capability_ready():
+            return
+        if not self.manual_calibration_verified:
+            messagebox.showwarning(
+                "Calibrate first", "Calibrate here and wait for the e6 telemetry check to pass.", parent=self.root
+            )
+            return
+        telemetry = self.model.telemetry
+        if not telemetry or not telemetry.homed or telemetry.motion_fault or telemetry.magnet_on:
+            self.manual_calibration_verified = False
+            messagebox.showerror(
+                "Board not ready", "Telemetry no longer confirms a homed, fault-free head with magnet off.",
+                parent=self.root,
+            )
+            return
+        command = self.manual_selection.command()
+        if not command:
+            messagebox.showinfo("Choose squares", "Select the required square or squares first.", parent=self.root)
+            return
+        if self.manual_selection.mode == "piece":
+            if self.model.sensor_updated is None or time.monotonic() - self.model.sensor_updated > 5.0:
+                self._queue_safe_requests("BOARD")
+                self.manual_status.set("Refreshing sensors; verify the selection and click Move again.")
+                return
+            occupied = self.model.sensor_squares or frozenset()
+            source = self.manual_selection.source
+            target = self.manual_selection.target
+            if source is None or target is None:
+                messagebox.showinfo(
+                    "Choose squares", "Select an occupied source and empty destination first.", parent=self.root
+                )
+                return
+            if source not in occupied or target in occupied:
+                messagebox.showerror(
+                    "Sensor check changed", "The source must contain a piece and the destination must be empty.",
+                    parent=self.root,
+                )
+                return
+            detail = (
+                f"Move the piece {square_name(source)} to "
+                f"{square_name(target)}? The magnet energizes only after the head reaches "
+                "the occupied source."
+            )
+        else:
+            target = self.manual_selection.target
+            if target is None:
+                messagebox.showinfo("Choose square", "Select a destination first.", parent=self.root)
+                return
+            detail = f"Move the head to {square_name(target)} with the electromagnet OFF?"
+        if not messagebox.askokcancel("Confirm physical movement", detail, parent=self.root):
+            return
+        requested_selection = self.manual_selection
+        self.manual_pending = requested_selection.mode
+        self.manual_pending_selection = requested_selection
+        self.manual_status.set("Movement command sent; keep hands clear.")
+        if not self._send(command):
+            self._clear_manual_pending()
+
+    def _verify_manual_telemetry(self) -> None:
+        telemetry = self.model.telemetry
+        if self.manual_pending == "calibration":
+            self.manual_calibration_verified = calibration_matches(
+                self.calibration_reported_square, telemetry
+            )
+            self.manual_status.set(
+                "Calibration verified: board and Windows agree the head is at e6, homed, with magnet off."
+                if self.manual_calibration_verified else
+                "Calibration report disagrees with telemetry; do not move."
+            )
+            self._clear_manual_pending()
+        elif self.manual_pending == "head":
+            target = self.manual_pending_selection.target if self.manual_pending_selection else None
+            if target is None:
+                self.manual_status.set("The requested head destination was lost; recalibrate before another move.")
+                self.manual_calibration_verified = False
+                self._clear_manual_pending()
+                return
+            verified = head_move_matches(target, telemetry)
+            self.manual_status.set(
+                f"Head position verified at {square_name(target)}; magnet remained off."
+                if verified else "Head position could not be verified; recalibrate before another move."
+            )
+            if not verified:
+                self.manual_calibration_verified = False
+            self._clear_manual_pending()
+        elif self.manual_pending == "piece":
+            target = self.manual_pending_selection.target if self.manual_pending_selection else None
+            if target is None:
+                self.manual_status.set("The requested piece destination was lost; inspect and recalibrate.")
+                self.manual_calibration_verified = False
+                self._clear_manual_pending()
+                return
+            if not head_move_matches(target, telemetry):
+                self.manual_status.set(
+                    "Head telemetry disagrees with the requested destination; inspect and recalibrate."
+                )
+                self.manual_calibration_verified = False
+                self._clear_manual_pending()
+            else:
+                self.manual_status.set(
+                    f"Head is at {square_name(target)}; checking piece sensors."
+                )
+
+    def _verify_manual_sensors(self) -> None:
+        if self.manual_pending != "piece":
+            return
+        pending_selection = self.manual_pending_selection
+        source = pending_selection.source if pending_selection else None
+        target = pending_selection.target if pending_selection else None
+        if source is None or target is None:
+            self.manual_status.set("The requested piece squares were lost; inspect the board before continuing.")
+            self.manual_calibration_verified = False
+            self._clear_manual_pending()
+            return
+        verified = piece_move_matches(
+            source, target, self.model.sensor_squares
+        )
+        self.manual_status.set(
+            f"Piece verified at {square_name(target)}; source is clear."
+            if verified else "Sensors do not confirm the piece move; inspect the board before continuing."
+        )
+        self._clear_manual_pending()
+        if verified:
+            self.manual_selection = ManualSelection(pending_selection.mode)
+
+    def _clear_manual_pending(self) -> None:
+        self.manual_pending = ""
+        self.manual_pending_selection = None
 
     def _choose_engine(self) -> None:
         selected = filedialog.askopenfilename(
