@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 3.30 advertises `ACB2` monitoring while retaining the legacy
+terminator. Firmware 3.31 advertises `ACB2` monitoring while retaining the legacy
 `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 3.30 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL
+< INFO ACB2 3.31 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -68,7 +68,7 @@ second automatic move before receiving `DONE`.
 
 ## App calibration and direct square movement
 
-Firmware 3.30 adds guarded maintenance commands. They are accepted only from the
+Firmware 3.31 adds guarded maintenance commands. They are accepted only from the
 idle main menu, outside a remote game, and never while a motion fault is latched.
 
 - `CALIBRATE` performs the complete reference routine. It emits `CALIBRATING`,

@@ -25,6 +25,8 @@ class ProtocolTest {
         val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP"))
         assertEquals("3.29", info.firmware)
         assertTrue("ESTOP" in info.capabilities)
+        val current = Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 3.31 BOARD,TELEM,MANUAL,SENSORFRAME"))
+        assertTrue("SENSORFRAME" in current.capabilities)
         val telemetry = Protocol.parseTelemetry(Protocol.parseEvent("TELEM ACB2 17 1 1 0 0 5 6 1 1 1023 847 65"))
         assertEquals(17, telemetry.sequence)
         assertTrue(telemetry.homed)

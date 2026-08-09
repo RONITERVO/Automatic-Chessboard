@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 3.30.
+ * Automatic Chessboard firmware 3.31.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -16,7 +16,7 @@
 #include "global.h"
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "3.30"
+#define FIRMWARE_VERSION "3.31"
 
 hd44780_I2Cexp lcd;
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
@@ -66,12 +66,17 @@ boolean trolley_position_known = false;
 boolean calibration_lane_confirmed = false;
 
 // Raw multiplexer rows follow the glued-tile wiring documented in
-// windows_app/README.md. Normalize them once, before any chess logic or host
-// telemetry sees the board. The eight-byte permutation stays in flash.
+// windows_app/README.md. The installed sensor panel is rotated 180 degrees
+// relative to the carriage frame, so normalize both axes once before any
+// chess logic or host telemetry sees the board.
 const byte SENSOR_ROW_MAP[8] PROGMEM = {7, 6, 1, 0, 3, 2, 5, 4};
 
 byte logicalSensorRow(byte raw_row) {
-  return pgm_read_byte(&SENSOR_ROW_MAP[raw_row]);
+  return 7 - pgm_read_byte(&SENSOR_ROW_MAP[raw_row]);
+}
+
+byte logicalSensorColumn(byte raw_column) {
+  return 7 - raw_column;
 }
 
 byte positionRecordChecksum(unsigned int record_sequence, byte state,
@@ -478,7 +483,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME"));
 }
 
 void sendTelemetry() {
@@ -1226,7 +1231,7 @@ void scanSensors() {
       delayMicroseconds(30);
       high_votes += digitalRead(MUX_OUTPUT);
       byte raw_row = 7 - column;
-      reed_sensor_record[logicalSensorRow(raw_row)][row] =
+      reed_sensor_record[logicalSensorRow(raw_row)][logicalSensorColumn(row)] =
           high_votes >= 2 ? HIGH : LOW;
       row++;
       if (channel == 7) {

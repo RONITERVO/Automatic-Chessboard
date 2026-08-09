@@ -311,7 +311,9 @@ class SimulatorTransport:
         elif upper in ("PING", "HELLO"):
             self._emit("PONG ACB1")
         elif upper == "INFO":
-            self._emit("INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL")
+            self._emit(
+                "INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME"
+            )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)}")
         elif upper == "TELEM":

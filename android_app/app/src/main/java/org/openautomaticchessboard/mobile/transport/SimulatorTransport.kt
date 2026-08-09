@@ -34,7 +34,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL", 30)
+            "INFO" -> emit("INFO ACB2 SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} 0", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} 0 ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
