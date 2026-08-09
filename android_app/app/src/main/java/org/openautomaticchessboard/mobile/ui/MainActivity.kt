@@ -731,6 +731,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun confirmStartGame() {
         if (!monitorState.connected) { toast("Connect to the board first"); return }
+        if (!sensorFrameReady()) return
         AlertDialog.Builder(this).setTitle("Calibration can move the carriage")
             .setMessage("Confirm the complete board is clear, both limits were tested locally, live state is current, and physical power cutoff is accessible.")
             .setPositiveButton("Start calibration") { _, _ ->
@@ -742,16 +743,23 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun manualCapabilityReady(): Boolean {
         if (!monitorState.connected) { toast("Connect to the board first"); return false }
         val capabilities = monitorState.firmware?.capabilities.orEmpty()
-        if ("MANUAL" !in capabilities || "CALIBRATE" !in capabilities) {
-            alert("Firmware update required", "Install firmware 3.30 or newer to use in-app calibration and square movement.")
+        if (!capabilities.containsAll(setOf("MANUAL", "CALIBRATE"))) {
+            alert("Firmware update required", "Install firmware 3.31 or newer to use in-app calibration and square movement.")
             return false
         }
+        if (!sensorFrameReady()) return false
         if (gameState.active) { alert("Game active", "Stop the game session before manual head or piece movement."); return false }
         if (monitorState.telemetry?.motionFault == true) {
             alert("Motion fault", "A fault must be inspected and recovered locally before remote calibration or movement.")
             return false
         }
         return true
+    }
+
+    private fun sensorFrameReady(): Boolean {
+        if ("SENSORFRAME" in monitorState.firmware?.capabilities.orEmpty()) return true
+        alert("Firmware update required", "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.")
+        return false
     }
 
     private fun confirmManualCalibration() {

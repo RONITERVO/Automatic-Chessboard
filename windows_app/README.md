@@ -17,7 +17,7 @@ next steps. Raw protocol data remains available in the Developer tab.
 | --- | --- | --- |
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
-| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Requires firmware 3.30, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
 | Limits/buttons | Electrical input state and A6 analog value | A snapshot does not prove the switch is mechanically positioned correctly |
@@ -52,29 +52,17 @@ analog-input-only. The HC-08 service jumper can remain closed during USB uploads
 Use Nano 5 V for HC-08 VCC only if the carrier board explicitly includes a 3.3 V
 regulator and accepts 5 V input. A bare HC-08 requires regulated 3.3 V power.
 
-## Reed-sensor rank wiring (firmware 3.29+)
+## Reed-sensor coordinate wiring (firmware 3.31+)
 
 The firmware is built for the glued-tile wiring used by this project. It
-normalizes raw multiplexer ranks before standalone move recognition, capture
-handling, setup checks, and `BOARD` telemetry. Files A-H are unchanged; ranks
-follow this fixed permutation:
-
-| Previously reported rank | Physical/logical rank |
-| ---: | ---: |
-| 8 | 1 |
-| 7 | 2 |
-| 2 | 3 |
-| 1 | 4 |
-| 4 | 5 |
-| 3 | 6 |
-| 6 | 7 |
-| 5 | 8 |
-
-For example, a raw A8 switch is displayed and interpreted as A1, and raw F4 is
-displayed and interpreted as F5. Builders should follow the hardware files that
-will be published with this repository. If a custom board uses different wiring,
-change the firmware table rather than only flipping the Windows drawing, because
-the Nano also uses these squares for chess logic.
+normalizes the raw multiplexer rank permutation and the sensor panel's 180-degree
+orientation before standalone move recognition, capture handling, setup checks,
+manual piece movement, and `BOARD` telemetry. Firmware 3.30 could therefore show
+the opposite square—for example physical e6 as d3 and physical b2 as g7. Firmware
+3.31 reports both as their physical chess coordinates. Do not compensate by
+flipping only an app drawing, because the Nano also uses these coordinates for
+chess and motion verification. A custom sensor panel with different wiring must
+change this normalization at the firmware scan boundary.
 
 ## Install and run
 

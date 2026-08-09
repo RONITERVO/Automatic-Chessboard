@@ -1066,9 +1066,11 @@ class AutomaticChessboardApp:
         if not {"CALIBRATE", "MANUAL"}.issubset(capabilities):
             messagebox.showerror(
                 "Firmware update required",
-                "Install firmware 3.30 or newer to use in-app calibration and square movement.",
+                "Install firmware 3.31 or newer to use in-app calibration and square movement.",
                 parent=self.root,
             )
+            return False
+        if not self._sensor_frame_ready():
             return False
         if self.session_active:
             messagebox.showwarning("Game active", "Stop the game before manual movement.", parent=self.root)
@@ -1089,6 +1091,17 @@ class AutomaticChessboardApp:
             )
             return False
         return True
+
+    def _sensor_frame_ready(self) -> bool:
+        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
+        if "SENSORFRAME" in capabilities:
+            return True
+        messagebox.showerror(
+            "Firmware update required",
+            "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.",
+            parent=self.root,
+        )
+        return False
 
     def _manual_calibrate(self) -> None:
         if self.manual_pending:
@@ -1275,6 +1288,8 @@ class AutomaticChessboardApp:
     def _start_game(self) -> None:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
+            return
+        if not self._sensor_frame_ready():
             return
         if not messagebox.askyesno(
             "Calibration will move the carriage",

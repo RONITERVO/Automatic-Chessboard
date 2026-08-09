@@ -21,7 +21,8 @@ class SimulatorTests(unittest.TestCase):
         transport.send("TELEM")
         transport.send("BOARD")
         self.assertTrue(received.wait(1.0))
-        self.assertTrue(any(value.startswith("INFO ACB2") for value in lines))
+        info = next(value for value in lines if value.startswith("INFO ACB2"))
+        self.assertIn("SENSORFRAME", info)
         transport.close()
 
     def test_emergency_halt(self):
