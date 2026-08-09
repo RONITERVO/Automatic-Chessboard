@@ -26,7 +26,7 @@ def user_data_dir() -> Path:
 
 
 class EventRecorder:
-    def __init__(self, log_dir: Path | None = None) -> None:
+    def __init__(self, log_dir: Path | None = None, maximum_sessions: int = 20) -> None:
         self.session_id = uuid.uuid4().hex[:12]
         self.started = datetime.now(UTC)
         directory = log_dir or user_data_dir() / "logs"
@@ -34,6 +34,21 @@ class EventRecorder:
         self.path = directory / f"session-{self.started:%Y%m%d-%H%M%S}-{self.session_id}.jsonl"
         self._lock = threading.Lock()
         self.record("app", "session_started")
+        self._prune_old_sessions(max(1, maximum_sessions))
+
+    def _prune_old_sessions(self, maximum_sessions: int) -> None:
+        """Keep diagnostics useful without allowing logs to grow forever."""
+        try:
+            sessions = sorted(
+                self.path.parent.glob("session-*.jsonl"),
+                key=lambda path: (path == self.path, path.stat().st_mtime_ns),
+                reverse=True,
+            )
+            for stale in sessions[maximum_sessions:]:
+                stale.unlink(missing_ok=True)
+        except OSError:
+            # Logging must never prevent the control application from starting.
+            pass
 
     def record(self, category: str, message: str, **fields: Any) -> None:
         row = {
@@ -47,6 +62,17 @@ class EventRecorder:
         with self._lock:
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(encoded + "\n")
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Replace a JSON file atomically so an interrupted save cannot truncate it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def sanitized_settings(settings: dict[str, Any]) -> dict[str, Any]:

@@ -40,7 +40,7 @@ include:
 - a measured sensor-channel permutation matching the assembled board;
 - persistent position journaling, guarded calibration, service diagnostics,
   step-loss testing, capture-bin routing, and revised carried-piece paths;
-- a separate GPL-licensed Windows monitoring and Stockfish companion; and
+- separate GPL-licensed Windows and Android monitoring/Stockfish companions; and
 - project-specific enclosure, tile, and TPU spacer models plus separately
   attributed third-party printable components.
 

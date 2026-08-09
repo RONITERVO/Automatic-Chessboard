@@ -15,3 +15,9 @@ Thumbs.db
 .DS_Store
 site/node_modules/
 site/dist/
+
+# Android local/build products
+android_app/local.properties
+android_app/.gradle/
+android_app/app/build/
+android_app/app/src/main/jniLibs/*/libstockfish.so

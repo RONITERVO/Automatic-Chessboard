@@ -16,6 +16,19 @@ LineCallback = Callable[[str], None]
 StatusCallback = Callable[[str], None]
 
 
+def rank_ble_devices(rows: list[tuple[str, str, int]]) -> list[tuple[str, str, int]]:
+    """Prefer known board-module names, then signal strength and stable labels."""
+    known_names = ("hc-08", "hc08", "hmsoft", "bt05", "bt-05")
+
+    def rank(row: tuple[str, str, int]) -> tuple[int, int, str, str]:
+        name, address, rssi = row
+        normalized = name.casefold().replace("_", "-").replace(" ", "")
+        likely_board = any(token.replace(" ", "") in normalized for token in known_names)
+        return (0 if likely_board else 1, -rssi, name.casefold(), address.casefold())
+
+    return sorted(rows, key=rank)
+
+
 def serial_ports() -> list[str]:
     from serial.tools import list_ports
 
@@ -36,7 +49,7 @@ def discover_ble_devices(timeout: float = 8.0) -> list[tuple[str, str, int]]:
         for device, advertisement in found.values():
             name = advertisement.local_name or device.name or "(unnamed)"
             rows.append((name, device.address, advertisement.rssi))
-        return sorted(rows, key=lambda row: (-row[2], row[0].lower()))
+        return rank_ble_devices(rows)
 
     return asyncio.run(discover())
 

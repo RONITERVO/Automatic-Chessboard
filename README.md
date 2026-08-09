@@ -70,6 +70,20 @@ normalization for the published hardware, and a best-effort `!` remote halt
 checked inside motion loops. Bluetooth and cameras are not safety
 systems, so a local physical power cutoff remains required for remote operation.
 
+## Android Bluetooth companion
+
+`android_app` provides the same working range from a phone: native HC-08 BLE
+with reconnect, live logical/physical board comparison, Stockfish 18 play,
+guided safe diagnostics, phone and network-camera views, PGN export, structured
+logs, privacy-sanitized support ZIPs, a hardware-free simulator, guarded raw
+commands, and a persistent best-effort halt control. Every page uses a fixed,
+adaptive layout with pagination instead of horizontal or vertical scrolling.
+
+Run `android_app/download-stockfish.ps1`, then open `android_app` in Android
+Studio or run `android_app/gradlew.bat assembleDebug`. See
+[`android_app/README.md`](android_app/README.md) for installation, safety, and
+contributor guidance.
+
 ## Motor-driver configuration
 
 `MOTOR_MICROSTEPS` in `global.h` must match the hardware configuration of both

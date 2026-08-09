@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
@@ -27,7 +28,7 @@ from protocol import (
     parse_telemetry,
     play_command,
 )
-from support import EventRecorder, create_support_bundle, user_data_dir
+from support import EventRecorder, create_support_bundle, user_data_dir, write_json_atomic
 from transports import (
     Hc08BleTransport,
     SimulatorTransport,
@@ -213,7 +214,9 @@ class AutomaticChessboardApp:
         self.engine_thinking = False
         self.session_active = False
         self.motion_expected = False
-        self.poll_pending: tuple[str, float] | None = None
+        self.safe_request_queue: deque[str] = deque()
+        self.safe_request_pending: tuple[str, str, float] | None = None
+        self.last_poll_monotonic = 0.0
         self.poll_board_next = False
         self.model = MonitorModel(expected_squares=expected_occupancy(self.board))
         self.settings = self._load_settings()
@@ -550,7 +553,7 @@ class AutomaticChessboardApp:
         }
 
     def _save_settings(self) -> None:
-        SETTINGS_PATH.write_text(json.dumps(self._settings_dict(), indent=2), encoding="utf-8")
+        write_json_atomic(SETTINGS_PATH, self._settings_dict())
 
     def _update_connection_fields(self) -> None:
         if not hasattr(self, "transport_kind"):
@@ -634,27 +637,65 @@ class AutomaticChessboardApp:
             return False
 
     def _safe_refresh(self) -> None:
-        if self._send("INFO"):
-            self.root.after(180, lambda: self._send("TELEM", quiet=True))
-            self.root.after(360, lambda: self._send("BOARD", quiet=True))
+        if not self.transport or not self.transport.is_connected:
+            self._send("INFO")
+            return
+        self._queue_safe_requests("INFO", "TELEM", "BOARD")
+
+    @staticmethod
+    def _expected_response(command: str) -> str:
+        verb = command.split(maxsplit=1)[0].upper()
+        if verb in ("PING", "HELLO"):
+            return "PONG"
+        if verb == "BTTEST":
+            return "BT"
+        return verb
+
+    def _queue_safe_requests(self, *commands: str) -> None:
+        """Serialize read-only protocol traffic across every feature."""
+        pending_command = self.safe_request_pending[1] if self.safe_request_pending else None
+        for command in commands:
+            value = command.strip()
+            if not value or classify_command(value) != CommandRisk.READ_ONLY:
+                continue
+            if value != pending_command and value not in self.safe_request_queue:
+                self.safe_request_queue.append(value)
+        self._dispatch_safe_request()
+
+    def _dispatch_safe_request(self) -> None:
+        if (self.safe_request_pending or not self.safe_request_queue or self.motion_expected or
+                not self.transport or not self.transport.is_connected):
+            return
+        command = self.safe_request_queue.popleft()
+        expected = self._expected_response(command)
+        if self._send(command, quiet=True):
+            self.safe_request_pending = (expected, command, time.monotonic())
+
+    def _complete_safe_request(self, response_kind: str) -> bool:
+        if not self.safe_request_pending or response_kind != self.safe_request_pending[0]:
+            return False
+        self.safe_request_pending = None
+        return True
 
     def _monitor_tick(self) -> None:
         try:
             connected = bool(self.transport and self.transport.is_connected)
             self.model.connected = connected
             now = time.monotonic()
-            if self.poll_pending and now - self.poll_pending[1] > 4.0:
-                self.recorder.record("monitor", "poll_timeout", command=self.poll_pending[0])
-                self.poll_pending = None
-            if connected and self.auto_monitor.get() and not self.motion_expected and not self.poll_pending:
+            if self.safe_request_pending and now - self.safe_request_pending[2] > 4.0:
+                expected, command, _started = self.safe_request_pending
+                self.recorder.record("monitor", "request_timeout",
+                                     command=command, expected=expected)
+                self.safe_request_pending = None
+            self._dispatch_safe_request()
+            if (connected and self.auto_monitor.get() and not self.motion_expected and
+                    not self.safe_request_pending and not self.safe_request_queue):
                 interval = max(1.0, float(self.poll_seconds.get()))
-                last_poll = float(self.settings.get("last_poll_monotonic", 0.0))
-                if now - last_poll >= interval:
+                if now - self.last_poll_monotonic >= interval:
                     command = "BOARD" if self.poll_board_next else "TELEM"
                     self.poll_board_next = not self.poll_board_next
-                    if self._send(command, quiet=True):
-                        self.poll_pending = (command, now)
-                        self.settings["last_poll_monotonic"] = now
+                    self.last_poll_monotonic = now
+                    self._queue_safe_requests(command)
             self._refresh_visual_state()
         except (tk.TclError, ValueError):
             pass
@@ -685,7 +726,9 @@ class AutomaticChessboardApp:
                     if rows:
                         name, address, rssi = rows[0]
                         self.ble_name.set(f"{name} [{address}]")
-                        self._set_connection_text(f"Found {len(rows)} devices; strongest is {name} ({rssi} dBm).")
+                        self._set_connection_text(
+                            f"Found {len(rows)} devices; best board match is {name} ({rssi} dBm)."
+                        )
                     else:
                         self._set_connection_text("No Bluetooth devices found.")
                 elif kind == "camera_frame":
@@ -703,12 +746,11 @@ class AutomaticChessboardApp:
         lower = status.lower()
         if "connected" in lower and "disconnected" not in lower:
             self.model.connected = True
-            self.root.after(300, lambda: self._send("PING", quiet=True))
-            self.root.after(500, lambda: self._send("INFO", quiet=True))
-            self.root.after(700, lambda: self._send("TELEM", quiet=True))
-            self.root.after(900, lambda: self._send("BOARD", quiet=True))
+            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
         elif any(word in lower for word in ("disconnected", "interrupted", "stopped", "reconnecting")):
             self.model.connected = False
+            self.safe_request_queue.clear()
+            self.safe_request_pending = None
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
         self._refresh_visual_state()
@@ -718,8 +760,7 @@ class AutomaticChessboardApp:
         self.recorder.record("protocol_rx", line)
         event = parse_event(line)
         self._append_log("RX", event.kind, " ".join(event.args))
-        if self.poll_pending and event.kind == self.poll_pending[0]:
-            self.poll_pending = None
+        self._complete_safe_request(event.kind)
         if event.kind == "INFO":
             try:
                 self.model.firmware = parse_info(event)
@@ -779,6 +820,7 @@ class AutomaticChessboardApp:
             self.game_status.set("Remote game stopped; standalone mode remains available.")
         self._render()
         self._refresh_visual_state()
+        self.root.after_idle(self._dispatch_safe_request)
 
     def _set_connection_text(self, text: str) -> None:
         self.model.connection_text = text
@@ -1025,8 +1067,7 @@ class AutomaticChessboardApp:
         self._set_diag("connection", "Pass" if connected else "Fail",
                        self.model.connection_text, "pass" if connected else "fail")
         if connected:
-            for delay, command in ((0, "PING"), (180, "INFO"), (360, "TELEM"), (540, "BOARD")):
-                self.root.after(delay, lambda value=command: self._send(value, quiet=True))
+            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
         for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
 
@@ -1194,7 +1235,10 @@ class AutomaticChessboardApp:
                                        "This command can move hardware. Confirm the board is clear.",
                                        icon="warning", parent=self.root):
                 return
-        self._send(command)
+        if risk == CommandRisk.READ_ONLY and self.transport and self.transport.is_connected:
+            self._queue_safe_requests(command)
+        else:
+            self._send(command)
 
     def _append_log(self, direction: str, event: str, detail: str) -> None:
         if not hasattr(self, "event_tree"):
