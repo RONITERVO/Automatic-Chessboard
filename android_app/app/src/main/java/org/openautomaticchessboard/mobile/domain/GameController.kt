@@ -41,6 +41,7 @@ class GameController(
     private var pendingEngineMove: Move? = null
     private var engineThinking = false
     private var awaitingPromotionConfirmation = false
+    @Volatile private var closed = false
     var elo = 2000
     var thinkMillis = 800L
 
@@ -59,7 +60,7 @@ class GameController(
         publish()
     }
 
-    fun start(humanPlaysWhite: Boolean): Result<Unit> {
+    fun start(humanPlaysWhite: Boolean): Result<Unit> = runCatching {
         check(!active) { "Stop the current game first" }
         check(engine.isInstalled) { "Stockfish is unavailable for this Android CPU" }
         board = Board()
@@ -70,7 +71,9 @@ class GameController(
         awaitingPromotionConfirmation = false
         status = "Calibration requested. Keep hands clear."
         publish()
-        return send(if (humanWhite) "START W" else "START B").onFailure {
+        send(if (humanWhite) "START W" else "START B").getOrThrow()
+    }.onFailure {
+        if (!closed) {
             active = false
             status = it.message ?: "Could not start game"
             publish()
@@ -78,10 +81,14 @@ class GameController(
     }
 
     fun stop() {
-        send("STOP")
+        val result = send("STOP")
         active = false
         engineThinking = false
-        status = "Stop requested"
+        pendingEngineMove = null
+        status = result.fold(
+            onSuccess = { "Stop requested" },
+            onFailure = { "Stop was not delivered: ${it.message ?: "connection failed"}" },
+        )
         publish()
     }
 
@@ -90,7 +97,11 @@ class GameController(
             "SETUP" -> status = "Set all starting pieces, then press physical Button A."
             "SESSION" -> status = "Remote game started"
             "TURN" -> when (event.args.firstOrNull()) {
-                "COMPUTER" -> if (active && sideToMoveIsHuman().not()) startEngineThink()
+                "COMPUTER" -> when {
+                    !active -> status = "Ignored computer turn: no remote game is active."
+                    sideToMoveIsHuman() -> status = "Ignored computer turn: the logical position expects the human."
+                    else -> startEngineThink()
+                }
                 "HUMAN" -> status = "Your move. Press Button A on the board when complete."
             }
             "MOVE" -> event.args.firstOrNull()?.let(::acceptHumanMove)
@@ -101,9 +112,15 @@ class GameController(
                 awaitingPromotionConfirmation = false
                 if (isGameOver()) finishGame() else status = "Your move."
             }
-            "ESTOP" -> { active = false; status = "REMOTE HALT SENT — inspect locally" }
+            "ESTOP" -> {
+                active = false; engineThinking = false; pendingEngineMove = null
+                status = "REMOTE HALT SENT — inspect locally"
+            }
             "ERR" -> status = "Board error: ${event.args.joinToString(" ")}"
-            "STOPPED" -> { active = false; status = "Remote game stopped; standalone mode remains available." }
+            "STOPPED" -> {
+                active = false; engineThinking = false; pendingEngineMove = null
+                status = "Remote game stopped; standalone mode remains available."
+            }
         }
         publish()
     }
@@ -153,8 +170,17 @@ class GameController(
         worker.execute {
             val result = runCatching { engine.bestMove(fen, selectedElo, selectedTime) }
             main.post {
+                if (closed) return@post
                 engineThinking = false
-                result.onSuccess(::sendEngineMove).onFailure {
+                if (!active || board.fen != fen) {
+                    status = "Ignored completed engine analysis because the game position changed."
+                    publish()
+                    return@post
+                }
+                result.onSuccess { move ->
+                    if (move == null) status = "Stockfish reports no legal move in the current position."
+                    else sendEngineMove(move)
+                }.onFailure {
                     status = "Stockfish failed: ${it.message}"
                     active = false
                 }
@@ -177,7 +203,10 @@ class GameController(
             move.from.ordinal % 8 != move.to.ordinal % 8
         send(Protocol.playCommand(uci, castling, enPassant)).onSuccess {
             status = "Board is moving $uci; keep hands clear."
-        }.onFailure { status = it.message ?: "Could not request engine move" }
+        }.onFailure {
+            pendingEngineMove = null
+            status = it.message ?: "Could not request engine move"
+        }
     }
 
     private fun completeEngineMove(reported: String) {
@@ -216,13 +245,16 @@ class GameController(
 
     fun pgn(): String {
         val result = result()
-        val white = if (humanWhite) "Human" else "Stockfish 18"
-        val black = if (humanWhite) "Stockfish 18" else "Human"
+        val engineIdentity = runCatching { engine.identity() }.getOrDefault("Stockfish")
+        val white = if (humanWhite) "Human" else engineIdentity
+        val black = if (humanWhite) engineIdentity else "Human"
         val moves = runCatching { moveList.toSanWithMoveNumbers() }.getOrElse {
             moveList.mapIndexed { index, move -> if (index % 2 == 0) "${index / 2 + 1}. $move" else move.toString() }.joinToString(" ")
         }
         return """[Event "Open Automatic Chessboard"]
+[Site "Android companion"]
 [Date "${LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"))}"]
+[Round "-"]
 [White "$white"]
 [Black "$black"]
 [Result "$result"]
@@ -231,9 +263,14 @@ $moves $result
 """
     }
 
-    private fun publish() = onChanged(snapshot)
+    private fun publish() { if (!closed) onChanged(snapshot) }
 
     override fun close() {
+        closed = true
+        active = false
+        engineThinking = false
+        pendingEngineMove = null
+        main.removeCallbacksAndMessages(null)
         worker.shutdownNow()
         engine.close()
     }

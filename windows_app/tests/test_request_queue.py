@@ -1,5 +1,6 @@
 import unittest
 from collections import deque
+import time
 
 from app import AutomaticChessboardApp
 
@@ -42,6 +43,24 @@ class SafeRequestQueueTests(unittest.TestCase):
         self.assertFalse(self.app._complete_safe_request("TELEM"))
         self.app._dispatch_safe_request()
         self.assertEqual(self.sent, ["BOARD"])
+
+    def test_diagnostics_wait_for_the_serialized_batch(self):
+        callbacks = []
+        evaluated = []
+        self.app.root = type("Root", (), {"after": lambda _self, _delay, callback: callbacks.append(callback)})()
+        self.app.response_counts = {"PONG": 1, "INFO": 0, "TELEM": 0, "BOARD": 0}
+        self.app.diagnostic_batch = ({"PONG": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}, time.monotonic() + 10)
+        self.app.safe_request_pending = ("INFO", "INFO", time.monotonic())
+        self.app.safe_request_queue = deque(("TELEM", "BOARD"))
+        self.app._evaluate_diagnostics = lambda: evaluated.append(True)
+
+        self.app._check_diagnostic_batch()
+        self.assertEqual(evaluated, [])
+        self.assertEqual(len(callbacks), 1)
+
+        self.app.response_counts.update({"INFO": 1, "TELEM": 1, "BOARD": 1})
+        callbacks.pop()()
+        self.assertEqual(evaluated, [True])
 
 
 if __name__ == "__main__":

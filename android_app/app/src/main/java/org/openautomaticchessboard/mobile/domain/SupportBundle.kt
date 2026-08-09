@@ -9,6 +9,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object SupportBundle {
+    private val bluetoothAddress = Regex("(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+    private val urlCredentials = Regex("(?i)([a-z][a-z0-9+.-]*://)[^/@\\s]+@")
+
     fun write(
         context: Context,
         uri: Uri,
@@ -34,7 +37,7 @@ object SupportBundle {
                     }
                 }).toString(2))
                 zip.text("board-snapshot.json", JSONObject().apply {
-                    put("connection", state.connectionText.replace(Regex("(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"), "<address>"))
+                    put("connection", state.connectionText.replace(bluetoothAddress, "<address>"))
                     put("firmware", state.firmware?.firmware)
                     put("protocol", state.firmware?.protocol)
                     put("capabilities", JSONArray(state.firmware?.capabilities?.toList().orEmpty()))
@@ -48,9 +51,9 @@ object SupportBundle {
                     } }))
                 }.toString(2))
                 if (recorder.file.isFile) {
-                    val redacted = recorder.file.readText().replace(
-                        Regex("(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"), "<bluetooth-address-redacted>"
-                    ).replace(Regex("(?i)([a-z][a-z0-9+.-]*://)[^/@\\s]+@"), "$1<credentials-redacted>@")
+                    val redacted = recorder.readTail().toString(Charsets.UTF_8)
+                        .replace(bluetoothAddress, "<bluetooth-address-redacted>")
+                        .replace(urlCredentials, "$1<credentials-redacted>@")
                     zip.text("session.jsonl", redacted)
                 }
                 zip.text("README.txt", "Support bundle contains logs and controller state only. It excludes camera frames, PGNs, and credentials.\n")

@@ -17,3 +17,5 @@
   and background monitoring cannot overlap on a slow BLE link.
 - Added atomic settings saves, bounded session-log retention, and board-aware BLE
   discovery ranking.
+- Made diagnostic completion response-driven and removed disconnected request
+  paths that bypassed the safe queue.

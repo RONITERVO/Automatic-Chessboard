@@ -216,6 +216,8 @@ class AutomaticChessboardApp:
         self.motion_expected = False
         self.safe_request_queue: deque[str] = deque()
         self.safe_request_pending: tuple[str, str, float] | None = None
+        self.response_counts: dict[str, int] = {}
+        self.diagnostic_batch: tuple[dict[str, int], float] | None = None
         self.last_poll_monotonic = 0.0
         self.poll_board_next = False
         self.model = MonitorModel(expected_squares=expected_occupancy(self.board))
@@ -638,7 +640,7 @@ class AutomaticChessboardApp:
 
     def _safe_refresh(self) -> None:
         if not self.transport or not self.transport.is_connected:
-            self._send("INFO")
+            messagebox.showwarning("Not connected", "Connect to the board before refreshing.", parent=self.root)
             return
         self._queue_safe_requests("INFO", "TELEM", "BOARD")
 
@@ -759,6 +761,7 @@ class AutomaticChessboardApp:
         self.model.mark_seen()
         self.recorder.record("protocol_rx", line)
         event = parse_event(line)
+        self.response_counts[event.kind] = self.response_counts.get(event.kind, 0) + 1
         self._append_log("RX", event.kind, " ".join(event.args))
         self._complete_safe_request(event.kind)
         if event.kind == "INFO":
@@ -1067,6 +1070,9 @@ class AutomaticChessboardApp:
         self._set_diag("connection", "Pass" if connected else "Fail",
                        self.model.connection_text, "pass" if connected else "fail")
         if connected:
+            expected = ("PONG", "INFO", "TELEM", "BOARD")
+            baseline = {kind: self.response_counts.get(kind, 0) for kind in expected}
+            self.diagnostic_batch = (baseline, time.monotonic() + 18.0)
             self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
         for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
@@ -1089,7 +1095,22 @@ class AutomaticChessboardApp:
         self._set_diag("camera", "Pass" if available else "Optional",
                        "Camera dependencies installed" if available else "Install only if video is needed",
                        "pass" if available else "warn")
-        self.root.after(2500, self._evaluate_diagnostics)
+        self.root.after(100, self._check_diagnostic_batch)
+
+    def _check_diagnostic_batch(self) -> None:
+        batch = self.diagnostic_batch
+        if batch is None:
+            self._evaluate_diagnostics()
+            return
+        baseline, deadline = batch
+        all_received = all(self.response_counts.get(kind, 0) > count
+                           for kind, count in baseline.items())
+        requests_finished = not self.safe_request_pending and not self.safe_request_queue
+        if all_received or requests_finished or time.monotonic() >= deadline:
+            self.diagnostic_batch = None
+            self._evaluate_diagnostics()
+        else:
+            self.root.after(100, self._check_diagnostic_batch)
 
     def _evaluate_diagnostics(self) -> None:
         info = self.model.firmware
@@ -1235,8 +1256,12 @@ class AutomaticChessboardApp:
                                        "This command can move hardware. Confirm the board is clear.",
                                        icon="warning", parent=self.root):
                 return
-        if risk == CommandRisk.READ_ONLY and self.transport and self.transport.is_connected:
-            self._queue_safe_requests(command)
+        if risk == CommandRisk.READ_ONLY:
+            if self.transport and self.transport.is_connected:
+                self._queue_safe_requests(command)
+            else:
+                messagebox.showwarning("Not connected", "Connect before sending a read-only request.",
+                                       parent=self.root)
         else:
             self._send(command)
 

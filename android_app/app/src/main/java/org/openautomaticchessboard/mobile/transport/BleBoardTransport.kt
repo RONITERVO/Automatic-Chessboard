@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -43,7 +44,8 @@ class BleBoardTransport(
     @Volatile private var connected = false
     private var closing = false
     private var reconnectDelayMs = 1_000L
-    private var writeActive = false
+    @Volatile private var writeActive = false
+    private val writeLock = Any()
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -53,7 +55,7 @@ class BleBoardTransport(
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected = false
                 characteristic = null
-                writeActive = false
+                resetWriteState()
                 writes.clear()
                 g.close()
                 if (!closing) scheduleReconnect("BLE interrupted (status $status)")
@@ -113,7 +115,7 @@ class BleBoardTransport(
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            writeActive = false
+            finishWrite()
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 writes.clear()
                 listener.onStatus("BLE write failed ($status)", connected)
@@ -128,6 +130,10 @@ class BleBoardTransport(
 
     private fun connect() {
         if (closing) return
+        if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            listener.onStatus("Bluetooth Low Energy is unavailable on this device", false)
+            return
+        }
         listener.onStatus("Connecting to $label…", false)
         val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
         if (adapter == null || !adapter.isEnabled) {
@@ -166,13 +172,18 @@ class BleBoardTransport(
         drainWrites()
     }
 
-    @Synchronized
     private fun drainWrites() {
-        if (writeActive) return
-        val c = characteristic ?: throw IllegalStateException("BLE characteristic is unavailable")
-        val g = gatt ?: throw IllegalStateException("BLE connection is unavailable")
-        val value = writes.poll() ?: return
-        writeActive = true
+        val value = beginWrite() ?: return
+        val c = characteristic
+        if (c == null) {
+            rejectQueuedWrite("BLE characteristic is unavailable")
+            return
+        }
+        val g = gatt
+        if (g == null) {
+            rejectQueuedWrite("BLE connection is unavailable")
+            return
+        }
         c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         val accepted = if (Build.VERSION.SDK_INT >= 33) {
             g.writeCharacteristic(c, value, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) ==
@@ -184,18 +195,37 @@ class BleBoardTransport(
             g.writeCharacteristic(c)
         }
         if (!accepted) {
-            writeActive = false
-            writes.clear()
-            throw IllegalStateException("Android rejected BLE write")
+            rejectQueuedWrite("Android rejected BLE write")
+            return
         }
         // WRITE_NO_RESPONSE callbacks vary by vendor. This fallback cannot overlap
         // at 9600 baud and keeps multi-packet developer commands portable.
         main.postDelayed({
-            if (writeActive) {
-                writeActive = false
+            if (finishWrite()) {
                 drainWrites()
             }
         }, 35)
+    }
+
+    private fun beginWrite(): ByteArray? = synchronized(writeLock) {
+        if (writeActive) return@synchronized null
+        val value = writes.poll() ?: return@synchronized null
+        writeActive = true
+        value
+    }
+
+    private fun finishWrite(): Boolean = synchronized(writeLock) {
+        if (!writeActive) return@synchronized false
+        writeActive = false
+        true
+    }
+
+    private fun resetWriteState() = synchronized(writeLock) { writeActive = false }
+
+    private fun rejectQueuedWrite(reason: String) {
+        resetWriteState()
+        writes.clear()
+        listener.onStatus(reason, connected)
     }
 
     private fun consume(value: ByteArray) = lineBuffer.feed(value).forEach(listener::onLine)
@@ -206,6 +236,7 @@ class BleBoardTransport(
         main.removeCallbacksAndMessages(null)
         characteristic = null
         writes.clear()
+        resetWriteState()
         gatt?.let {
             try { it.disconnect() } catch (_: Exception) {}
             try { it.close() } catch (_: Exception) {}
@@ -220,6 +251,10 @@ class BleBoardTransport(
         @SuppressLint("MissingPermission")
         fun scan(context: Context, durationMs: Long = 7_000L, result: (Result<List<BleDevice>>) -> Unit): () -> Unit {
             val handler = Handler(Looper.getMainLooper())
+            if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+                result(Result.failure(IllegalStateException("Bluetooth Low Energy is unavailable on this device")))
+                return {}
+            }
             val adapter: BluetoothAdapter? = context.getSystemService(BluetoothManager::class.java)?.adapter
             val scanner = adapter?.bluetoothLeScanner
             if (adapter == null || !adapter.isEnabled || scanner == null) {

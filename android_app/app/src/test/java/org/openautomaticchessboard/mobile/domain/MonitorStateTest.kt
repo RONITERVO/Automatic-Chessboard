@@ -20,7 +20,12 @@ class MonitorStateTest {
     }
 
     @Test fun faultOutranksMismatch() {
-        val telemetry = Telemetry("ACB2", 10, false, true, true, false, 0, 0, true, true, 1023, 800, 3)
+        val telemetry = Telemetry(
+            protocol = "ACB2", sequence = 10, homed = false, remoteMode = true,
+            motionFault = true, magnetOn = false, trolleyX = 0, trolleyY = 0,
+            buttonAReleased = true, buttonBReleased = true, buttonBRaw = 1023,
+            freeRam = 800, uptimeSeconds = 3,
+        )
         val state = MonitorState(connected = true, lastSeenMs = 1_000, telemetry = telemetry)
         assertEquals("Motion fault", state.health(1_100).first)
         assertTrue(state.guidance().contains("physical motor power"))
@@ -29,5 +34,36 @@ class MonitorStateTest {
     @Test fun staleDataIsNeverCalledReady() {
         val state = MonitorState(connected = true, lastSeenMs = 1_000)
         assertEquals("Connection stale", state.health(20_000).first)
+    }
+
+    @Test fun freshHealthyStateIsReady() {
+        val now = 10_000L
+        val state = MonitorState(
+            connected = true,
+            lastSeenMs = now,
+            firmware = FirmwareInfo("ACB2", "3.29", setOf("TELEM", "BOARD")),
+            telemetry = Telemetry(
+                protocol = "ACB2", sequence = 1, homed = false, remoteMode = false,
+                motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
+                buttonAReleased = true, buttonBReleased = true, buttonBRaw = 1023,
+                freeRam = 728, uptimeSeconds = 42,
+            ),
+            sensorSquares = MonitorState.initialOccupancy,
+            sensorUpdatedMs = now,
+        )
+        assertEquals("Ready", state.health(now).first)
+        assertEquals(HealthLevel.GOOD, state.health(now).second)
+    }
+
+    @Test fun staleSensorsAndErrorsAreNeverReady() {
+        val now = 20_000L
+        val base = MonitorState(
+            connected = true, lastSeenMs = now,
+            firmware = FirmwareInfo("ACB2", "3.29", setOf("BOARD")),
+            sensorSquares = MonitorState.initialOccupancy,
+            sensorUpdatedMs = 1_000L,
+        )
+        assertEquals("Sensor data stale", base.health(now).first)
+        assertEquals(HealthLevel.WARN, base.copy(sensorUpdatedMs = now, lastError = "sample error").health(now).second)
     }
 }

@@ -26,7 +26,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             "STATUS" -> emit("STATUS ACB1 1 1 0", 30)
             "TELEM" -> emit("TELEM ACB2 1 1 0 0 0 0 0 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
-            "BTTEST" -> emit("BTTEST SKIP SIMULATOR", 30)
+            "BTTEST" -> emit("BT SKIP SIMULATOR", 30)
             "STOP" -> emit("STOPPED", 30)
             "REJECT" -> emit("UNDO REQUIRED", 30)
             "ACCEPT" -> emit("TURN COMPUTER", 30)

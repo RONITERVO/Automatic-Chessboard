@@ -14,6 +14,13 @@ class ProtocolTest {
         assertEquals(listOf("TURN HUMAN"), buffer.feed("MAN\n".toByteArray()))
     }
 
+    @Test fun filtersNonPrintableBytesAndDiscardsOverflowedLines() {
+        val buffer = LineBuffer(maximum = 8)
+        assertEquals(listOf("PING"), buffer.feed(byteArrayOf(1) + "PING\n".toByteArray() + byteArrayOf(127)))
+        assertTrue(buffer.feed("123456789discard".toByteArray()).isEmpty())
+        assertEquals(listOf("INFO"), buffer.feed("\nINFO\n".toByteArray()))
+    }
+
     @Test fun parsesInfoTelemetryAndBoard() {
         val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP"))
         assertEquals("3.29", info.firmware)
@@ -23,8 +30,13 @@ class ProtocolTest {
         assertTrue(telemetry.homed)
         assertEquals(1023, telemetry.buttonBRaw)
         val squares = setOf(0, 7, 8, 55, 56, 63)
-        assertEquals(squares, Protocol.parseBoardHex(Protocol.boardHexFromSquares(squares)))
+        val firmwareVector = "8180000000000181"
+        assertEquals(firmwareVector, Protocol.boardHexFromSquares(squares))
+        assertEquals(squares, Protocol.parseBoardHex(firmwareVector))
         assertThrows(IllegalArgumentException::class.java) { Protocol.parseBoardHex("bad") }
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.parseTelemetry(Protocol.parseEvent("TELEM ACB2 bad 1 1 0 0 5 6 1 1 1023 847 65"))
+        }
     }
 
     @Test fun classifiesAndBuildsGuardedCommands() {

@@ -86,6 +86,12 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var monitorUpdater: (() -> Unit)? = null
     private var playBoard: ChessboardView? = null
     private val ui = Handler(Looper.getMainLooper())
+    private val ageRefreshRunnable = object : Runnable {
+        override fun run() {
+            onBoardState(monitorState)
+            ui.postDelayed(this, 1_000)
+        }
+    }
     private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
     private var stopScan: (() -> Unit)? = null
 
@@ -108,7 +114,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
         buildShell()
         repository.addObserver(this)
         selectTab(0)
-        ui.postDelayed(::ageRefresh, 1_000)
     }
 
     private fun buildShell() {
@@ -163,6 +168,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun selectTab(index: Int) {
         if (currentTab == 3 && index != 3) closeCamera()
+        monitorBoard = null
+        playBoard = null
+        monitorUpdater = null
         currentTab = index
         content.removeAllViews()
         val page = when (index) {
@@ -263,10 +271,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(text("Safe, read-only checks — no calibration, magnet, or motion", 14f, Color.WHITE, true),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 25 else 38)))
-        val values = if (diagnostics.isEmpty()) listOf(
-            "connection" to "Board connection", "firmware" to "Firmware identity", "telemetry" to "Live telemetry",
-            "sensors" to "64-square sensors", "controls" to "Buttons / limits", "engine" to "Stockfish engine", "camera" to "Phone camera"
-        ).map { DiagnosticResult(it.first, it.second, "Not run", "", false) } else diagnostics
+        val values = if (diagnostics.isEmpty()) diagnosticsRunner.placeholders() else diagnostics
         fun resultRow(item: DiagnosticResult): View = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = rounded(SURFACE) ; setPadding(dp(9), 0, dp(9), 0)
             addView(text(item.label, 13f, Color.WHITE, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
@@ -297,7 +302,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val source = EditText(this).apply {
-            setText(cameraSource); setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = "0 or RTSP/HTTP URL"; setSingleLine(true)
+            setText(cameraSource); setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = "0 or RTSP/HTTPS URL"; setSingleLine(true)
             background = rounded(SURFACE); setPadding(dp(8), 0, dp(8), 0)
         }
         row.addView(source, LinearLayout.LayoutParams(0, dp(44), 1f))
@@ -305,6 +310,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
         row.addView(button("Stop") { cameraController?.stop() }, LinearLayout.LayoutParams(dp(66), dp(44)).apply { marginStart = dp(4) })
         root.addView(row)
         val texture = TextureView(this).apply { isOpaque = true; contentDescription = "Live camera preview" }
+        cameraController?.close()
+        cameraController = null
+        cameraTexture = null
         cameraTexture = texture
         val preview = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -339,12 +347,16 @@ class MainActivity : Activity(), BoardRepository.Observer {
         pager.addView(devPageLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         pager.addView(button("▶") { devPage++; updateDeveloperLog() }, LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(pager, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, pagerHeight))
+        val risk = text(commandRiskText(), 12f, WARN).apply { maxLines = 2 }
         val commandRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val input = EditText(this).apply {
             setText(devCommand); setSingleLine(true); setTextColor(Color.WHITE); background = rounded(SURFACE); setPadding(dp(8), 0, dp(8), 0)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { devCommand = s?.toString().orEmpty() }
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    devCommand = s?.toString().orEmpty()
+                    risk.text = commandRiskText()
+                }
                 override fun afterTextChanged(s: Editable?) = Unit
             })
         }
@@ -352,18 +364,12 @@ class MainActivity : Activity(), BoardRepository.Observer {
         commandRow.addView(button("Send", ACCENT_DARK) { sendDeveloperCommand() }, LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginStart = dp(4) })
         root.addView(commandRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, commandHeight))
         val riskRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val risk = text(commandRiskText(), 12f, WARN).apply { maxLines = 2 }
         riskRow.addView(risk, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         riskRow.addView(CheckBox(this).apply {
             text = "Unlock motion"; setTextColor(Color.WHITE); isChecked = devUnlock
             setOnCheckedChangeListener { _, checked -> devUnlock = checked }
         }, LinearLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(riskRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, riskHeight))
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { risk.text = commandRiskText() }
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
         updateDeveloperLog()
         return root
     }
@@ -419,6 +425,10 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun requestBleScan() {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            alert("Bluetooth unavailable", "This device has no Bluetooth Low Energy radio. Simulator mode remains available.")
+            return
+        }
         val needed = if (android.os.Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         if (needed.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) requestPermissions(needed, REQ_BLE)
@@ -434,6 +444,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             .create()
         progress.show()
         stopScan = BleBoardTransport.scan(this) { result ->
+            if (isFinishing || isDestroyed) return@scan
             progress.dismiss(); stopScan = null
             result.onSuccess(::showBleDevices).onFailure { alert("Bluetooth scan failed", it.message ?: it.toString()) }
         }
@@ -451,6 +462,10 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun connectBle(name: String, address: String) {
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            alert("Bluetooth unavailable", "This device has no Bluetooth Low Energy radio. Simulator mode remains available.")
+            return
+        }
         simulatorActive = false
         prefs.edit().putString("ble_name", name).putString("ble_address", address).apply()
         repository.useTransport(BleBoardTransport(this, address, name, repository))
@@ -518,16 +533,22 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        runCatching {
-            when (requestCode) {
-                REQ_PGN -> contentResolver.openOutputStream(uri, "w")!!.use { it.write(game.pgn().toByteArray()) }
-                REQ_SUPPORT -> SupportBundle.write(this, uri, recorder, monitorState, settingsSnapshot(), diagnostics)
-                REQ_SNAPSHOT -> contentResolver.openOutputStream(uri, "w")!!.use { pendingSnapshot!!.compress(Bitmap.CompressFormat.JPEG, 94, it) }
-            }
-        }.onSuccess { toast("Saved") }.onFailure { alert("Save failed", it.message ?: it.toString()) }
-        pendingSnapshot = null
+        try {
+            if (resultCode != RESULT_OK) return
+            val uri = data?.data ?: return
+            runCatching {
+                when (requestCode) {
+                    REQ_PGN -> contentResolver.openOutputStream(uri, "w")!!.use { it.write(game.pgn().toByteArray()) }
+                    REQ_SUPPORT -> SupportBundle.write(this, uri, recorder, monitorState, settingsSnapshot(), diagnostics)
+                    REQ_SNAPSHOT -> contentResolver.openOutputStream(uri, "w")!!.use {
+                        checkNotNull(pendingSnapshot) { "Snapshot is no longer available" }
+                            .compress(Bitmap.CompressFormat.JPEG, 94, it)
+                    }
+                }
+            }.onSuccess { toast("Saved") }.onFailure { alert("Save failed", it.message ?: it.toString()) }
+        } finally {
+            if (requestCode == REQ_SNAPSHOT) pendingSnapshot = null
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -548,7 +569,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
         if (risk == CommandRisk.UNKNOWN && !(simulatorActive && command.uppercase().startsWith("SIMMOVE "))) {
             alert("Unknown command blocked", "Only commands documented by the firmware protocol may be sent."); return
         }
-        if (risk == CommandRisk.MOTION) {
+        if (risk == CommandRisk.EMERGENCY) {
+            confirmEmergencyHalt()
+        } else if (risk == CommandRisk.MOTION) {
             if (!devUnlock) { alert("Motion commands locked", "Enable Unlock motion first."); return }
             AlertDialog.Builder(this).setTitle("Send motion-capable command?").setMessage("Confirm the board is clear and physical power cutoff is accessible.")
                 .setPositiveButton("Send") { _, _ -> repository.sendCommand(command).onFailure { toast(it.message ?: "Send failed") } }
@@ -587,7 +610,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun showAbout() {
         AlertDialog.Builder(this).setTitle("Automatic Chessboard ${BuildConfig.VERSION_NAME}")
             .setMessage("Bluetooth monitoring, Stockfish play, safe diagnostics, local/network camera, simulator, structured logs, support bundles, PGN export, and guarded developer controls.\n\nRadio halt and camera are not safety interlocks. Keep physical motor/magnet power isolation accessible. GPL-3.0-or-later; Stockfish 18 is GPLv3; chesslib 1.3.7 is Apache-2.0.")
-            .setPositiveButton("Close", null).show()
+            .setPositiveButton("Close", null)
+            .setNeutralButton("License notices") { _, _ ->
+                val notices = runCatching {
+                    assets.open("THIRD_PARTY_NOTICES.md").bufferedReader().use { it.readText() }
+                }.getOrDefault("Third-party notices are unavailable in this build.")
+                AlertDialog.Builder(this).setTitle("Third-party notices")
+                    .setMessage(notices).setPositiveButton("Close", null).show()
+            }.show()
     }
 
     private fun adaptive(primary: View, secondary: View, primaryWeight: Float): View {
@@ -643,11 +673,15 @@ class MainActivity : Activity(), BoardRepository.Observer {
         "camera_source" to if (cameraSource.contains("://")) "<network-camera-url-redacted>" else cameraSource,
     )
 
-    private fun ageRefresh() {
-        if (!isFinishing) {
-            onBoardState(monitorState)
-            ui.postDelayed(::ageRefresh, 1_000)
-        }
+    override fun onResume() {
+        super.onResume()
+        ui.removeCallbacks(ageRefreshRunnable)
+        ui.post(ageRefreshRunnable)
+    }
+
+    override fun onPause() {
+        ui.removeCallbacks(ageRefreshRunnable)
+        super.onPause()
     }
 
     private fun closeCamera() { cameraController?.close(); cameraController = null; cameraTexture = null }
@@ -659,8 +693,10 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     override fun onDestroy() {
         stopScan?.invoke(); closeCamera(); ui.removeCallbacksAndMessages(null)
+        diagnosticsRunner.close()
         repository.removeObserver(this); repository.close(); game.close()
         recorder.record("app", "session_closed")
+        recorder.close()
         super.onDestroy()
     }
 

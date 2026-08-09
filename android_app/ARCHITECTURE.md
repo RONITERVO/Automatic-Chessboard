@@ -35,7 +35,9 @@ HC-08 BLE / Simulator
   Elo/time, bounds waits, validates returned UCI, and closes its process.
 - `ui` renders state and collects deliberate intent. It does not parse protocol
   lines or access Bluetooth GATT.
-- `camera` owns only live preview and explicit snapshots. It is observational,
+- `camera` owns only live preview and explicit snapshots. Generation tokens and
+  one state lock prevent late Camera2/MediaPlayer callbacks from reviving a
+  stopped session. Cleartext HTTP is rejected; camera state is observational,
   never an interlock or automatic recorder.
 
 ## Threading and lifecycle
@@ -48,6 +50,8 @@ scan, and callbacks are closed from the activity lifecycle.
 The app intentionally reconnects only to a user-selected saved address. A scan
 does not auto-connect to a similarly named nearby device. The HC-08's 9600-baud
 link is protected by a single pending request and 20-byte write queue.
+Diagnostics waits for its complete serialized response batch instead of a fixed
+delay. Structured log writes use one daemon writer and bounded rollover files.
 
 ## State authority and safety invariants
 

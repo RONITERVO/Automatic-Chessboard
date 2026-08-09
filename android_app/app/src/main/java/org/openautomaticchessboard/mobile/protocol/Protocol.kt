@@ -49,11 +49,13 @@ object Protocol {
 
     fun parseTelemetry(event: BoardEvent): Telemetry {
         require(event.kind == "TELEM" && event.args.size == 13) { "Malformed TELEM: ${event.raw}" }
-        val values = event.args.drop(1).map(String::toLong)
+        val values = event.args.drop(1).map(String::toLongOrNull)
+        require(values.all { it != null }) { "Malformed TELEM: ${event.raw}" }
+        val numeric = values.filterNotNull()
         return Telemetry(
-            event.args[0], values[0].toInt(), values[1] != 0L, values[2] != 0L,
-            values[3] != 0L, values[4] != 0L, values[5].toInt(), values[6].toInt(),
-            values[7] != 0L, values[8] != 0L, values[9].toInt(), values[10].toInt(), values[11],
+            event.args[0], numeric[0].toInt(), numeric[1] != 0L, numeric[2] != 0L,
+            numeric[3] != 0L, numeric[4] != 0L, numeric[5].toInt(), numeric[6].toInt(),
+            numeric[7] != 0L, numeric[8] != 0L, numeric[9].toInt(), numeric[10].toInt(), numeric[11],
         )
     }
 
@@ -101,6 +103,7 @@ object Protocol {
 /** Reassembles arbitrarily split BLE notifications and safely bounds corrupted input. */
 class LineBuffer(private val maximum: Int = 256) {
     private val bytes = ArrayList<Byte>()
+    private var overflowed = false
 
     @Synchronized
     fun feed(chunk: ByteArray): List<String> {
@@ -108,11 +111,17 @@ class LineBuffer(private val maximum: Int = 256) {
         chunk.forEach { byte ->
             val value = byte.toInt() and 0xff
             when {
-                value == 10 || value == 13 -> if (bytes.isNotEmpty()) {
-                    lines += bytes.toByteArray().toString(Charsets.US_ASCII).trim()
+                value == 10 || value == 13 -> {
+                    if (!overflowed && bytes.isNotEmpty()) {
+                        lines += bytes.toByteArray().toString(Charsets.US_ASCII).trim()
+                    }
                     bytes.clear()
+                    overflowed = false
                 }
-                value in 32..126 -> if (bytes.size < maximum) bytes += byte else bytes.clear()
+                value in 32..126 && !overflowed -> if (bytes.size < maximum) bytes += byte else {
+                    bytes.clear()
+                    overflowed = true
+                }
             }
         }
         return lines.filter(String::isNotBlank)

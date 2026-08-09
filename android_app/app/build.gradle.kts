@@ -1,3 +1,6 @@
+import java.security.MessageDigest
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -28,7 +31,6 @@ android {
         resources.excludes += setOf("META-INF/NOTICE.md", "META-INF/LICENSE.md")
     }
 
-    testOptions { unitTests.isReturnDefaultValues = true }
 }
 
 kotlin { jvmToolchain(17) }
@@ -39,11 +41,36 @@ dependencies {
 }
 
 val bundledStockfish = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libstockfish.so")
+val stockfishChecksums = Properties().apply {
+    rootProject.file("stockfish-checksums.properties").inputStream().use(::load)
+}
+val expectedStockfishSha256 = stockfishChecksums.getProperty("binarySha256").uppercase()
 tasks.register("verifyStockfish") {
     doLast {
         check(bundledStockfish.asFile.isFile) {
             "Stockfish is required for a functional release. Run android_app/download-stockfish.ps1 first."
         }
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        bundledStockfish.asFile.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                messageDigest.update(buffer, 0, count)
+            }
+        }
+        val digest = messageDigest.digest().joinToString("") { "%02X".format(it) }
+        check(digest == expectedStockfishSha256) {
+            "Stockfish checksum mismatch: expected $expectedStockfishSha256, found $digest"
+        }
     }
 }
 tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn("verifyStockfish") }
+
+val generatedNoticeAssets = layout.buildDirectory.dir("generated/third-party-notices")
+android.sourceSets["main"].assets.srcDir(generatedNoticeAssets)
+val copyThirdPartyNotices by tasks.registering(Copy::class) {
+    from(rootProject.file("THIRD_PARTY_NOTICES.md"))
+    into(generatedNoticeAssets)
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(copyThirdPartyNotices) }

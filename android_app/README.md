@@ -12,7 +12,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
 | Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, castling/en-passant/promotion flags, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
-| Camera | Local phone cameras or Android-supported RTSP/HTTP streams; explicit JPEG snapshots only |
+| Camera | Local phone cameras or Android-supported RTSP/HTTPS streams; explicit JPEG snapshots only |
 | Developer | Structured and raw-equivalent protocol timeline, pagination, documented-command allowlist, motion lock plus confirmation, simulator `SIMMOVE` |
 | Support | JSONL session logs, copied diagnostic summary, sanitized ZIP with no frames, PGNs, camera credentials, or Bluetooth address |
 | Safety | Persistent HALT button, separate single-byte `!` path, motion polling pause, stale-state warnings, no remote fault clearing |
@@ -20,6 +20,11 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 No page contains a `ScrollView`, horizontally scrolling container, or vertically
 scrolling list. Dense histories and logs use explicit pages. Portrait and
 landscape layouts recompute on rotation, and system-bar insets are respected.
+
+Cleartext HTTP camera URLs are rejected with an explicit warning. Use HTTPS or
+RTSP so enabling one camera cannot weaken transport security for the whole app.
+Devices without Bluetooth Low Energy can still install the app and use its safe
+simulator; only real-board scan and connection are unavailable.
 
 ## Build
 

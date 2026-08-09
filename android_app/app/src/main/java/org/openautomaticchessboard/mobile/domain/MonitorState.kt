@@ -26,6 +26,7 @@ data class MonitorState(
 
     fun health(nowMs: Long = System.currentTimeMillis()): Pair<String, HealthLevel> {
         val age = ageSeconds(nowMs)
+        val sensorAge = sensorUpdatedMs?.let { ((nowMs - it).coerceAtLeast(0L)) / 1000.0 }
         return when {
             !connected -> "Disconnected" to HealthLevel.BAD
             age == null || age > 12 -> "Connection stale" to HealthLevel.BAD
@@ -36,6 +37,9 @@ data class MonitorState(
             firmware == null -> "Firmware identity unavailable" to HealthLevel.WARN
             "TELEM" in firmware.capabilities && telemetry == null -> "Waiting for telemetry" to HealthLevel.WARN
             "BOARD" in firmware.capabilities && sensorSquares == null -> "Waiting for sensors" to HealthLevel.WARN
+            "BOARD" in firmware.capabilities && sensorAge != null && sensorAge > 12 ->
+                "Sensor data stale" to HealthLevel.WARN
+            lastError.isNotBlank() -> "Board warning: $lastError" to HealthLevel.WARN
             age > 5 -> "Updates delayed" to HealthLevel.WARN
             else -> "Ready" to HealthLevel.GOOD
         }

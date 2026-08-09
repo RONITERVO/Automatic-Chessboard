@@ -34,6 +34,8 @@ All read-only host requests pass through one main-thread queue. Exactly one requ
 may await its matching response at a time; a timeout releases the next request.
 This invariant applies equally to connection setup, manual refresh, diagnostics,
 the developer console, and periodic monitoring.
+Diagnostics evaluates only after its queued response batch completes or reaches
+terminal timeouts; it never relies on a fixed BLE timing delay.
 
 ## State authority
 

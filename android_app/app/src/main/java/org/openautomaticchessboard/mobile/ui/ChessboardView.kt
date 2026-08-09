@@ -22,6 +22,7 @@ class ChessboardView(context: Context) : View(context) {
     private val unexpected = Color.rgb(245, 157, 56)
     private val occupied = Color.rgb(48, 191, 133)
     private val carriage = Color.rgb(45, 210, 226)
+    private val cellRect = RectF()
 
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES; updateDescription() }
 
@@ -44,8 +45,9 @@ class ChessboardView(context: Context) : View(context) {
             val file = if (flipped) 7 - screenFile else screenFile
             val rank = if (flipped) screenRank else 7 - screenRank
             val index = rank * 8 + file
-            val rect = RectF(left + screenFile * cell, top + screenRank * cell,
+            cellRect.set(left + screenFile * cell, top + screenRank * cell,
                 left + (screenFile + 1) * cell, top + (screenRank + 1) * cell)
+            val rect = cellRect
             paint.style = Paint.Style.FILL
             paint.color = if ((file + rank) % 2 == 0) dark else light
             canvas.drawRect(rect, paint)
@@ -68,9 +70,10 @@ class ChessboardView(context: Context) : View(context) {
                 paint.style = Paint.Style.FILL
                 paint.textAlign = Paint.Align.CENTER
                 paint.textSize = cell * .68f
-                paint.color = if (piece.fenSymbol.first().isUpperCase()) Color.WHITE else Color.rgb(20, 25, 30)
+                val pieceColor = if (piece.fenSymbol.first().isUpperCase()) Color.WHITE else Color.rgb(20, 25, 30)
+                paint.color = pieceColor
                 paint.setShadowLayer(cell * .04f, 0f, cell * .025f,
-                    if (paint.color == Color.WHITE) Color.BLACK else Color.WHITE)
+                    if (pieceColor == Color.WHITE) Color.BLACK else Color.WHITE)
                 val symbol = unicode[piece] ?: piece.fenSymbol
                 val y = rect.centerY() - (paint.ascent() + paint.descent()) / 2f
                 canvas.drawText(symbol, rect.centerX(), y, paint)
