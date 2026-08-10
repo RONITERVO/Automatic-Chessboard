@@ -5,6 +5,8 @@ build/
 *.eep
 *.hex
 *.map
+__pycache__/
+*.py[cod]
 
 # Editor and operating-system files
 .vscode/*

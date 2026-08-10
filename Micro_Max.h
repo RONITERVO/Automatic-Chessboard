@@ -12,7 +12,6 @@ unsigned short myrand(void);
 short D(short q, short l, short e, unsigned char E, unsigned char z, unsigned char n);
 void AI_reset();
 byte AI_HvsC();
-byte AI_selfPlayMove();
 
 extern char mov[];
 extern char lastM[];

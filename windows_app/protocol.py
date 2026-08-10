@@ -49,7 +49,9 @@ READ_ONLY_COMMANDS = frozenset({"PING", "HELLO", "INFO", "STATUS", "TELEM", "BOA
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
-MOTION_COMMANDS = frozenset({"START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE"})
+MOTION_COMMANDS = frozenset({
+    "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH",
+})
 
 
 class LineBuffer:

@@ -7,7 +7,7 @@
     </style>
   </defs>
   <rect width="1700" height="1120" fill="#fff"/>
-  <text class="title" x="55" y="55">Controller wiring — firmware 3.29</text>
+  <text class="title" x="55" y="55">Controller wiring — firmware 4.0.0</text>
   <text class="sub" x="55" y="84">Read carrier silkscreens before wiring. All modules share regulated +5 V and common GND unless marked +24 V.</text>
 
   <rect class="box nano" x="650" y="145" width="400" height="830"/>

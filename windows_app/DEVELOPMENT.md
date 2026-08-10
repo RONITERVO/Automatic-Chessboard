@@ -32,6 +32,11 @@ responses, and privacy redaction.
 Never introduce a test that begins movement merely by connecting or opening the
 application.
 
+For configurable motion repeatability testing with firmware 4.0.0, use
+`../firmware/endurance_test.py`. It exercises production planners with the
+magnet forced off and periodically compares measured homing steps. It requires
+an explicit port and `--confirm-motion`; it is never part of safe diagnostics.
+
 ## Adding telemetry
 
 Keep Nano strings in flash with `F()`, avoid dynamic `String`, and retain enough

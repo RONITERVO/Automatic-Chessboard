@@ -44,7 +44,7 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 3.29 and fresh telemetry.
+6. Verify the monitor reports firmware 4.0.0 and fresh telemetry.
 
 ## Stage C: switches and 64 sensors
 
@@ -91,7 +91,8 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 5. Confirm the carriage parks at e6 without striking an end stop.
 6. Close the surface and test empty-board sensor stability.
 7. Test one piece on short straight moves, then diagonal and knight paths.
-8. Run the built-in step-loss test with an empty board.
+8. Optionally run the connected magnet-free endurance test documented in
+   `../firmware/README.md`, with an empty board and someone beside the cutoff.
 
 ## Stop conditions
 

@@ -32,7 +32,7 @@ object Protocol {
 
     private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
-    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE")
+    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH")
 
     fun parseEvent(line: String): BoardEvent {
         val fields = line.trim().split(Regex("\\s+")).filter(String::isNotBlank)

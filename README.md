@@ -34,10 +34,18 @@ not `VIN`.
 
 ## Building
 
-Open `Automatic_Chessboard_V3_27_i2c_value.ino` in the Arduino IDE, install the
-`hd44780` library by Bill Perry, select the board used by the project, and
-compile or upload the sketch. The firmware uses `hd44780_I2Cexp` so common
-PCF8574 LCD backpacks are detected without assuming one fixed pin mapping.
+The release build is reproducible from PowerShell:
+
+```powershell
+./firmware/test.ps1 -InstallDependencies
+```
+
+It pins the Nano core and `hd44780` library, validates the hardware contract,
+runs tool tests, compiles for the classic Nano old bootloader, and enforces
+flash/SRAM budgets. See [`firmware/README.md`](firmware/README.md) for the
+modular source layout, explicit upload command, and contributor policy. The
+main `.ino` can still be opened normally in Arduino IDE; its sibling `.ino`
+tabs are compiled together automatically.
 
 Review the pin assignments, travel calibration, limit-switch behavior, driver
 current limit, and microstep settings before powering the motion hardware.
@@ -65,10 +73,14 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 3.31 adds versioned `INFO`/`TELEM` monitoring, fully normalized reed-sensor
-coordinates, guarded in-app calibration and direct head/piece movement, and a best-effort `!` remote halt
-checked inside motion loops. Bluetooth and cameras are not safety
-systems, so a local physical power cutoff remains required for remote operation.
+Firmware 4.0.0 keeps the standalone two-button/LCD and Micro-Max play
+experience while reducing Nano flash and global SRAM use. It adds reproducible
+resource-budgeted builds, measured calibration references, a configurable
+connected endurance tool, and a 30-second continuous-magnet safety timeout.
+Versioned monitoring, normalized sensor coordinates, guarded calibration and
+direct movement, and the best-effort `!` halt remain compatible with the apps.
+Bluetooth and cameras are not safety systems, so a local physical power cutoff
+remains required for remote operation.
 
 ## Android Bluetooth companion
 
@@ -119,8 +131,8 @@ rank 6. If the black switch is already active, the head moves one full square
 away to clear that lane. The staging move never travels toward the black switch.
 
 During normal calibration both switches are approached one step at a time. The
-white switch stays pressed while the black switch is found. Capture parking and
-step-loss reference calibrations use the same sequence. After both switches
+white switch stays pressed while the black switch is found. Capture recovery and
+developer reference calibrations use the same sequence. After both switches
 establish the corner, the head moves directly to the exact e6 park offset with
 no separate release/backoff stage or switch-specific release-distance setting.
 
@@ -129,7 +141,7 @@ abort calibration. Use the board's power switch for an emergency stop during
 this sequence. Button emergency stops remain enabled for normal board and test
 movements outside calibration.
 
-Every successful calibration and step-test reference pass parks the head at
+Every successful calibration and endurance-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
 black-switch lane before the next white-switch approach.
 
@@ -159,33 +171,21 @@ or below; after the next startup, select calibration and confirm `A=READY`.
 This recovery confirmation is also required on the first boot after installing
 firmware that has no valid position journal yet.
 
-## Step-loss test
+## Connected endurance test
 
-The service menu includes **STEP LOSS**, a long-running motion repeatability
-test. Remove all pieces from the board before starting it. The test:
+Firmware 4.0.0 moves the former fixed on-device AI self-play workload to the
+configurable [`firmware/endurance_test.py`](firmware/endurance_test.py) tool.
+This recovers scarce Nano memory while retaining real production straight and
+knight planning through the guarded, developer-only `PATH` protocol command.
+The magnet is forced off, results are logged on the computer, cycle count and
+reference frequency are configurable, and both homing step counts are compared
+against a measured baseline. See [`firmware/README.md`](firmware/README.md) for
+the exact command and physical safety requirements.
 
-1. homes both axes and restores the normal e6 service position;
-2. repeats the homing pass to establish a switch-to-position baseline;
-3. lets the Micro-Max chess engine play both sides of a sequence of legal games;
-4. mirrors those games on a separate in-memory board, so captures, en passant,
-   promotions, and castling are exercised without reading or modifying the
-   real reed-sensor board state;
-5. runs the same production travel planner used for real moves, with the
-   electromagnet kept off because the physical board must be empty; and
-6. returns to both home switches every eight half-moves and compares the
-   measured step counts with the baseline, for a total of 200 half-moves.
-
-A difference greater than four full steps, scaled to the configured microstep
-mode, is reported as step loss. Either shared limit/button input stops regular
-test motion. During a homing reference both inputs are endstops and button abort
-handling is disabled; use the board power switch for an emergency stop. Any
-abort during regular test motion or any homing failure invalidates the trolley
-position and requires calibration before further use.
-
-This detects accumulated position drift using the existing switches. It cannot
-prove that no individual step was missed and later cancelled by a missed step
-in the opposite direction. Detecting every stall in real time still requires
-motor encoders or a driver with suitable diagnostic feedback.
+This test detects accumulated position drift using the existing switches. It
+cannot prove that no individual missed step was later cancelled in the opposite
+direction; detecting every stall in real time requires motor encoders or a
+driver with suitable diagnostic feedback.
 
 ## Piece-retention travel planner
 
@@ -219,8 +219,6 @@ homes both axes from the nearby calibration side and restores the known e6
 position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.
 
-The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
-runs this exact same exit curve followed by the same two-axis re-home.
-Its electromagnet and release dwell remain disabled because no physical pieces
-are present, but the motor workload, off-board travel, and capture correction
-are included in the endurance measurement.
+Capture behavior remains covered by normal standalone and connected game paths.
+The magnet-free endurance test intentionally focuses on repeatable production
+board travel; capture-bin testing requires a guarded physical-piece test.

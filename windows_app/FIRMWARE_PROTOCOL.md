@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 3.31 advertises `ACB2` monitoring while retaining the legacy
+terminator. Firmware 4.0.0 advertises `ACB2` monitoring while retaining the legacy
 `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 3.31 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME
+< INFO ACB2 4.0.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -68,11 +68,12 @@ second automatic move before receiving `DONE`.
 
 ## App calibration and direct square movement
 
-Firmware 3.31 adds guarded maintenance commands. They are accepted only from the
+Firmware 3.31+ provides guarded maintenance commands. They are accepted only from the
 idle main menu, outside a remote game, and never while a motion fault is latched.
 
 - `CALIBRATE` performs the complete reference routine. It emits `CALIBRATING`,
-  then `CALIBRATED e6` only when the head is homed, parked at e6, and the magnet
+  then `CALIBRATED e6 W<steps> B<steps>` on firmware 4.0.0 only when the head is
+  homed, parked at e6, and the magnet
   is off. The companion requests fresh `TELEM` and independently confirms
   `homed=1`, `fault=0`, `magnet=0`, `x=5`, and `y=6` before enabling movement.
 - `HEAD e4` moves only the head and keeps the electromagnet off. It emits
@@ -86,6 +87,17 @@ Possible rejections include `ERR CALIBRATE`, `ERR SOURCE EMPTY`,
 `ERR TARGET FULL`, `ERR SENSORS`, `ERR BUSY`, `ERR FAULT`, and `ERR MOTION`.
 Manual motion uses telemetry sequence 21 while active. `!` remains the immediate
 best-effort remote halt during calibration and direct movement.
+
+Firmware 4.0.0 also advertises `DEVPATH`. `PATH e2e4` is a developer-only,
+magnet-free motion command that exercises the production straight or knight
+piece planner without changing sensor state. It has the same calibration,
+fault, idle-state, and emergency-halt guards as direct movement and returns
+`MOVED PATH e2e4`. It is intended for the repository endurance tool, not normal
+game clients.
+
+The firmware independently limits any continuous magnet command to 30 seconds.
+On timeout it switches the magnet off, invalidates the carriage position,
+latches a motion fault, and reports `ERR MAGNET TIMEOUT`.
 
 ## Best-effort emergency halt
 

@@ -47,6 +47,7 @@ class ProtocolTest {
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("CALIBRATE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("HEAD e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PIECE e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PATH e2e4"))
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))

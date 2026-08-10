@@ -1,0 +1,39 @@
+name: Nano firmware
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - "*.ino"
+      - "*.h"
+      - "*.cpp"
+      - "firmware/**"
+      - "hardware/connections.csv"
+      - "hardware/sensor-map.csv"
+      - "hardware/validate.ps1"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "*.ino"
+      - "*.h"
+      - "*.cpp"
+      - "firmware/**"
+      - "hardware/connections.csv"
+      - "hardware/sensor-map.csv"
+      - "hardware/validate.ps1"
+      - ".github/workflows/firmware.yml"
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate, test, compile, and enforce Nano resource budgets
+        shell: pwsh
+        run: ./firmware/test.ps1 -InstallDependencies

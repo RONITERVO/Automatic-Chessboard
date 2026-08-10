@@ -7,6 +7,7 @@ Describe the user-visible change.
 - [ ] Windows unit tests pass
 - [ ] Python compilation check passes
 - [ ] Firmware compiles for `arduino:avr:nano:cpu=atmega328old` when changed
+- [ ] `./firmware/test.ps1` passes when firmware or its tools changed
 - [ ] Simulator was tested for UI/protocol changes
 - [ ] I stated whether real hardware moved during testing
 

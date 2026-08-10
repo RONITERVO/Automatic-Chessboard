@@ -64,6 +64,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("CALIBRATE"), CommandRisk.MOTION)
         self.assertEqual(classify_command("HEAD e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("PIECE e2e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("PATH e2e4"), CommandRisk.MOTION)
         self.assertEqual(head_command("e6"), "HEAD e6")
         self.assertEqual(piece_command("e2", "e4"), "PIECE e2e4")
 
