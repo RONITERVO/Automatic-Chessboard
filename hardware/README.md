@@ -67,6 +67,7 @@ does not yet contain every protection required by this guide.
 | Reverse polarity | Not installed | 30 V-or-higher, 5 A-or-higher protection module or equivalent |
 | Logic power | 5 V buck currently connected to Nano `VIN` | Regulated 5.0 V connected to Nano `5V` |
 | Driver wake | `RESET` and `SLEEP` tied together; no external 5 V trace | Tie both together and explicitly connect them to 5 V |
+| Driver STEP/DIR defaults | Four 10 kohm pull-downs installed and tested | One independent 10 kohm pull-down from every `STEP` and `DIR` input to logic GND |
 | Driver surge capacitor | 100 uF, 50 V at each carrier | Same, mounted directly across each `VMOT`/`GND` pair |
 
 The protections are not cosmetic. A 10 A supply can deliver far more fault

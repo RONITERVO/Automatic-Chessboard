@@ -24,12 +24,15 @@ measurement.
 2. Confirm both electrolytic capacitor stripes go to GND.
 3. Confirm each flyback diode stripe goes to +24 V.
 4. Confirm both drivers face the correct direction by reading pin labels.
-5. Confirm no short between protected +24 V and GND. A capacitor-charging
+5. Confirm four separate 10 kohm resistors connect driver 1 and driver 2
+   `STEP` and `DIR` individually to their logic GND pins. Confirm the signal
+   inputs are not connected to each other.
+6. Confirm no short between protected +24 V and GND. A capacitor-charging
    reading that rises is normal; a steady near-zero resistance is not.
-6. Confirm no short between 5 V and GND.
-7. Confirm every motor has two isolated coil pairs and no motor wire is shorted
+7. Confirm no short between 5 V and GND.
+8. Confirm every motor has two isolated coil pairs and no motor wire is shorted
    to the frame.
-8. Press each limit switch and verify it closes to GND.
+9. Press each limit switch and verify it closes to GND.
 
 ## Stage B: protected input and 5 V logic only
 

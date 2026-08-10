@@ -9,10 +9,10 @@ is in `connections.csv` and `sensor-map.csv`.
 | --- | --- | --- | --- |
 | D0/RX | USB serial receive | Onboard USB bridge only | Do not connect HC-08 TX here |
 | D1/TX | Shared reply transmit | 1 kohm then HC-08 RXD node; 2 kohm from node to GND | Divider produces about 3.3 V |
-| D2 | Motor 1 direction | Driver 1 `DIR` | Firmware name `MOTOR_WHITE_DIR` |
-| D3 | Motor 1 step | Driver 1 `STEP` | Firmware name `MOTOR_WHITE_STEP` |
-| D4 | Motor 2 direction | Driver 2 `DIR` | Firmware name `MOTOR_BLACK_DIR` |
-| D5 | Motor 2 step | Driver 2 `STEP` | Firmware name `MOTOR_BLACK_STEP` |
+| D2 | Motor 1 direction | Driver 1 `DIR`; separate 10 kohm from `DIR` to logic GND | Firmware name `MOTOR_WHITE_DIR`; defaults LOW during reset |
+| D3 | Motor 1 step | Driver 1 `STEP`; separate 10 kohm from `STEP` to logic GND | Firmware name `MOTOR_WHITE_STEP`; defaults LOW during reset |
+| D4 | Motor 2 direction | Driver 2 `DIR`; separate 10 kohm from `DIR` to logic GND | Firmware name `MOTOR_BLACK_DIR`; defaults LOW during reset |
+| D5 | Motor 2 step | Driver 2 `STEP`; separate 10 kohm from `STEP` to logic GND | Firmware name `MOTOR_BLACK_STEP`; defaults LOW during reset |
 | D6 | Electromagnet control | 1 kohm to TIP120 base | HIGH energizes magnet |
 | D7 | MUX 3 enable | MUX 3 `EN` | Active LOW |
 | D8 | MUX 2 enable | MUX 2 `EN` | Active LOW |
@@ -71,7 +71,7 @@ For each StepStick-compatible carrier:
 | `RESET` and `SLEEP` | Tie together, then connect to 5 V |
 | `MS1`, `MS2`, `MS3` | GND for explicit full-step operation |
 | `ENABLE` | GND for explicit enabled operation |
-| `STEP`, `DIR` | Nano pins listed above |
+| `STEP`, `DIR` | Nano pins listed above; each input also has its own 10 kohm pull-down to logic GND |
 | `1A`, `1B` | The two wires of motor coil A |
 | `2A`, `2B` | The two wires of motor coil B |
 
@@ -84,6 +84,13 @@ one wire from each coil into a pair.
 The prototype leaves `MS1-3` and `ENABLE` open and works because the fitted
 carrier provides the expected low defaults. Explicit GND connections are used
 in the public design so clone-board input bias is not an assumption.
+
+Install four independent 10 kohm pull-downs: one from each driver's `STEP` and
+`DIR` input to that carrier's logic GND. Place them near the carrier inputs;
+they are shunt resistors, not series resistors, and `STEP` and `DIR` must not
+share one resistor. A driven 5 V HIGH sources only 0.5 mA through each
+pull-down. The working prototype uses all four resistors, which keep the
+otherwise floating A4988-compatible inputs LOW while the Nano starts or resets.
 
 ### Current limit
 

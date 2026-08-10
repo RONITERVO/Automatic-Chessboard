@@ -71,10 +71,13 @@ flyback diode. Confirm the diode stripe is on the +24 V side. Keep the magnet's
 2. Tie `RESET` to `SLEEP` and then to 5 V.
 3. Tie `MS1`, `MS2`, `MS3`, and `ENABLE` to GND for the documented full-step
    mode.
-4. Add a 100 uF/50 V capacitor directly across each `VMOT`/GND pair.
-5. Identify each motor's two coil pairs with a meter.
-6. With power removed, connect coils A and B.
-7. Set a conservative VREF, then follow the current-limit procedure in
+4. Add one independent 10 kohm resistor from each `STEP` and `DIR` input to
+   logic GND: four pull-downs total. Place them near the carrier inputs; do not
+   put them in series or share one resistor between two signals.
+5. Add a 100 uF/50 V capacitor directly across each `VMOT`/GND pair.
+6. Identify each motor's two coil pairs with a meter.
+7. With power removed, connect coils A and B.
+8. Set a conservative VREF, then follow the current-limit procedure in
    `WIRING.md`. The prototype's final value is 0.720 V only for its R100 boards
    and donor motors.
 

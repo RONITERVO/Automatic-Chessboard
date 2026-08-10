@@ -26,6 +26,10 @@ M1-09,Driver 1,2A+2B,Motor 1,coil B,MOTOR1_COIL_B,yes,Identify pair with ohmmete
 M1-10,Driver 1,VMOT,C1 100uF 50V,+,PROTECTED_24V,yes,Mount at carrier
 M1-11,Driver 1,motor GND,C1 100uF 50V,-,GND,yes,Striped capacitor lead
 M1-12,Ground distribution,GND,Driver 1,motor GND,GND,yes,Dedicated motor-current return
+M1-13,Driver 1,DIR,R7 10k,1,MOTOR1_DIR,yes,Independent pull-down at carrier input
+M1-14,R7 10k,2,Driver 1,logic GND,GND,yes,Do not share with STEP pull-down
+M1-15,Driver 1,STEP,R8 10k,1,MOTOR1_STEP,yes,Independent pull-down at carrier input
+M1-16,R8 10k,2,Driver 1,logic GND,GND,yes,Do not share with DIR pull-down
 M2-01,Nano,D4,Driver 2,DIR,MOTOR2_DIR,yes,Firmware MOTOR_BLACK_DIR
 M2-02,Nano,D5,Driver 2,STEP,MOTOR2_STEP,yes,Firmware MOTOR_BLACK_STEP
 M2-03,5V distribution,+,Driver 2,VDD,VCC_5V,yes,
@@ -38,6 +42,10 @@ M2-09,Driver 2,2A+2B,Motor 2,coil B,MOTOR2_COIL_B,yes,Identify pair with ohmmete
 M2-10,Driver 2,VMOT,C2 100uF 50V,+,PROTECTED_24V,yes,Mount at carrier
 M2-11,Driver 2,motor GND,C2 100uF 50V,-,GND,yes,Striped capacitor lead
 M2-12,Ground distribution,GND,Driver 2,motor GND,GND,yes,Dedicated motor-current return
+M2-13,Driver 2,DIR,R9 10k,1,MOTOR2_DIR,yes,Independent pull-down at carrier input
+M2-14,R9 10k,2,Driver 2,logic GND,GND,yes,Do not share with STEP pull-down
+M2-15,Driver 2,STEP,R10 10k,1,MOTOR2_STEP,yes,Independent pull-down at carrier input
+M2-16,R10 10k,2,Driver 2,logic GND,GND,yes,Do not share with DIR pull-down
 MAG-01,Nano,D6,R1 1k,1,MAGNET_COMMAND,yes,
 MAG-02,R1 1k,2,TIP120,BASE,MAGNET_BASE,yes,
 MAG-03,TIP120,BASE,R2 10k,1,MAGNET_BASE,yes,Reset-state pull-down

@@ -92,6 +92,15 @@ foreach ($driver in 1..2) {
   Assert-Connection "Driver $driver" "motor GND" "C$driver 100uF 50V" "-"
 }
 
+Assert-Connection "Driver 1" "DIR" "R7 10k" "1"
+Assert-Connection "R7 10k" "2" "Driver 1" "logic GND"
+Assert-Connection "Driver 1" "STEP" "R8 10k" "1"
+Assert-Connection "R8 10k" "2" "Driver 1" "logic GND"
+Assert-Connection "Driver 2" "DIR" "R9 10k" "1"
+Assert-Connection "R9 10k" "2" "Driver 2" "logic GND"
+Assert-Connection "Driver 2" "STEP" "R10 10k" "1"
+Assert-Connection "R10 10k" "2" "Driver 2" "logic GND"
+
 Assert-Connection "Flyback diode" "CATHODE" "H2520 electromagnet" "+"
 Assert-Connection "Flyback diode" "ANODE" "H2520 electromagnet" "-"
 Assert-Connection "5V distribution" "+" "R3 10k" "1"
