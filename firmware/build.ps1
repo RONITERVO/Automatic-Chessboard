@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $output = Join-Path $repo "build/nano"
+$mainSketch = Join-Path $repo "Automatic_Chessboard_V3_27_i2c_value.ino"
 
 function Find-ArduinoCli {
   $command = Get-Command arduino-cli -ErrorAction SilentlyContinue
@@ -37,39 +38,66 @@ if ($InstallDependencies) {
 }
 
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-$compileArguments = @(
-  "compile"
-  "--fqbn", $Fqbn
-  "--warnings", "default"
-  "--clean"
-  "--output-dir", $output
-  $repo
-)
-$result = & $cli @compileArguments 2>&1 | Out-String
-Write-Host $result.TrimEnd()
-if ($LASTEXITCODE -ne 0) { throw "Nano compilation failed." }
-
-$flashMatch = [regex]::Match($result, "Sketch uses (\d+) bytes")
-$ramMatch = [regex]::Match($result, "Global variables use (\d+) bytes")
-if (-not $flashMatch.Success -or -not $ramMatch.Success) {
-  throw "Could not read flash/RAM usage from arduino-cli output."
+if (-not (Test-Path -LiteralPath $mainSketch)) {
+  throw "Main Nano sketch was not found: $mainSketch"
 }
 
-$flash = [int]$flashMatch.Groups[1].Value
-$ram = [int]$ramMatch.Groups[1].Value
-if ($flash -gt $MaxFlashBytes) {
-  throw "Flash budget exceeded: $flash > $MaxFlashBytes bytes."
-}
-if ($ram -gt $MaxRamBytes) {
-  throw "Global SRAM budget exceeded: $ram > $MaxRamBytes bytes."
-}
-Write-Host "Firmware budgets pass: flash $flash/$MaxFlashBytes, global SRAM $ram/$MaxRamBytes bytes."
+# Arduino requires the primary .ino file and its containing directory to have
+# the same name. A GitHub checkout is named after the repository, while local
+# source folders may happen to match the sketch. Stage only Arduino source
+# files in a correctly named temporary directory so builds are independent of
+# the checkout directory name and cannot accidentally include repository files.
+$sketchName = [System.IO.Path]::GetFileNameWithoutExtension($mainSketch)
+$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) `
+  ("automatic-chessboard-" + [System.Guid]::NewGuid().ToString("N"))
+$stagedSketch = Join-Path $stagingRoot $sketchName
 
-if ($Upload) {
-  if (-not $Port) {
-    throw "-Upload requires an explicit -Port (for example COM7)."
+try {
+  New-Item -ItemType Directory -Force -Path $stagedSketch | Out-Null
+  $sourceExtensions = @(".ino", ".h", ".hpp", ".c", ".cpp", ".S")
+  Get-ChildItem -LiteralPath $repo -File |
+    Where-Object { $sourceExtensions -ccontains $_.Extension } |
+    Copy-Item -Destination $stagedSketch
+
+  $compileArguments = @(
+    "compile"
+    "--fqbn", $Fqbn
+    "--warnings", "default"
+    "--clean"
+    "--output-dir", $output
+    $stagedSketch
+  )
+  $result = & $cli @compileArguments 2>&1 | Out-String
+  Write-Host $result.TrimEnd()
+  if ($LASTEXITCODE -ne 0) { throw "Nano compilation failed." }
+
+  $flashMatch = [regex]::Match($result, "Sketch uses (\d+) bytes")
+  $ramMatch = [regex]::Match($result, "Global variables use (\d+) bytes")
+  if (-not $flashMatch.Success -or -not $ramMatch.Success) {
+    throw "Could not read flash/RAM usage from arduino-cli output."
   }
-  & $cli upload --fqbn $Fqbn --port $Port --input-dir $output $repo
-  if ($LASTEXITCODE -ne 0) { throw "Nano upload failed." }
-  Write-Host "Uploaded firmware to $Port."
+
+  $flash = [int]$flashMatch.Groups[1].Value
+  $ram = [int]$ramMatch.Groups[1].Value
+  if ($flash -gt $MaxFlashBytes) {
+    throw "Flash budget exceeded: $flash > $MaxFlashBytes bytes."
+  }
+  if ($ram -gt $MaxRamBytes) {
+    throw "Global SRAM budget exceeded: $ram > $MaxRamBytes bytes."
+  }
+  Write-Host "Firmware budgets pass: flash $flash/$MaxFlashBytes, global SRAM $ram/$MaxRamBytes bytes."
+
+  if ($Upload) {
+    if (-not $Port) {
+      throw "-Upload requires an explicit -Port (for example COM7)."
+    }
+    & $cli upload --fqbn $Fqbn --port $Port --input-dir $output $stagedSketch
+    if ($LASTEXITCODE -ne 0) { throw "Nano upload failed." }
+    Write-Host "Uploaded firmware to $Port."
+  }
+}
+finally {
+  if (Test-Path -LiteralPath $stagingRoot) {
+    Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+  }
 }
