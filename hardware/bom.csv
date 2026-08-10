@@ -13,6 +13,7 @@ motion,2,Stepper driver carrier,A4988 or HR4988 StepStick pinout and 24V capable
 motion,2,Stepper-driver heatsink,Electrically clear of carrier pins,Adhesive aluminium StepStick heatsink,required
 motion,2,Bipolar stepper motor,"4-wire NEMA17, 1.8deg preferred, >=0.20Nm, current matched to driver",Unlabelled JGAurora A3S donor motor,required
 motion,2,VMOT capacitor,100uF >=50V electrolytic 105C preferred,100uF 50V,required
+motion,4,STEP/DIR pull-down resistor,10kohm 0.25W one per STEP and DIR input,Four 10kohm resistors tested on prototype,required
 magnet,1,Electromagnet,24V DC approximately 2.8W and mechanically compatible,H2520 24V 2.8W,required
 magnet,1,NPN Darlington or validated MOSFET circuit,TIP120 or validated logic-level MOSFET alternative,TIP120,required
 magnet,1,Flyback diode,1A >=50V axial diode,1N4004-1N4007 equivalent,required

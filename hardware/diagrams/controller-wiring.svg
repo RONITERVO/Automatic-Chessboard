@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1120" viewBox="0 0 1700 1120" role="img" aria-labelledby="title desc">
   <title id="title">Arduino Nano controller wiring for the automatic chessboard</title>
-  <desc id="desc">Firmware pin connections from the Nano to two stepper drivers, four multiplexers, LCD, switches, Bluetooth module, and electromagnet transistor.</desc>
+  <desc id="desc">Firmware pin connections from the Nano to two stepper drivers with four STEP and DIR pull-downs, four multiplexers, LCD, switches, Bluetooth module, and electromagnet transistor.</desc>
   <defs>
     <style>
       .title{font:700 30px Arial,sans-serif;fill:#1f2328}.sub{font:16px Arial,sans-serif;fill:#59636e}.box{fill:#fff;stroke:#30363d;stroke-width:2;rx:12}.nano{fill:#ddf4ff;stroke:#0969da;stroke-width:3}.motion{fill:#fff1e5;stroke:#bc4c00}.sensor{fill:#dafbe1;stroke:#1a7f37}.ui{fill:#fbefff;stroke:#8250df}.power{fill:#ffebe9;stroke:#cf222e}.head{font:700 18px Arial,sans-serif;fill:#1f2328}.pin{font:700 15px Consolas,monospace;fill:#0550ae}.text{font:15px Arial,sans-serif;fill:#1f2328}.small{font:13px Arial,sans-serif;fill:#59636e}.line{stroke:#57606a;stroke-width:3;fill:none}.bus{stroke:#1a7f37;stroke-width:5;fill:none}.uart{stroke:#8250df;stroke-width:4;fill:none}.motorline{stroke:#bc4c00;stroke-width:4;fill:none}.magline{stroke:#cf222e;stroke-width:4;fill:none}.dot{fill:#1f2328}
@@ -39,7 +39,7 @@
   <text class="text" x="100" y="282">VMOT protected 24 V · local 100 µF/50 V</text>
   <text class="text" x="100" y="312">RESET + SLEEP → 5 V</text>
   <text class="text" x="100" y="342">MS1/MS2/MS3 + ENABLE → GND</text>
-  <text class="small" x="100" y="368">1A/1B = one coil; 2A/2B = the other coil</text>
+  <text class="small" x="100" y="368">Each DIR/STEP input -&gt; own 10k -&gt; logic GND</text>
   <path class="motorline" d="M650 270 H535"/><path class="motorline" d="M650 310 H535"/>
 
   <rect class="box motion" x="70" y="420" width="465" height="235"/>
@@ -49,7 +49,7 @@
   <text class="text" x="100" y="552">VMOT protected 24 V · local 100 µF/50 V</text>
   <text class="text" x="100" y="582">RESET + SLEEP → 5 V</text>
   <text class="text" x="100" y="612">MS1/MS2/MS3 + ENABLE → GND</text>
-  <text class="small" x="100" y="638">Full-step mode must match MOTOR_MICROSTEPS = 1</text>
+  <text class="small" x="100" y="638">Each DIR/STEP input -&gt; own 10k -&gt; logic GND</text>
   <path class="motorline" d="M650 350 H590 V492 H535"/><path class="motorline" d="M650 390 H570 V512 H535"/>
 
   <rect class="box power" x="70" y="700" width="465" height="225"/>
