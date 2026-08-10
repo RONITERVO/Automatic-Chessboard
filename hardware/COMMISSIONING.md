@@ -49,8 +49,10 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 ## Stage C: switches and 64 sensors
 
 1. Observe both switch states released.
-2. Press switch A/D11; only the white/A input should change.
-3. Press switch B/A6; only the black/B input should change.
+2. Run the firmware's guided `SWTEST` from the app developer console or a
+   serial terminal.
+3. Follow its prompts to press/release switch A/D11 and then switch B/A6. It
+   must report `SWTEST PASS`; record the pressed A6 raw value.
 4. Place one magnet-equipped piece on each square, one at a time.
 5. Confirm exactly the matching square changes in the visual board.
 6. Remove the piece and confirm the square clears.
@@ -73,7 +75,9 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 
 1. Remove all pieces and expose the mechanism.
 2. Connect driver 1 VMOT and its motor with power off.
-3. Apply power and run only the smallest guarded service move.
+3. Apply power and run `JOG W+` then `JOG W-` for the white driver, or
+   `JOG B+` then `JOG B-` for the black driver, from a guarded developer
+   console. Each command moves only 20 full steps.
 4. Verify smooth motion. Grinding or vibration usually indicates mixed coil
    pairs; stop power before changing wires.
 5. Verify direction against the expected switch. Reverse one complete coil

@@ -43,11 +43,13 @@ class ProtocolTest {
 
     @Test fun classifiesAndBuildsGuardedCommands() {
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("TELEM"))
+        assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("SWTEST"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAY e2e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("CALIBRATE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("HEAD e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PIECE e2e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PATH e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("JOG W+"))
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))

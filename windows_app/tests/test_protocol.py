@@ -58,6 +58,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_command_risk(self):
         self.assertEqual(classify_command("TELEM"), CommandRisk.READ_ONLY)
+        self.assertEqual(classify_command("SWTEST"), CommandRisk.READ_ONLY)
         self.assertEqual(classify_command("PLAY e2e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("ACCEPT"), CommandRisk.MOTION)
         self.assertEqual(classify_command("!"), CommandRisk.EMERGENCY)
@@ -65,6 +66,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("HEAD e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("PIECE e2e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("PATH e2e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("JOG W+"), CommandRisk.MOTION)
         self.assertEqual(head_command("e6"), "HEAD e6")
         self.assertEqual(piece_command("e2", "e4"), "PIECE e2e4")
 

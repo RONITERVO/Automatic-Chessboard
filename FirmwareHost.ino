@@ -25,7 +25,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH,DEVJOG"));
 }
 
 void sendTelemetry() {
@@ -87,6 +87,72 @@ void testBluetoothModule() {
   Serial.print(F("BT "));
   if (reply_length) Serial.println(reply);
   else Serial.println(F("NO REPLY"));
+}
+
+boolean waitForExclusiveSwitch(byte target, byte other, byte target_state) {
+  unsigned long started = millis();
+  while (millis() - started <= 30000UL) {
+    if (readControlPin(other) == LOW) return false;
+    if (readControlPin(target) == target_state) return true;
+    delay(5);
+  }
+  return false;
+}
+
+void runHostSwitchTest() {
+  if (sequence != main_menu || remote_mode || magnet_state) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+  setMagnet(false);
+  const byte pins[2] = {BUTTON_A_LIMIT_WHITE, BUTTON_B_LIMIT_BLACK};
+  for (byte index = 0; index < 2; index++) {
+    byte other = pins[1 - index];
+    char label = index == 0 ? 'A' : 'B';
+    if (readControlPin(pins[index]) == LOW || readControlPin(other) == LOW) {
+      sendHostError(F("SWTEST"));
+      return;
+    }
+    Serial.print(F("SWTEST PRESS "));
+    Serial.println(label);
+    if (!waitForExclusiveSwitch(pins[index], other, LOW)) {
+      sendHostError(F("SWTEST"));
+      return;
+    }
+    if (index == 1) {
+      Serial.print(F("SWTEST B RAW "));
+      Serial.println(analogRead(BUTTON_B_LIMIT_BLACK));
+    }
+    Serial.print(F("SWTEST RELEASE "));
+    Serial.println(label);
+    if (!waitForExclusiveSwitch(pins[index], other, HIGH)) {
+      sendHostError(F("SWTEST"));
+      return;
+    }
+  }
+  Serial.println(F("SWTEST PASS"));
+}
+
+void runHostMotorJog(char motor, char sign) {
+  if (sequence != main_menu || remote_mode || motion_fault || magnet_state) {
+    sendHostError(F("BUSY"));
+    return;
+  }
+
+  byte direction;
+  if (motor == 'W') direction = sign == '+' ? RL_TB : LR_BT;
+  else direction = sign == '+' ? RL_BT : LR_TB;
+
+  setMagnet(false);
+  trolley_homed = false;
+  sequence = host_manual_motion;
+  boolean moved = pulseMotor(direction, SPEED_SLOW,
+                             20U * MOTOR_MICROSTEPS, true);
+  finishHostManualMotion(moved);
+  if (!moved || motion_fault) return;
+  Serial.print(F("MOVED JOG "));
+  Serial.print(motor);
+  Serial.println(sign);
 }
 
 void startRemoteSession(boolean human_white) {
@@ -327,6 +393,16 @@ void processHostCommand(char *line) {
   if (strcmp(line, "BTTEST") == 0) {
     if (sequence == main_menu) testBluetoothModule();
     else sendHostError(F("BUSY"));
+    return;
+  }
+  if (strcmp(line, "SWTEST") == 0) {
+    runHostSwitchTest();
+    return;
+  }
+  if (strncmp(line, "JOG ", 4) == 0 &&
+      (line[4] == 'W' || line[4] == 'B') &&
+      (line[5] == '+' || line[5] == '-') && line[6] == 0) {
+    runHostMotorJog(line[4], line[5]);
     return;
   }
   if (strcmp(line, "STOP") == 0) {

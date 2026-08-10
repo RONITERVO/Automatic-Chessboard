@@ -20,6 +20,18 @@ deliberately removed workflow; the configurable logged endurance tool below is
 its more useful connected replacement. It is unavailable without a companion,
 but its absence does not affect playing or servicing the board.
 
+For deterministic limit-input commissioning, send `SWTEST` from USB or the
+guarded developer console and follow its `PRESS A`, `RELEASE`, and `PRESS B`
+prompts. Unlike ordinary telemetry, the test temporarily owns the shared
+button/limit inputs so standalone menu actions cannot consume the press. It
+never moves hardware and forces the magnet off before sampling.
+
+For one-driver-at-a-time commissioning, firmware 4.0.0 advertises `DEVJOG`.
+`JOG W+`, `JOG W-`, `JOG B+`, and `JOG B-` pulse only that driver for 20 full
+steps. They are idle-only motion commands, keep the magnet off, and deliberately
+invalidate the carriage coordinate so calibration is mandatory afterward.
+Disconnect the untested driver's VMOT and the magnet branch before using them.
+
 ## Source layout
 
 - `Automatic_Chessboard_V3_27_i2c_value.ino` owns setup, the top-level state

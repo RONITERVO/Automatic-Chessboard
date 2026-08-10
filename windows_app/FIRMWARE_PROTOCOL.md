@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.0.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH
+< INFO ACB2 4.0.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH,DEVJOG
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -27,6 +27,9 @@ supports every command. A missing `INFO` response indicates legacy firmware.
 - `TELEM` → versioned visual-monitoring telemetry
 - `BOARD` → sixteen hexadecimal occupancy digits
 - `BTTEST` → idle-only HC-08 AT test; normally run over USB
+- `SWTEST` → idle-only guided press/release test for both shared limit inputs;
+  it keeps the magnet off, performs no movement, rejects crossed activation,
+  and reports the pressed A6 raw value
 
 `BOARD` contains two hexadecimal digits per normalized row, rank 8 through rank 1.
 Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a magnetic
@@ -94,6 +97,13 @@ piece planner without changing sensor state. It has the same calibration,
 fault, idle-state, and emergency-halt guards as direct movement and returns
 `MOVED PATH e2e4`. It is intended for the repository endurance tool, not normal
 game clients.
+
+`DEVJOG` advertises the guarded `JOG W+`, `JOG W-`, `JOG B+`, and `JOG B-`
+commands. Each pulses only the selected CoreXY driver for 20 full steps, keeps
+the magnet off, and invalidates the carriage position. Use them only for
+one-driver-at-a-time commissioning with the other driver and magnet power
+disconnected. A successful jog returns `MOVED JOG W+`; calibration is required
+before any coordinate-based movement.
 
 The firmware independently limits any continuous magnet command to 30 seconds.
 On timeout it switches the magnet off, invalidates the carriage position,

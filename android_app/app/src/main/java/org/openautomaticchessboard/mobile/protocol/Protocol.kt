@@ -30,9 +30,9 @@ object Protocol {
     const val SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
     const val CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
-    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST")
+    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
-    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH")
+    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG")
 
     fun parseEvent(line: String): BoardEvent {
         val fields = line.trim().split(Regex("\\s+")).filter(String::isNotBlank)
