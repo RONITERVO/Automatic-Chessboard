@@ -95,20 +95,27 @@ const byte MOTOR_BLACK_STEP = 5;
 // This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
 // Supported A4988 values are 1, 2, 4, 8, and 16.
 const byte MOTOR_MICROSTEPS = 1;
-const unsigned int FULL_STEPS_PER_SQUARE = 195;
+// The mechanism measures about 5.2 full steps/mm. A 190-step logical pitch,
+// combined with the centered park correction below, keeps every outer square
+// about 3.3-3.5 mm inside the former travel boundary to avoid frame contact.
+const unsigned int FULL_STEPS_PER_SQUARE = 190;
 const unsigned int SQUARE_SIZE = FULL_STEPS_PER_SQUARE * MOTOR_MICROSTEPS;
-// Fixed-point versions of the measured 1.78- and 4.65-square corner offsets.
-// Keeping motion entirely integer avoids linking AVR floating-point support.
+// Physical corner-to-e6 offsets are deliberately independent of logical
+// square pitch. The reduced grid's centered correction shifts e6 by two X
+// steps and seven Y steps. This prototype's playing field is also registered
+// 34 X steps (about 6.5 mm) toward the white switch/a-files so h-file targets
+// sit under their tiles instead of against the outer tile edge.
 const unsigned int CALIBRATION_PARK_BLACK_STEPS =
-    (SQUARE_SIZE * 178UL + 50UL) / 100UL;
+    354U * MOTOR_MICROSTEPS;
 const unsigned int CALIBRATION_PARK_WHITE_STEPS =
-    (SQUARE_SIZE * 465UL + 50UL) / 100UL;
+    871U * MOTOR_MICROSTEPS;
 
-// Measured half-period delays for the current high-friction full-step drive.
-// Slow carrying moves ramp from 250 to about 278 full steps/second. Dividing
-// by the microstep setting preserves physical speed if the hardware changes.
-const unsigned int MOTOR_START_DELAY = 2000U / MOTOR_MICROSTEPS;
-const unsigned int SPEED_SLOW = 1800U / MOTOR_MICROSTEPS;
+// Hardware-validated half-period delay for the current full-step drive. Using
+// the same value for start, carrying, and unloaded travel intentionally
+// disables the ramp and avoids the mechanism's strong low-speed resonance.
+// Dividing by the microstep setting preserves physical speed if it changes.
+const unsigned int MOTOR_START_DELAY = 1000U / MOTOR_MICROSTEPS;
+const unsigned int SPEED_SLOW = 1000U / MOTOR_MICROSTEPS;
 const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
 const unsigned int MOTOR_STEP_PULSE_US = 4;
 const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;

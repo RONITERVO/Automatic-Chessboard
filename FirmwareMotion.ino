@@ -142,33 +142,18 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
   return true;
 }
 
-int roundedDivide(long value, long divisor) {
-  return (int)(value >= 0 ? (value + divisor / 2) / divisor
-                          : (value - divisor / 2) / divisor);
-}
-
-boolean pulseCoreXYCurve(int end_x, int end_y, int control1_x, int control1_y,
-                         int control2_x, int control2_y,
-                         unsigned int speed_delay, boolean monitor_stops) {
-  const byte segments = 12;
-  const long denominator = (long)segments * segments * segments;
-  int current_x = 0;
-  int current_y = 0;
-
-  for (byte i = 1; i <= segments; i++) {
-    long u = segments - i;
-    long x = 3L * u * u * i * control1_x +
-             3L * u * i * i * control2_x + (long)i * i * i * end_x;
-    long y = 3L * u * u * i * control1_y +
-             3L * u * i * i * control2_y + (long)i * i * i * end_y;
-    int target_x = roundedDivide(x, denominator);
-    int target_y = roundedDivide(y, denominator);
-    if (!pulseCoreXYLine(target_x - current_x, target_y - current_y,
-                         speed_delay, monitor_stops)) return false;
-    current_x = target_x;
-    current_y = target_y;
-  }
-  return current_x == end_x && current_y == end_y;
+boolean pulseCoreXYCorridor(int first_x, int first_y,
+                            int middle_x, int middle_y,
+                            int last_x, int last_y,
+                            unsigned int speed_delay, boolean monitor_stops) {
+  // Keep carried pieces on explicit clearance lanes. Besides being easier to
+  // inspect than an interpolated curve, three exact lines avoid the repeated
+  // short CoreXY direction/step-ratio changes that can lose full steps.
+  if (!pulseCoreXYLine(first_x, first_y, speed_delay, monitor_stops))
+    return false;
+  if (!pulseCoreXYLine(middle_x, middle_y, speed_delay, monitor_stops))
+    return false;
+  return pulseCoreXYLine(last_x, last_y, speed_delay, monitor_stops);
 }
 
 boolean moveTrolleyStraightTo(byte target_x, byte target_y,
@@ -190,9 +175,9 @@ boolean moveTrolleyStraightTo(byte target_x, byte target_y,
 }
 
 // A legal sliding move has a clear direct corridor, so the shortest straight
-// path gives the weakest magnet the least lateral acceleration. Knights use a
-// smooth S-curve through the center of their L-shaped clearance corridor.
-boolean moveHeldPieceSmooth(byte from_x, byte from_y, byte to_x, byte to_y) {
+// path gives the weakest magnet the least lateral acceleration. Knights enter
+// the square-boundary lane, traverse it, and enter the destination square.
+boolean moveHeldPieceSafely(byte from_x, byte from_y, byte to_x, byte to_y) {
   int dx = ((int)to_x - from_x) * (int)SQUARE_SIZE;
   int dy = ((int)to_y - from_y) * (int)SQUARE_SIZE;
   byte squares_x = abs((int)to_x - from_x);
@@ -200,12 +185,14 @@ boolean moveHeldPieceSmooth(byte from_x, byte from_y, byte to_x, byte to_y) {
   boolean ok;
 
   if (squares_x == 1 && squares_y == 2) {
-    ok = pulseCoreXYCurve(dx, dy, dx / 2, 0, dx / 2, dy,
-                          SPEED_SLOW, true);
+    int first_x = dx / 2;
+    ok = pulseCoreXYCorridor(first_x, 0, 0, dy, dx - first_x, 0,
+                             SPEED_SLOW, true);
   }
   else if (squares_x == 2 && squares_y == 1) {
-    ok = pulseCoreXYCurve(dx, dy, 0, dy / 2, dx, dy / 2,
-                          SPEED_SLOW, true);
+    int first_y = dy / 2;
+    ok = pulseCoreXYCorridor(0, first_y, dx, 0, 0, dy - first_y,
+                             SPEED_SLOW, true);
   }
   else {
     ok = pulseCoreXYLine(dx, dy, SPEED_SLOW, true);
@@ -252,11 +239,28 @@ boolean prepareFirstCalibrationApproach() {
 boolean homeAxisMeasured(byte direction, byte limit_pin,
                          unsigned int &measured_steps) {
   measured_steps = 0;
-  while (readControlPin(limit_pin) == HIGH && measured_steps < HOME_MAX_STEPS) {
+
+  while (true) {
+    // Motor wiring and mechanical contacts can produce brief LOW readings.
+    // Calibration establishes every later coordinate, so accept its endstop
+    // only when it remains active. Regular-motion endstops intentionally keep
+    // their immediate single-read response for the safest possible stop.
+    if (readControlPin(limit_pin) == LOW) {
+      boolean held = true;
+      for (byte sample = 1; sample < 4; sample++) {
+        delay(2);
+        if (readControlPin(limit_pin) == HIGH) {
+          held = false;
+          break;
+        }
+      }
+      if (held) return true;
+    }
+
+    if (measured_steps >= HOME_MAX_STEPS) return false;
     if (!pulseMotor(direction, SPEED_SLOW, 1, false)) return false;
     measured_steps++;
   }
-  return readControlPin(limit_pin) == LOW;
 }
 
 boolean moveCalibrationCornerToPark() {

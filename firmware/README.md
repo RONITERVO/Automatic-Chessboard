@@ -82,7 +82,7 @@ magnet-free `PATH` developer command and a USB tool:
 python ./firmware/endurance_test.py --port COM7 --cycles 40 --confirm-motion
 ```
 
-The test exercises straight and knight-curve production paths, returns to e6,
+The test exercises straight and knight-corridor production paths, returns to e6,
 re-homes periodically, and compares both measured step counts with an e6
 baseline. It requires motor power and causes real movement. Remove all pieces,
 keep the physical cutoff within reach, and never treat the `!` radio/USB halt as

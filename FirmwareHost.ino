@@ -307,7 +307,7 @@ void runHostPieceMove(const char *move) {
   boolean moved = moveTrolleyStraightTo(from_file, from_rank, SPEED_FAST);
   if (moved) {
     setMagnet(true);
-    moved = magnet_state && moveHeldPieceSmooth(from_file, from_rank, to_file, to_rank);
+    moved = magnet_state && moveHeldPieceSafely(from_file, from_rank, to_file, to_rank);
   }
   setMagnet(false);
   finishHostManualMotion(moved);
@@ -331,7 +331,7 @@ void runHostPieceMove(const char *move) {
 
 // Developer-only, magnet-free execution of the production piece path. This
 // replaces the fixed 200-ply on-device endurance routine with a configurable
-// host tool while retaining the same straight and knight-curve planners.
+// host tool while retaining the same straight and knight-corridor planners.
 void runHostPathTest(const char *move) {
   if (sequence != main_menu || remote_mode) {
     sendHostError(F("BUSY"));
@@ -361,7 +361,7 @@ void runHostPathTest(const char *move) {
   Serial.println(move);
   boolean moved = moveTrolleyStraightTo(from_file, from_rank, SPEED_FAST);
   if (moved) {
-    moved = moveHeldPieceSmooth(from_file, from_rank, to_file, to_rank);
+    moved = moveHeldPieceSafely(from_file, from_rank, to_file, to_rank);
   }
   finishHostManualMotion(moved);
   if (!moved || motion_fault) return;

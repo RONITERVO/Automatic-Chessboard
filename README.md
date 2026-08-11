@@ -192,15 +192,17 @@ driver with suitable diagnostic feedback.
 For a weak magnet, the production planner uses the shortest straight path for
 normal legal moves. A legal rook, bishop, queen, pawn, or king move already has
 a clear corridor, and a straight path has no corner-induced lateral jerk.
-Knight moves use a 12-segment cubic S-curve through the middle of the normal
-L-shaped clearance corridor instead of two sharp 90-degree corners. Capture
-removal and the rook part of castling use rounded cubic detours. Unloaded head
-travel is also coordinated directly in X/Y instead of moving one axis and then
-the other.
+Knight moves use three exact straight segments: half a square into the open
+square-boundary lane, across the normal L-shaped clearance corridor, and half
+a square into the destination. Capture removal and the rook part of castling
+use the same explicit clearance-lane planning. This avoids the repeated short
+direction and step-ratio changes of interpolated CoreXY curves. Unloaded head
+travel remains coordinated directly in X/Y.
 
-Each curve ends on an exact whole-step destination; interpolation rounding is
-not allowed to accumulate between moves. All paths keep the current tested
-full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
+Every corridor ends on an exact whole-step destination, with no interpolation
+rounding to accumulate between moves. Hardware validation uses a `1000`
+microsecond half-period for start, carrying, and unloaded motion. Keeping these
+equal intentionally avoids the mechanism's strong low-speed resonance.
 
 ## Captured-piece bin
 
@@ -211,10 +213,10 @@ conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
 
 For every capture, the head first moves half a rank toward the lower clearance
-line and then follows a rounded cubic turn to that left-side release point.
-The curve uses the normal carrying speed and decelerates completely at its
-endpoint. The head remains stationary through the magnet's release delay and
-for another 400 ms while the piece falls into the bin. It then immediately
+line and then follows that straight lane to the left-side release point. The
+corridor uses the normal carrying speed and finishes before magnet release.
+The head remains stationary through the magnet's release delay and for another
+400 ms while the piece falls into the bin. It then immediately
 homes both axes from the nearby calibration side and restores the known e6
 position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.

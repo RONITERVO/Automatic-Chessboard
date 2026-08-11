@@ -15,16 +15,11 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   int end_x = (int)CAPTURE_SIDE_X_STEPS -
               (int)file * (int)SQUARE_SIZE;
   int end_y = -(int)SQUARE_SIZE / 2;
-  int control1_x = 0;
-  int control1_y = end_y;
-  int control2_x = end_x;
-  int control2_y = end_y;
-  if (!pulseCoreXYCurve(end_x, end_y, control1_x, control1_y,
-                        control2_x, control2_y, SPEED_SLOW, true)) return false;
-  // The curve decelerates to the configured start delay before release.
-  // setMagnet(false) keeps the head stationary for the existing pre-release
-  // delay. The extra dwell after power goes low lets the piece fall clear
-  // before the head starts its capture-triggered calibration.
+  if (!pulseCoreXYCorridor(0, end_y, end_x, 0, 0, 0,
+                           SPEED_SLOW, true)) return false;
+  // The corridor completes before release. setMagnet(false) keeps the head
+  // stationary for the existing pre-release delay. The extra dwell after
+  // power goes low lets the piece fall clear before capture-triggered homing.
   setMagnet(false);
   if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
 
@@ -59,7 +54,7 @@ boolean removeCapturedPiece(byte file, byte rank) {
 boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
                            boolean use_magnet) {
   if (use_magnet) setMagnet(true);
-  if (!moveHeldPieceSmooth(from_x, rank, to_x, rank)) return false;
+  if (!moveHeldPieceSafely(from_x, rank, to_x, rank)) return false;
   setMagnet(false);
 
   byte rook_from = to_x > from_x ? 8 : 1;
@@ -69,8 +64,8 @@ boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
 
   int dx = ((int)rook_to - rook_from) * (int)SQUARE_SIZE;
   int clearance = rank <= 4 ? (int)SQUARE_SIZE / 2 : -(int)SQUARE_SIZE / 2;
-  if (!pulseCoreXYCurve(dx, 0, 0, clearance, dx, clearance,
-                        SPEED_SLOW, true)) return false;
+  if (!pulseCoreXYCorridor(0, clearance, dx, 0, 0, -clearance,
+                           SPEED_SLOW, true)) return false;
   trolley_coordinate_X = rook_to;
   trolley_coordinate_Y = rank;
   rememberTrolleyPosition();
@@ -125,7 +120,7 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
   }
   else {
     setMagnet(true);
-    if (!moveHeldPieceSmooth(departure_x, departure_y, arrival_x, arrival_y))
+    if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
       return false;
   }
 
