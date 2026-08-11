@@ -31,4 +31,18 @@ class ManualControlTest {
         assertTrue(ManualVerification.pieceMoveMatches(12, 28, setOf(28)))
         assertFalse(ManualVerification.pieceMoveMatches(12, 28, setOf(12)))
     }
+
+    @Test fun carriagePositionIsHiddenAfterHaltOrLossOfHoming() {
+        val trusted = Telemetry("ACB2", 1, true, false, false, false, 5, 6, true, true, 1023, 700, 10)
+        assertTrue(ManualVerification.positionIsTrusted(trusted))
+        assertEquals(4 to 5, ManualVerification.trustedPosition(trusted))
+
+        val halted = trusted.copy(sequence = 10, homed = false, motionFault = true)
+        assertFalse(ManualVerification.positionIsTrusted(halted))
+        assertNull(ManualVerification.trustedPosition(halted))
+
+        val invalidCoordinate = trusted.copy(trolleyX = 0)
+        assertFalse(ManualVerification.positionIsTrusted(invalidCoordinate))
+        assertNull(ManualVerification.trustedPosition(invalidCoordinate))
+    }
 }

@@ -513,11 +513,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     override fun onBoardState(state: MonitorState) {
         if (!state.connected && monitorState.connected) {
-            manualCalibrationVerified = false
-            manualPending = ManualPending.NONE
-            manualPendingSelection = null
-            manualSelection = ManualSelection(manualSelection.mode)
-            manualStatus = "Connection lost; calibrate again after reconnecting."
+            invalidateManualCalibration("Connection lost; calibrate again after reconnecting.")
+        } else if (manualCalibrationVerified && !ManualVerification.positionIsTrusted(state.telemetry)) {
+            val reason = if (state.telemetry?.motionFault == true) {
+                "Motion stopped with the carriage position unknown. Inspect locally, recover the fault, and recalibrate."
+            } else {
+                "Carriage position is no longer homed. Recalibrate before moving."
+            }
+            invalidateManualCalibration(reason)
         }
         if (state.connected && !monitorState.connected && !manualCalibrationVerified) {
             manualStatus = "Connected; calibrate from this page before moving."
@@ -544,6 +547,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
             "MOVING" -> if (event.args.firstOrNull() in setOf("HEAD", "PIECE")) {
                 manualStatus = "${event.args.first()} movement in progress; keep hands clear."
             }
+            "ESTOP" -> invalidateManualCalibration(
+                "Remote halt stopped motion and invalidated the carriage position. Inspect locally and recalibrate."
+            )
             "MOVED" -> handleManualMoved(event.args)
             "TELEM" -> handleManualTelemetry(event)
             "BOARD" -> handleManualBoard(event)
@@ -635,6 +641,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
         manualPending = ManualPending.NONE
         manualPendingSelection = null
         if (verified) manualSelection = ManualSelection(pendingSelection.mode)
+    }
+
+    private fun invalidateManualCalibration(message: String) {
+        manualCalibrationVerified = false
+        manualPending = ManualPending.NONE
+        manualPendingSelection = null
+        manualSelection = ManualSelection(manualSelection.mode)
+        manualStatus = message
     }
 
     override fun onTimelineChanged(entries: List<TimelineEntry>) {
@@ -1019,8 +1033,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun released(value: Boolean) = if (value) "released" else "ACTIVE"
     private fun fileRank(x: Int, y: Int) = if (x in 1..8 && y in 1..8) "${('a'.code + x - 1).toChar()}$y" else "unknown"
     private fun trolleyPosition(state: MonitorState = monitorState): Pair<Int, Int>? =
-        state.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-            ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+        ManualVerification.trustedPosition(state.telemetry)
     private fun stamp(seconds: Boolean = false) = SimpleDateFormat(if (seconds) "yyyyMMdd-HHmmss" else "yyyyMMdd-HHmm", Locale.US).format(Date())
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun alert(title: String, message: String) = AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
