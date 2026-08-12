@@ -36,9 +36,11 @@ jobs:
       - name: Build public Windows folder
         shell: pwsh
         run: .\build.ps1
-      - name: Upload tested Windows folder
+      - name: Upload tested Windows folder and release ZIP
         uses: actions/upload-artifact@v4
         with:
           name: OpenAutomaticChessboard-windows
-          path: windows_app/dist/OpenAutomaticChessboard
+          path: |
+            windows_app/dist/OpenAutomaticChessboard
+            windows_app/dist/OpenAutomaticChessboard-*-windows*.zip
           if-no-files-found: error

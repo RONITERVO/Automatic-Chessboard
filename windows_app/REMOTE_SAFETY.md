@@ -4,10 +4,11 @@ This project is hobby hardware, not a safety-rated motion controller.
 
 ## Safety boundary
 
-The Arduino Nano owns step timing, physical switch checks, magnet output, and
-motion-fault state. Windows can request actions but cannot prove that motion,
-switches, or the magnet behaved physically. The camera and Bluetooth connection
-are observational aids, not interlocks.
+The Arduino Nano owns step timing, physical switch checks, magnet output,
+straight-corridor checks, sensor transitions, and motion-fault state. Windows can
+request actions and verify occupancy reports, but it cannot prove that motion,
+switches, piece centring, or the magnet behaved physically. The camera and
+Bluetooth connection are observational aids, not interlocks.
 
 Always provide a physical method to remove motor and magnet power. Someone near
 the board must be able to use it whenever remote movement is attempted.
@@ -22,11 +23,37 @@ the board must be able to use it whenever remote movement is attempted.
 - Keep children, pets, loose clothing, cables, and ferromagnetic objects away.
 - Do not leave the board moving unattended.
 
-## Fault recovery
+## Route transaction guarantees
+
+Firmware 4.1 verifies the complete occupancy frame before a route begins, before
+and after every straight drag, and before commit. Windows independently checks a
+fresh `BOARD` frame after capture removal and every drag. These checks detect
+many stale-plan, dropped-piece, wrong-square, blocked-corridor, and link-ordering
+failures.
+
+They do not identify pieces. Two pieces exchanged between occupied squares look
+identical to the reed matrix. The checks also cannot measure gantry coordinates,
+coil current, piece alignment within a square, magnetic attraction between
+pieces, or an obstruction that does not change a reed switch. Orthogonal paths
+are intentionally conservative, but physical supervision remains required.
+
+## Uncertain transaction recovery
+
+Before the first physical action, an unchanged route transaction can be
+cancelled. Once capture removal or any `DRAG` is sent, a timeout, disconnect, or
+unexpected acknowledgement makes the arrangement uncertain. The app does not
+retry or infer success. It closes the session and requires inspection of every
+square against the displayed logical position.
+
+After inspection, correct the physical position manually, verify fresh `BOARD`
+and `TELEM` data, clear any hardware fault locally, and recalibrate if carriage
+position is unknown. Start a new session; do not continue the old transaction.
+
+## General fault recovery
 
 Remote halt intentionally marks the carriage position unknown. Inspect the board
 locally, remove the obstruction, test switches, and recalibrate. The public app
-does not include a remote “clear fault and continue” control because doing so
+does not include a remote "clear fault and continue" control because doing so
 would conceal uncertainty rather than resolve it.
 
 ## Camera limitations

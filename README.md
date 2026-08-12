@@ -50,6 +50,32 @@ tabs are compiled together automatically.
 Review the pin assignments, travel calibration, limit-switch behavior, driver
 current limit, and microstep settings before powering the motion hardware.
 
+## Full validation without motion
+
+When motors, piece magnets, or trustworthy reed readings are unavailable, run:
+
+```powershell
+./test-no-motion.ps1 -Port COM7
+```
+
+The workflow compiles the Nano firmware, enforces its memory budgets, exhaustively
+tests the motionless `PLAN` / `DRAG` / `COMMIT` occupancy model, runs Windows and
+Android planner/protocol/simulator tests, builds both apps, and optionally samples
+the real Nano over USB. The COM probe is allowlisted to `PING`, `INFO`, `STATUS`,
+`TELEM`, and `BOARD`; it validates BOARD framing but does not require any particular
+occupancy. It never uploads firmware or requests calibration, motor steps, magnet
+power, or a chess move.
+
+The probe first tries to keep DTR/RTS inactive. If a classic Nano does not
+answer without its normal USB reset, use `-AllowSerialReset` only after checking
+that firmware startup cannot energize the mechanism; this still does not send
+an upload or any motion-capable protocol command.
+
+This is the strongest release test possible without actuation, but it cannot prove
+motor direction or step accuracy, magnet current/pickup/release, reed wiring and
+orientation, mechanical clearance, homing repeatability, or physical collision
+behavior. Those remain staged commissioning checks.
+
 ## Windows and Bluetooth companion
 
 `windows_app` is the public-ready, open-source Windows monitor and companion for
@@ -73,23 +99,30 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.0.0 keeps the standalone two-button/LCD and Micro-Max play
-experience while reducing Nano flash and global SRAM use. It adds reproducible
-resource-budgeted builds, measured calibration references, a configurable
-connected endurance tool, and a 30-second continuous-magnet safety timeout.
-Versioned monitoring, normalized sensor coordinates, guarded calibration and
-direct movement, and the best-effort `!` halt remain compatible with the apps.
-Bluetooth and cameras are not safety systems, so a local physical power cutoff
-remains required for remote operation.
+Firmware 4.1.0 keeps the standalone two-button/LCD and Micro-Max play
+experience while adding a small transactional executor for host-planned
+collision-safe rearrangements. Windows can evacuate and restore blockers, stage
+the main piece, and recursively clear trapped pieces; the Nano accepts only
+straight orthogonal drags and proves the complete sensor frame before and after
+each one. Capture, en passant, promotion occupancy, and standard castling are
+included. Firmware 4.0 clients retain their original `PLAY` path.
+
+Reproducible resource-budgeted builds, measured calibration references, the
+configurable connected endurance tool, the 30-second continuous-magnet timeout,
+normalized sensor coordinates, guarded calibration/direct movement, and the
+best-effort `!` halt remain available. Bluetooth and cameras are not safety
+systems, so a local physical power cutoff remains required for remote operation.
 
 ## Android Bluetooth companion
 
 `android_app` provides the same working range from a phone: native HC-08 BLE
 with reconnect, live logical/physical board comparison, Stockfish 18 play,
-guided safe diagnostics, phone and network-camera views, PGN export, structured
-logs, privacy-sanitized support ZIPs, a hardware-free simulator, guarded raw
-commands, and a persistent best-effort halt control. Every page uses a fixed,
-adaptive layout with pagination instead of horizontal or vertical scrolling.
+the same collision-safe blocker rearrangement and verified route transaction as
+Windows, guided safe diagnostics, phone and network-camera views, PGN export,
+structured logs, privacy-sanitized support ZIPs, a hardware-free simulator,
+guarded raw commands, and a persistent best-effort halt control. Every page uses
+a fixed, adaptive layout with pagination instead of horizontal or vertical
+scrolling.
 
 Run `android_app/download-stockfish.ps1`, then open `android_app` in Android
 Studio or run `android_app/gradlew.bat assembleDebug`. See
@@ -173,7 +206,7 @@ firmware that has no valid position journal yet.
 
 ## Connected endurance test
 
-Firmware 4.0.0 moves the former fixed on-device AI self-play workload to the
+Firmware 4.0 and later move the former fixed on-device AI self-play workload to the
 configurable [`firmware/endurance_test.py`](firmware/endurance_test.py) tool.
 This recovers scarce Nano memory while retaining real production straight and
 knight planning through the guarded, developer-only `PATH` protocol command.
@@ -189,15 +222,19 @@ driver with suitable diagnostic feedback.
 
 ## Piece-retention travel planner
 
-For a weak magnet, the production planner uses the shortest straight path for
-normal legal moves. A legal rook, bishop, queen, pawn, or king move already has
-a clear corridor, and a straight path has no corner-induced lateral jerk.
-Knight moves use three exact straight segments: half a square into the open
-square-boundary lane, across the normal L-shaped clearance corridor, and half
-a square into the destination. Capture removal and the rook part of castling
-use the same explicit clearance-lane planning. This avoids the repeated short
-direction and step-ratio changes of interpolated CoreXY curves. Unloaded head
-travel remains coordinated directly in X/Y.
+The standalone and legacy `PLAY` planner uses the shortest straight path for
+normal legal moves. Knight moves use three exact straight segments through the
+open square-boundary lane. Capture removal and the rook part of castling use the
+same explicit clearance lanes.
+
+For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
+configurations. It uses only orthogonal square-to-square carried paths, so the
+physical diagonal-clearance constraint is satisfied conservatively. Turning
+paths are split at square centres into straight sensor-verified `DRAG` commands.
+The search minimizes disturbed pieces first, then actual magnet pickups,
+distance, turns, and clearance risk. Time, node, parking, corridor, temporary-
+piece, and recursion limits prevent unbounded work; failure stops the move rather
+than falling back to an unverified path.
 
 Every corridor ends on an exact whole-step destination, with no interpolation
 rounding to accumulate between moves. Hardware validation uses a `1000`

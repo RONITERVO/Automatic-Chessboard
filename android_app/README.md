@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.0.0). It covers the Windows
+This is the phone-first companion for firmware 3.31+ (current firmware 4.1.0). It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
 
@@ -11,12 +11,24 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Connection | Native BLE scan, saved-device reconnect, HC-08 FFE0/FFE1 GATT, exponential retry, 20-byte writes |
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
 | Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
-| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, castling/en-passant/promotion flags, paged move history, PGN export |
+| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |
 | Developer | Structured and raw-equivalent protocol timeline, pagination, documented-command allowlist, motion lock plus confirmation, simulator `SIMMOVE` |
 | Support | JSONL session logs, copied diagnostic summary, sanitized ZIP with no frames, PGNs, camera credentials, or Bluetooth address |
 | Safety | Persistent HALT button, separate single-byte `!` path, motion polling pause, stale-state warnings, no remote fault clearing |
+
+With firmware 4.1, the phone plans automatic moves as labeled board
+rearrangements. It can evacuate and restore blockers, stage the main piece while
+a return corridor is used, and recursively free trapped blockers. Carried paths
+are orthogonal and turning paths become separate straight drags at square
+centres. The phone and Nano both verify all 64 occupancy switches after capture
+removal and every drag. A timeout or disconnect after physical motion stops the
+session and requires inspection; it is never retried from an assumed state.
+
+The **Route** button on the Play page adjusts the bounded search duration and
+maximum number of temporarily moved pieces without adding a scrolling settings
+page. Firmware 4.0 and earlier continue to use the legacy `PLAY` path.
 
 No page contains a `ScrollView`, horizontally scrolling container, or vertically
 scrolling list. Dense histories and logs use explicit pages. Portrait and
@@ -74,7 +86,8 @@ power if motion continues or the link is unavailable.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md), then run the unit tests. Use
 **Simulator** for UI and game-flow changes; `SIMMOVE e2e4` in **Dev** represents
-a physical human move. New firmware capabilities should be optional additions,
+a physical human move. The simulator implements the complete `PLANROUTE`
+transaction without hardware. New firmware capabilities should be optional additions,
 parsed into typed state, simulated, and covered by tests before UI work.
 
 Never add a generic "send anything" bypass. Read-only, session-control, motion,

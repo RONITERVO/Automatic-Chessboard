@@ -25,7 +25,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,DEVPATH,DEVJOG"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
 }
 
 void sendTelemetry() {
@@ -180,7 +180,6 @@ void stopRemoteSession() {
   returnToMainMenu();
   Serial.println(F("STOPPED"));
 }
-
 boolean validSquareText(const char *square) {
   return square[0] >= 'a' && square[0] <= 'h' &&
          square[1] >= '1' && square[1] <= '8' && square[2] == 0;
@@ -195,14 +194,19 @@ boolean sensorSquareOccupied(byte file, byte rank) {
   return boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1);
 }
 
+void hostMotionFault(const __FlashStringHelper *message) {
+  setMagnet(false);
+  motion_fault = true;
+  trolley_homed = false;
+  sequence = fault_screen;
+  showMotionFault();
+  sendHostError(message);
+}
+
 void finishHostManualMotion(boolean succeeded) {
   setMagnet(false);
   if (!succeeded || motion_fault) {
-    motion_fault = true;
-    trolley_homed = false;
-    sequence = fault_screen;
-    showMotionFault();
-    sendHostError(F("MOTION"));
+    hostMotionFault(F("MOTION"));
     return;
   }
   sequence = main_menu;
@@ -267,9 +271,11 @@ void runHostHeadMove(const char *square) {
   Serial.println(square);
 }
 
-void runHostPieceMove(const char *move) {
-  if (sequence != main_menu || remote_mode) {
-    sendHostError(F("BUSY"));
+
+void runHostPieceMove(const char *move, boolean routed) {
+  if ((routed && (!remote_mode || sequence != remote_route_plan)) ||
+      (!routed && (sequence != main_menu || remote_mode))) {
+    sendHostError(routed ? F("NO PLAN") : F("BUSY"));
     return;
   }
   if (motion_fault) {
@@ -291,6 +297,10 @@ void runHostPieceMove(const char *move) {
   }
 
   scanSensors();
+  if (routed && memcmp(reed_sensor_record.rows, reed_sensor_status.rows, 8)) {
+    sendHostError(F("PLAN STATE"));
+    return;
+  }
   if (!sensorSquareOccupied(from_file, from_rank)) {
     sendHostError(F("SOURCE EMPTY"));
     return;
@@ -298,6 +308,23 @@ void runHostPieceMove(const char *move) {
   if (sensorSquareOccupied(to_file, to_rank)) {
     sendHostError(F("TARGET FULL"));
     return;
+  }
+  if (routed) {
+    byte source = (from_rank - 1) * 8 + from_file - 1;
+    byte target = (to_rank - 1) * 8 + to_file - 1;
+    int step;
+    if (from_file == to_file) step = target > source ? 8 : -8;
+    else if (from_rank == to_rank) step = target > source ? 1 : -1;
+    else {
+      sendHostError(F("BAD ROUTE"));
+      return;
+    }
+    for (int square = (int)source + step; square != target; square += step) {
+      if (boardSquareOccupied(reed_sensor_record, 7 - (square >> 3), square & 7)) {
+        sendHostError(F("ROUTE BLOCKED"));
+        return;
+      }
+    }
   }
 
   sequence = host_manual_motion;
@@ -310,20 +337,29 @@ void runHostPieceMove(const char *move) {
     moved = magnet_state && moveHeldPieceSafely(from_file, from_rank, to_file, to_rank);
   }
   setMagnet(false);
-  finishHostManualMotion(moved);
-  if (!moved || motion_fault) return;
-
-  scanSensors();
-  boolean sensors_agree = !sensorSquareOccupied(from_file, from_rank) &&
-                          sensorSquareOccupied(to_file, to_rank);
-  syncSensorState();
-  if (!sensors_agree) {
-    trolley_homed = false;
-    motion_fault = true;
-    sequence = fault_screen;
-    showMotionFault();
-    sendHostError(F("SENSORS"));
-    return;
+  if (routed) {
+    if (!moved || motion_fault) {
+      hostMotionFault(F("MOTION"));
+      return;
+    }
+    setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
+    setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
+    if (!physicalSensorsMatchExpected()) {
+      hostMotionFault(F("SENSORS"));
+      return;
+    }
+    sequence = remote_route_plan;
+  }
+  else {
+    finishHostManualMotion(moved);
+    if (!moved || motion_fault) return;
+    scanSensors();
+    if (sensorSquareOccupied(from_file, from_rank) ||
+        !sensorSquareOccupied(to_file, to_rank)) {
+      hostMotionFault(F("SENSORS"));
+      return;
+    }
+    syncSensorState();
   }
   Serial.print(F("MOVED PIECE "));
   Serial.println(move);
@@ -367,6 +403,116 @@ void runHostPathTest(const char *move) {
   if (!moved || motion_fault) return;
   Serial.print(F("MOVED PATH "));
   Serial.println(move);
+}
+
+// ---------------- Transactional collision-safe route execution ------------
+
+void setRouteSquare(BoardState &board, byte square, boolean occupied) {
+  setBoardSquare(board, 7 - (square >> 3), square & 7, occupied);
+}
+
+boolean routedFinalStateMatches() {
+  BoardState expected;
+  copySensorTable(turn_start_status, expected);
+  byte source = (lastM[1] - '1') * 8 + lastM[0] - 'a';
+  byte target = (lastM[3] - '1') * 8 + lastM[2] - 'a';
+  setRouteSquare(expected, source, false);
+  if (move_from != NO_SQUARE) setRouteSquare(expected, move_from, false);
+  setRouteSquare(expected, target, true);
+
+  // The PLAN mode carries standard-castling identity because reed switches
+  // report occupancy, not piece type. Connected host planners intentionally
+  // support only the standard castling rook squares.
+  if (remote_promotion_piece == 'k' || remote_promotion_piece == 'c') {
+    byte base = (lastM[1] - '1') * 8;
+    byte rook_source = base + (remote_promotion_piece == 'k' ? 7 : 0);
+    byte rook_target = base + (remote_promotion_piece == 'k' ? 5 : 3);
+    setRouteSquare(expected, rook_source, false);
+    setRouteSquare(expected, rook_target, true);
+  }
+  return memcmp(reed_sensor_record.rows, expected.rows, 8) == 0;
+}
+
+void beginRemoteRoutePlan(char *arguments) {
+  if (!remote_mode || sequence != remote_wait_host || remote_human_move_pending ||
+      motion_fault || !trolley_homed) {
+    sendHostError(F("NOT READY"));
+    return;
+  }
+
+  // Fixed seven-byte payload: <from><to><mode><capture-square-or-->. Mode is
+  // '-', a promotion piece q/r/b/n, or k/c for standard king/queen-side
+  // castling. The Nano independently rejects a stale physical sensor frame.
+  char mode = arguments[4];
+  char *capture_text = arguments + 5;
+  boolean no_capture = capture_text[0] == '-' && capture_text[1] == '-';
+  boolean castle_text = arguments[0] == 'e' &&
+      (arguments[1] == '1' || arguments[1] == '8') &&
+      arguments[3] == arguments[1];
+  if (!arguments[6] || arguments[7] || !validMoveText(arguments) ||
+      (arguments[0] == arguments[2] && arguments[1] == arguments[3]) ||
+      (mode != '-' && mode != 'q' && mode != 'r' && mode != 'b' &&
+       mode != 'n' && mode != 'k' && mode != 'c') ||
+      (!no_capture && !validSquareText(capture_text)) ||
+      (mode == 'k' && (!castle_text || arguments[2] != 'g')) ||
+      (mode == 'c' && (!castle_text || arguments[2] != 'c'))) {
+    sendHostError(F("BAD PLAN"));
+    return;
+  }
+  if (!physicalSensorsMatchExpected()) {
+    sendHostError(F("PLAN STATE"));
+    return;
+  }
+
+  copySensorTable(reed_sensor_status, turn_start_status);
+  resetMoveTracker();
+  for (byte index = 0; index < 4; index++) lastM[index] = arguments[index];
+  lastM[4] = 0;
+  remote_promotion_piece = mode == '-' ? 0 : mode;
+  remote_move_flags = (mode == 'q' || mode == 'r' || mode == 'b' || mode == 'n')
+      ? 'P' : 0;
+  sequence = remote_route_plan;
+
+  if (!no_capture) {
+    byte file = capture_text[0] - 'a' + 1;
+    byte rank = capture_text[1] - '0';
+    if (!sensorSquareOccupied(file, rank)) {
+      sequence = remote_wait_host;
+      sendHostError(F("PLAN STATE"));
+      return;
+    }
+    move_from = (rank - 1) * 8 + file - 1;  // Capture square for final-frame proof.
+    setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
+    if (!removeCapturedPiece(file, rank) || motion_fault ||
+        !physicalSensorsMatchExpected()) {
+      hostMotionFault(F("SENSORS"));
+      return;
+    }
+  }
+  Serial.println(F("PLAN READY"));
+}
+
+void commitRemoteRoutePlan() {
+  if (sequence != remote_route_plan) {
+    sendHostError(F("NO PLAN"));
+    return;
+  }
+  if (!physicalSensorsMatchExpected()) {
+    sendHostError(F("FINAL SENSORS"));
+    return;
+  }
+  if (recordMatchesTurnStart()) {
+    syncSensorState();
+    sequence = remote_wait_host;
+    Serial.println(F("PLAN CANCELLED"));
+    return;
+  }
+  if (!routedFinalStateMatches()) {
+    sendHostError(F("PLAN INCOMPLETE"));
+    return;
+  }
+  syncSensorState();
+  finishRemoteComputerTurn();
 }
 
 void processHostCommand(char *line) {
@@ -419,7 +565,7 @@ void processHostCommand(char *line) {
   }
   if (strncmp(line, "PIECE ", 6) == 0 && line[10] == 0 &&
       validMoveText(line + 6)) {
-    runHostPieceMove(line + 6);
+    runHostPieceMove(line + 6, false);
     return;
   }
   if (strncmp(line, "PATH ", 5) == 0 && line[9] == 0 &&
@@ -459,6 +605,19 @@ void processHostCommand(char *line) {
     lcd.setCursor(0, 1);
     lcd.print(F("UNDO B=STOP"));
     Serial.println(F("OK REJECT"));
+    return;
+  }
+  if (strncmp(line, "PLAN ", 5) == 0) {
+    beginRemoteRoutePlan(line + 5);
+    return;
+  }
+  if (strncmp(line, "DRAG ", 5) == 0 && line[9] == 0 &&
+      validMoveText(line + 5)) {
+    runHostPieceMove(line + 5, true);
+    return;
+  }
+  if (strcmp(line, "COMMIT") == 0) {
+    commitRemoteRoutePlan();
     return;
   }
   if (strncmp(line, "PLAY ", 5) == 0) {

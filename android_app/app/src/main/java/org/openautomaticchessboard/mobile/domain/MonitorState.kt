@@ -68,7 +68,7 @@ data class MonitorState(
             13 to "Service: select file", 14 to "Service: select rank", 15 to "Remote setup check",
             16 to "Remote human turn", 17 to "Waiting for computer move", 18 to "Remote undo required",
             19 to "Checking remote move", 20 to "Waiting for promotion piece",
-            21 to "Direct app movement",
+            21 to "Direct app movement", 22 to "Verified route transaction",
         )
         private val sequenceGuidance = mapOf(
             1 to "Board is idle and ready for safe diagnostics or a new game.",
@@ -83,6 +83,7 @@ data class MonitorState(
             18 to "Invalid move: restore the physical position.",
             20 to "Replace the promoted pawn, then press physical Button A.",
             21 to "The app requested direct movement. Keep hands clear.",
+            22 to "The phone is executing a sensor-verified route. Keep hands clear.",
         )
     }
 }

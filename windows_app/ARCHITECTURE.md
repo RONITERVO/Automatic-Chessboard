@@ -1,65 +1,124 @@
 # Companion architecture
 
 ```text
-HC-08 BLE or USB or Simulator
-            │
-            ▼
-       transports.py ── reconnect, framing, 20-byte BLE writes
-            │ callbacks
-            ▼
+HC-08 BLE / USB / Simulator
+             |
+      transports.py  (reconnect, framing, 20-byte BLE writes)
+             |
       main-thread event queue
-            │
-      ┌─────┴───────────┐
-      ▼                 ▼
- protocol.py        MonitorModel
- parse/version       health/mismatch
-      │                 │
-      └─────┬───────────┘
-            ▼
-         Tkinter UI ── visual board, mechanism, diagnostics, play
-            │
-      ┌─────┴──────────────┐
-      ▼                    ▼
- EventRecorder         CameraWorker
- JSONL/support ZIP     optional local frames
+             |
+   +---------+----------+----------------+
+   |                    |                |
+protocol.py        MonitorModel      routing.py
+parse/version      health/mismatch   labeled rearrangement search
+   |                    |                |
+   +--------------------+----------------+
+                        |
+                    Tkinter UI
+                        |
+             +----------+-----------+
+             |                      |
+        EventRecorder          CameraWorker
+        JSONL/support ZIP      optional local frames
 ```
+
+## Responsibility boundary
+
+The Windows host owns expensive or evolving policy: chess legality, Stockfish,
+labeled-piece configuration search, evacuation/restore ordering, main-piece
+staging, time/node budgets, and transaction orchestration. The Nano owns the
+small deterministic safety kernel: sensor scanning, homing, limit checks, step
+timing, magnet cutoff, straight-corridor validation, per-drag occupancy proof,
+and final-frame proof.
+
+This separation keeps the Nano maintainable and makes future planners replaceable
+without weakening the hardware guardrails. The app uses the `PLANROUTE`
+capability when available and falls back to the firmware 4.0 `PLAY` command for
+older boards.
+
+## Routing model
+
+`routing.py` models a labeled configuration of physical pieces. Only one piece
+moves at a time. Carried paths use the four orthogonal neighbours; this is a
+conservative subset of the physical diagonal-clearance rule and therefore never
+attempts to squeeze diagonally between pieces.
+
+The bounded best-first search can:
+
+- route the primary piece directly;
+- evacuate blockers to empty parking squares and restore them;
+- stage the primary piece while a blocker returns through a shared gate;
+- recursively move secondary blockers to free a trapped piece;
+- handle capture removal, en passant, promotion occupancy, and both standard
+  castling sides.
+
+Candidate corridors and parking squares are ranked before full configuration
+search. Disturbance count dominates the cost, followed by the physical number of
+magnet pickups, carried distance, turns, and clearance risk. Time, node,
+temporary-piece, corridor, parking, and dependency-depth limits bound worst-case
+work. Failure is explicit; the app never silently substitutes an unverified
+physical move.
+
+A logical path may turn, but `protocol.py` splits it into maximal straight runs.
+The magnet releases and reacquires only at square centres. This lets every
+`DRAG` have a simple corridor proof and a complete post-move sensor proof.
+
+## Transaction orchestration
+
+Before planning, Windows requests a fresh 64-square `BOARD` frame and requires
+exact agreement with the logical position. Planning runs on a worker thread
+against an immutable board copy. Generation identifiers discard results made
+stale by disconnect, stop, or a newer move.
+
+Execution is one command at a time:
+
+```text
+PLAN -> BOARD -> (DRAG -> BOARD)* -> COMMIT
+```
+
+Windows waits for the exact acknowledgement, maintains its own expected
+occupancy frame, and applies separate control and motion timeouts. The Nano also
+checks the authoritative occupancy frame locally. After any capture or drag, a
+lost or mismatched acknowledgement makes physical state uncertain and ends the
+session instead of retrying.
 
 ## Threading
 
-Tkinter is touched only by the main thread. USB, BLE, Stockfish thinking, camera
-capture, discovery, and engine diagnostics run in worker threads and communicate
-through a queue. Transport callbacks may run on any worker and must remain small.
+Tkinter is touched only by the main thread. USB, BLE, Stockfish thinking, route
+planning, camera capture, discovery, and engine diagnostics run in worker
+threads and communicate through a queue. Transport callbacks may run on any
+worker and must remain small.
 
-All read-only host requests pass through one main-thread queue. Exactly one request
-may await its matching response at a time; a timeout releases the next request.
-This invariant applies equally to connection setup, manual refresh, diagnostics,
-the developer console, and periodic monitoring.
-Diagnostics evaluates only after its queued response batch completes or reaches
-terminal timeouts; it never relies on a fixed BLE timing delay.
+All ordinary read-only requests pass through one main-thread queue. Exactly one
+request may await its matching response at a time; a timeout releases the next
+request. Route transactions temporarily own the command channel and normal
+polling pauses until they finish or fail.
 
 ## State authority
 
-- `python-chess` is authoritative for legal rules and expected pieces.
+- `python-chess` is authoritative for legal rules and expected piece identity.
 - Reed sensors are authoritative only for physical occupancy.
-- The Nano normalizes raw multiplexer rows through the fixed published-hardware
-  row map before any move logic or `BOARD` telemetry consumes them.
+- The Nano normalizes raw multiplexer rows through the fixed hardware row map
+  before move logic or `BOARD` telemetry consumes them.
 - Nano telemetry reports commanded/calculated controller state.
 - The visual model displays disagreement instead of silently choosing one source.
 - `ManualSelection` owns direct-control mode and square selection. The UI enables
   movement only after e6 calibration agrees with fresh telemetry, while both
-  app and firmware enforce source/destination occupancy for piece movement.
+  app and firmware enforce source/destination occupancy.
 
 ## Extensibility
 
 Protocol evolution is capability-based. Add new optional lines rather than
 changing old positional responses. Parsers reject malformed data without taking
-control action. Simulator support should accompany every new public capability.
+control action. Every public capability needs parser tests, simulator support or
+an explicit hardware-only boundary, protocol documentation, and a backward-
+compatible fallback where practical.
 
 ## Safety design
 
 Read-only and motion commands are classified in `protocol.py`. The Developer UI
-locks motion commands, unknown commands are blocked, ordinary polling pauses while
-motion is expected, and support tooling is read-only. The `!` emergency path is
-separate from newline command parsing and checked inside Nano motor loops.
+locks motion commands, unknown commands are blocked, ordinary polling pauses
+while motion is expected, and support tooling is read-only. The `!` emergency
+path is separate from newline parsing and checked inside Nano motor loops.
 Settings are replaced atomically, and only the 20 most recent structured log
 sessions are retained.

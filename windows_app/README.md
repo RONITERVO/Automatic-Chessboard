@@ -18,6 +18,7 @@ next steps. Raw protocol data remains available in the Developer tab.
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
 | Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Requires firmware 4.1; bounded search can report that no verified plan was found |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
 | Limits/buttons | Electrical input state and A6 analog value | A snapshot does not prove the switch is mechanically positioned correctly |
@@ -118,9 +119,23 @@ hardware. In the Developer tab, `SIMMOVE e2e4` simulates a human move.
 
 ### Play
 
-Stockfish supplies legal moves and strength. The Nano still owns sensor scanning,
-motor timing, calibration, magnet control, and physical limit checks. Thinking
-longer uses Windows resources and does not consume more Nano flash or RAM.
+Stockfish supplies legal moves and strength. With firmware 4.1, Windows also
+plans the complete physical rearrangement before an automatic move. It can park
+blocking pieces temporarily, restore them, stage the main piece when it blocks a
+return path, and recursively free a trapped blocker. Carried paths are
+orthogonal, avoiding physically unsafe diagonal squeezing.
+
+Before planning, the app requires a fresh 64-square frame that exactly matches
+the logical game. It then executes a transaction containing one straight drag at
+a time and checks a fresh frame after each drag. A capture or disconnected move
+that cannot be proved is treated as uncertain and stops the session; it is never
+retried automatically. See [ARCHITECTURE.md](ARCHITECTURE.md) and
+[REMOTE_SAFETY.md](REMOTE_SAFETY.md).
+
+The Nano still owns sensor scanning, motor timing, calibration, magnet control,
+physical limit checks, and per-drag sensor proof. Thinking and route search use
+Windows resources and do not consume more Nano flash or RAM. Firmware 4.0 and
+earlier retain the legacy direct/knight `PLAY` path as a compatibility fallback.
 
 ### Diagnostics
 
@@ -187,10 +202,11 @@ Create a distributable Windows folder with:
 .\build.ps1
 ```
 
-The build is written to `dist\OpenAutomaticChessboard`. Stockfish is deliberately
-not embedded; run the included `install-stockfish.ps1` beside the packaged app or
-select an existing engine. GitHub Actions runs the same unit-test and compile
-checks on Windows for every companion change.
+The build produces `dist\OpenAutomaticChessboard` and a versioned Windows ZIP.
+Stockfish is deliberately not embedded; run the included
+`install-stockfish.ps1` beside the packaged app or select an existing engine.
+GitHub Actions runs the same unit-test and compile checks on Windows for every
+companion change.
 
 The default release excludes camera libraries. To create a larger camera-enabled
 build with OpenCV and Pillow bundled, use `build.ps1 -IncludeCamera` and label

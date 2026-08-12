@@ -31,11 +31,13 @@ from protocol import (
     CommandRisk,
     classify_command,
     parse_board_hex,
+    parse_drag_command,
     parse_event,
     parse_info,
     parse_telemetry,
     play_command,
 )
+from routing import MotionPlan, PlannerConfig, PlanningError, plan_chess_move
 from support import EventRecorder, create_support_bundle, user_data_dir, write_json_atomic
 from transports import (
     Hc08BleTransport,
@@ -45,7 +47,9 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.0.0-dev"
+APP_VERSION = "1.2.0"
+ROUTE_CONTROL_TIMEOUT_S = 8.0
+ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR
 DATA_DIR = user_data_dir()
@@ -250,6 +254,17 @@ class AutomaticChessboardApp:
         self.board = chess.Board()
         self.human_color = chess.WHITE
         self.pending_engine_move: chess.Move | None = None
+        self.route_snapshot_pending = False
+        self.route_planning = False
+        self.active_route_plan: MotionPlan | None = None
+        self.route_commands: deque[str] = deque()
+        self.route_waiting_for = ""
+        self.route_current_command = ""
+        self.route_deadline = 0.0
+        self.route_firmware_open = False
+        self.route_motion_command_sent = False
+        self.route_expected_occupancy: frozenset[int] = frozenset()
+        self.route_generation = 0
         self.awaiting_promotion_confirmation = False
         self.engine_thinking = False
         self.session_active = False
@@ -456,9 +471,25 @@ class AutomaticChessboardApp:
         self.think_seconds = tk.DoubleVar(value=float(self.settings.get("think_seconds", 0.8)))
         ttk.Spinbox(engine_frame, from_=0.1, to=300.0, increment=0.1,
                     textvariable=self.think_seconds, width=9).grid(row=2, column=1, sticky="w", pady=(8, 0))
-        ttk.Label(engine_frame, text="Longer thinking happens on Windows and uses no additional Nano memory.",
-                  wraplength=470, style="Quiet.TLabel").grid(row=3, column=0, columnspan=3,
-                                                              sticky="w", pady=(8, 0))
+        ttk.Label(engine_frame, text="Route search limit (seconds)").grid(
+            row=3, column=0, sticky="w", pady=(8, 0))
+        self.route_seconds = tk.DoubleVar(value=float(self.settings.get("route_seconds", 8.0)))
+        ttk.Spinbox(engine_frame, from_=0.5, to=120.0, increment=0.5,
+                    textvariable=self.route_seconds, width=9).grid(
+                        row=3, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(engine_frame, text="Maximum temporary pieces").grid(
+            row=4, column=0, sticky="w", pady=(8, 0))
+        self.route_temporary_pieces = tk.IntVar(
+            value=int(self.settings.get("route_temporary_pieces", 10)))
+        ttk.Spinbox(engine_frame, from_=0, to=30, increment=1,
+                    textvariable=self.route_temporary_pieces, width=9).grid(
+                        row=4, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(
+            engine_frame,
+            text=("Stockfish and collision-safe rearrangement planning run on Windows. "
+                  "Firmware 4.1 executes one sensor-verified drag transaction at a time."),
+            wraplength=470, style="Quiet.TLabel",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
         game = ttk.LabelFrame(self.play_tab, text="Game controls", padding=10)
         game.grid(row=0, column=1, sticky="new")
@@ -651,6 +682,8 @@ class AutomaticChessboardApp:
             "auto_monitor": self.auto_monitor.get(), "poll_seconds": self.poll_seconds.get(),
             "engine": self.engine_path.get(), "elo": self.elo.get(),
             "think_seconds": self.think_seconds.get(), "human_side": self.human_side.get(),
+            "route_seconds": self.route_seconds.get(),
+            "route_temporary_pieces": self.route_temporary_pieces.get(),
             "camera_source": source,
         }
 
@@ -784,6 +817,13 @@ class AutomaticChessboardApp:
             connected = bool(self.transport and self.transport.is_connected)
             self.model.connected = connected
             now = time.monotonic()
+            if ((self.active_route_plan is not None or self.route_snapshot_pending) and
+                    self.route_waiting_for and
+                    self.route_deadline and now >= self.route_deadline):
+                command = self.route_current_command.split(maxsplit=1)[0] or "route"
+                self._route_plan_failed(
+                    PlanningError(f"Timed out waiting for {command} acknowledgement")
+                )
             if self.safe_request_pending and now - self.safe_request_pending[2] > 4.0:
                 expected, command, _started = self.safe_request_pending
                 self.recorder.record("monitor", "request_timeout",
@@ -817,6 +857,10 @@ class AutomaticChessboardApp:
                     self.engine_thinking = False
                     self.game_status.set(f"Engine error: {payload}")
                     self._append_log("error", "Stockfish", str(payload))
+                elif kind == "route_plan_ready":
+                    self._begin_route_execution(payload)
+                elif kind == "route_plan_error":
+                    self._route_plan_failed(payload)
                 elif kind == "engine_test":
                     ok, detail = payload
                     self._set_diag("engine", "Pass" if ok else "Fail", detail,
@@ -861,6 +905,7 @@ class AutomaticChessboardApp:
             self.model.telemetry_updated = None
             self.manual_selection = ManualSelection(self.manual_selection.mode)
             self.manual_status.set("Connection lost; calibrate again after reconnecting.")
+            self._reset_route_orchestration(clear_pending=True)
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
         self._refresh_visual_state()
@@ -881,7 +926,11 @@ class AutomaticChessboardApp:
             try:
                 self.model.telemetry = parse_telemetry(event)
                 self.model.telemetry_updated = time.monotonic()
-                self.motion_expected = self.model.telemetry.sequence in (3, 8, 19, 21)
+                self.motion_expected = (
+                    self.model.telemetry.sequence in (3, 8, 19, 21, 22)
+                    or self.route_snapshot_pending or self.route_planning
+                    or self.active_route_plan is not None
+                )
             except ValueError as error:
                 self.model.last_error = str(error)
             else:
@@ -893,8 +942,25 @@ class AutomaticChessboardApp:
                 self.model.sensor_updated = time.monotonic()
             except ValueError as error:
                 self.model.last_error = str(error)
+                if self.active_route_plan is not None and self.route_waiting_for == "BOARD":
+                    self._route_plan_failed(error)
             else:
-                self._verify_manual_sensors()
+                if self.active_route_plan is not None and self.route_waiting_for == "BOARD":
+                    if self.model.sensor_squares != self.route_expected_occupancy:
+                        missing = self.route_expected_occupancy - self.model.sensor_squares
+                        unexpected = self.model.sensor_squares - self.route_expected_occupancy
+                        detail = (
+                            f"routed sensor proof failed (missing "
+                            f"{', '.join(map(square_name, sorted(missing))) or 'none'}; extra "
+                            f"{', '.join(map(square_name, sorted(unexpected))) or 'none'})"
+                        )
+                        self._route_plan_failed(PlanningError(detail))
+                    else:
+                        self.route_deadline = 0.0
+                        self._advance_route_execution()
+                else:
+                    self._verify_manual_sensors()
+                    self._maybe_start_route_planning()
         elif event.kind in ("READY", "PONG"):
             self._set_connection_text("Board connected and responding")
         elif event.kind == "SETUP":
@@ -920,6 +986,25 @@ class AutomaticChessboardApp:
                     f"Calibration ended at {self.calibration_reported_square or 'unknown'}; checking fresh telemetry."
                 )
                 self._queue_safe_requests("TELEM", "BOARD")
+        elif event.kind == "PLAN" and event.args:
+            if self.active_route_plan is not None and self.route_waiting_for == "PLAN":
+                if event.args[0] == "READY":
+                    self.route_deadline = 0.0
+                    self.route_firmware_open = True
+                    captured = self.active_route_plan.problem.captured_square
+                    if captured is not None:
+                        if captured not in self.route_expected_occupancy:
+                            self._route_plan_failed(
+                                PlanningError("Capture square was absent from the planned start frame")
+                            )
+                            return
+                        self.route_expected_occupancy = frozenset(
+                            square for square in self.route_expected_occupancy
+                            if square != captured
+                        )
+                    self._advance_route_execution()
+                else:
+                    self._route_plan_failed(PlanningError("PLAN acknowledgement mismatch"))
         elif event.kind == "MOVING":
             self.motion_expected = True
             if event.args and event.args[0] in ("HEAD", "PIECE"):
@@ -927,16 +1012,47 @@ class AutomaticChessboardApp:
             else:
                 self.game_status.set("The carriage is moving. Keep hands clear.")
         elif event.kind == "MOVED" and event.args:
-            self.motion_expected = False
-            if event.args[0] == "HEAD" and self.manual_pending == "head":
-                self.manual_status.set("Head stopped; checking fresh telemetry.")
-                self._queue_safe_requests("TELEM")
-            elif event.args[0] == "PIECE" and self.manual_pending == "piece":
-                self.manual_status.set("Piece movement finished; checking head and sensors.")
-                self._queue_safe_requests("TELEM", "BOARD")
+            if self.active_route_plan is not None and self.route_waiting_for == "MOVED":
+                try:
+                    route = parse_drag_command(self.route_current_command)
+                    expected_label = self.route_current_command.split()[1]
+                    acknowledged = (
+                        len(event.args) >= 2 and event.args[0] == "PIECE" and
+                        event.args[1].lower() == expected_label.lower()
+                    )
+                    if not acknowledged:
+                        raise PlanningError("MOVED acknowledgement mismatch")
+                    if (route.source not in self.route_expected_occupancy or
+                            route.target in self.route_expected_occupancy):
+                        raise PlanningError("Route occupancy diverged before sensor proof")
+                    updated = set(self.route_expected_occupancy)
+                    updated.remove(route.source)
+                    updated.add(route.target)
+                    self.route_expected_occupancy = frozenset(updated)
+                except (ValueError, PlanningError) as error:
+                    self._route_plan_failed(error)
+                else:
+                    self.route_deadline = 0.0
+                    self._advance_route_execution()
+            else:
+                self.motion_expected = False
+                if event.args[0] == "HEAD" and self.manual_pending == "head":
+                    self.manual_status.set("Head stopped; checking fresh telemetry.")
+                    self._queue_safe_requests("TELEM")
+                elif event.args[0] == "PIECE" and self.manual_pending == "piece":
+                    self.manual_status.set("Piece movement finished; checking head and sensors.")
+                    self._queue_safe_requests("TELEM", "BOARD")
         elif event.kind == "DONE" and event.args:
-            self.motion_expected = False
-            self._complete_engine_move(event.args[0])
+            if self.active_route_plan is not None:
+                if self.route_waiting_for != "DONE" or self.route_current_command != "COMMIT":
+                    self._route_plan_failed(PlanningError("Unexpected DONE acknowledgement"))
+                else:
+                    self.route_deadline = 0.0
+                    self.motion_expected = False
+                    self._complete_engine_move(event.args[0])
+            else:
+                self.motion_expected = False
+                self._complete_engine_move(event.args[0])
         elif event.kind == "PROMOTE" and event.args:
             messagebox.showinfo("Replace promoted pawn",
                                 f"Replace the pawn with {event.args[0].upper()}, then press Button A.",
@@ -952,12 +1068,16 @@ class AutomaticChessboardApp:
         elif event.kind == "ERR":
             self.model.last_error = " ".join(event.args)
             self.motion_expected = False
+            if self.active_route_plan is not None or self.route_planning or self.route_snapshot_pending:
+                detail = " ".join(event.args) or "unknown route error"
+                self._route_plan_failed(PlanningError(detail))
             if self.manual_pending:
                 self._clear_manual_pending()
                 self.manual_status.set(f"Board rejected the operation: {' '.join(event.args)}")
         elif event.kind == "STOPPED":
             self.session_active = False
             self.motion_expected = False
+            self._reset_route_orchestration(clear_pending=True)
             self.game_status.set("Remote game stopped; standalone mode remains available.")
         self._render()
         self._refresh_visual_state()
@@ -1301,7 +1421,7 @@ class AutomaticChessboardApp:
         if not self._ensure_engine():
             return
         self.board.reset()
-        self.pending_engine_move = None
+        self._reset_route_orchestration(clear_pending=True)
         self.awaiting_promotion_confirmation = False
         self.engine_thinking = False
         self.human_color = chess.WHITE if self.human_side.get() == "White" else chess.BLACK
@@ -1322,6 +1442,7 @@ class AutomaticChessboardApp:
         self._send("!", quiet=True)
         self.motion_expected = False
         self.session_active = False
+        self._reset_route_orchestration(clear_pending=True)
         self.game_status.set("REMOTE HALT SENT — verify locally; use physical power if motion continues")
         self.recorder.record("safety", "remote_halt_sent")
 
@@ -1381,12 +1502,224 @@ class AutomaticChessboardApp:
         if move not in self.board.legal_moves:
             self.game_status.set(f"Stockfish returned illegal move {uci}")
             return
+
         self.pending_engine_move = move
-        command = play_command(uci, castling=self.board.is_castling(move),
-                               en_passant=self.board.is_en_passant(move))
+        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
+        if "PLANROUTE" in capabilities:
+            self.route_snapshot_pending = True
+            self.route_planning = False
+            self.motion_expected = True
+            self.route_waiting_for = "BOARD"
+            self.route_current_command = "BOARD"
+            self.route_deadline = time.monotonic() + ROUTE_CONTROL_TIMEOUT_S
+            self.game_status.set("Reading all 64 sensors before collision-safe route planning...")
+            if not self._send("BOARD", quiet=True):
+                self._reset_route_orchestration(clear_pending=True)
+                self.game_status.set("Could not request the physical board snapshot.")
+            return
+
+        # Backward compatibility for firmware 4.0 and earlier. Legal chess moves
+        # retain the original direct/knight physical planner.
+        command = play_command(
+            uci,
+            castling=self.board.is_castling(move),
+            en_passant=self.board.is_en_passant(move),
+        )
         if self._send(command):
             self.motion_expected = True
             self.game_status.set(f"Board is moving {uci}; keep hands clear.")
+
+    def _maybe_start_route_planning(self) -> None:
+        if not self.route_snapshot_pending or self.pending_engine_move is None:
+            return
+        self.route_snapshot_pending = False
+        self.route_waiting_for = ""
+        self.route_current_command = ""
+        self.route_deadline = 0.0
+        sensors = self.model.sensor_squares
+        expected = expected_occupancy(self.board)
+        if sensors is None or sensors != expected:
+            missing = expected - (sensors or frozenset())
+            unexpected = (sensors or frozenset()) - expected
+            detail = (
+                f"missing {', '.join(map(square_name, sorted(missing))) or 'none'}; "
+                f"extra {', '.join(map(square_name, sorted(unexpected))) or 'none'}"
+            )
+            self._route_plan_failed(
+                PlanningError(f"physical/logical mismatch ({detail})")
+            )
+            return
+
+        position = self.board.copy(stack=False)
+        move = self.pending_engine_move
+        occupancy = frozenset(sensors)
+        try:
+            config = PlannerConfig(
+                time_limit_s=max(0.5, float(self.route_seconds.get())),
+                max_temporary_pieces=max(0, min(30, int(self.route_temporary_pieces.get()))),
+            )
+        except (tk.TclError, ValueError) as error:
+            self._route_plan_failed(error)
+            return
+
+        self.route_planning = True
+        self.motion_expected = True
+        self.game_status.set(
+            f"Planning collision-safe physical route for {move.uci()} on Windows..."
+        )
+        generation = self.route_generation
+
+        def worker() -> None:
+            try:
+                plan = plan_chess_move(
+                    position,
+                    move,
+                    physical_occupancy=occupancy,
+                    config=config,
+                )
+                self.events.put(("route_plan_ready", (generation, plan)))
+            except Exception as error:
+                self.events.put(("route_plan_error", (generation, error)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _begin_route_execution(self, payload: object) -> None:
+        if (not isinstance(payload, tuple) or len(payload) != 2 or
+                not isinstance(payload[0], int)):
+            self._route_plan_failed(PlanningError("Planner returned an invalid event"))
+            return
+        generation, result = payload
+        if generation != self.route_generation:
+            return
+        self.route_planning = False
+        if not isinstance(result, MotionPlan):
+            self._route_plan_failed(PlanningError("Planner returned an invalid result"))
+            return
+        payload = result
+        move = self.pending_engine_move
+        if move is None or payload.problem.move_uci != move.uci():
+            self._route_plan_failed(PlanningError("Stale route plan was discarded"))
+            return
+        try:
+            payload.validate()
+            commands = payload.protocol_commands()
+        except Exception as error:
+            self._route_plan_failed(error)
+            return
+
+        self.active_route_plan = payload
+        self.route_commands = deque(commands)
+        self.route_waiting_for = ""
+        self.route_current_command = ""
+        self.route_deadline = 0.0
+        self.route_firmware_open = False
+        self.route_motion_command_sent = False
+        self.route_expected_occupancy = (
+            payload.problem.initial_physical_occupancy
+            if payload.problem.initial_physical_occupancy is not None
+            else payload.problem.initial_occupancy_before_capture
+        )
+        self.motion_expected = True
+        self.recorder.record(
+            "route",
+            "plan_ready",
+            move=move.uci(),
+            relocations=len(payload.relocations),
+            temporary_pieces=payload.temporary_piece_count,
+            carried_steps=payload.carried_steps,
+            expanded=payload.statistics.expanded_nodes,
+            mode=payload.statistics.search_mode,
+        )
+        self.game_status.set(
+            f"Route ready: {payload.describe()}. Executing verified drags; keep hands clear."
+        )
+        self._advance_route_execution()
+
+    def _advance_route_execution(self) -> None:
+        if self.active_route_plan is None:
+            return
+        if not self.route_commands:
+            self._route_plan_failed(PlanningError("Route command sequence ended before COMMIT"))
+            return
+        command = self.route_commands.popleft()
+        verb = command.split(maxsplit=1)[0].upper()
+        self.route_waiting_for = (
+            "PLAN" if verb == "PLAN" else
+            "MOVED" if verb == "DRAG" else
+            "BOARD" if verb == "BOARD" else
+            "DONE" if verb == "COMMIT" else ""
+        )
+        self.route_current_command = command
+        plan_has_capture = (
+            verb == "PLAN" and self.active_route_plan.problem.captured_square is not None
+        )
+        timeout = (
+            ROUTE_MOTION_TIMEOUT_S
+            if verb == "DRAG" or plan_has_capture
+            else ROUTE_CONTROL_TIMEOUT_S
+        )
+        self.route_deadline = time.monotonic() + timeout
+        if verb == "DRAG" or plan_has_capture:
+            # A capture is removed during PLAN. Once any physical command is
+            # issued, a missing reply cannot prove the starting arrangement.
+            self.route_motion_command_sent = True
+        if not self.route_waiting_for or not self._send(command, quiet=True):
+            self._route_plan_failed(PlanningError(f"Could not send route command {verb}"))
+            return
+        self.motion_expected = True
+
+    def _route_plan_failed(self, error: object) -> None:
+        if (isinstance(error, tuple) and len(error) == 2 and
+                isinstance(error[0], int)):
+            generation, actual_error = error
+            if generation != self.route_generation:
+                return
+            error = actual_error
+        detail = str(error) or error.__class__.__name__
+        self.recorder.record("route", "plan_failed", error=detail)
+        # A non-capture PLAN is reversible because no magnet motion was issued.
+        # Never attempt automatic cancellation after capture/DRAG motion: a
+        # lost acknowledgement leaves the physical arrangement uncertain.
+        connected = self.transport is not None and self.transport.is_connected
+        can_cancel = (
+            connected and not self.route_motion_command_sent and
+            (self.route_firmware_open or self.route_current_command.startswith("PLAN "))
+        )
+        if can_cancel:
+            # A bare COMMIT is deliberately a clean cancellation while the full
+            # starting sensor frame is still present.
+            self._send("COMMIT", quiet=True)
+        # STOP never moves a piece. It closes any remaining remote transaction
+        # after the current firmware command reaches an idle point. Dirty boards
+        # remain visibly mismatched and require explicit recovery.
+        if connected:
+            self._send("STOP", quiet=True)
+        uncertain = self.route_motion_command_sent
+        self._reset_route_orchestration(clear_pending=True)
+        self.motion_expected = False
+        self.session_active = False
+        recovery = (
+            "The last motion may have changed the board; inspect every square before recovery."
+            if uncertain else
+            "No routed magnet movement was acknowledged; verify the position before restarting."
+        )
+        self.game_status.set(f"Collision-safe route stopped: {detail}. {recovery}")
+        self._append_log("error", "Route planner", detail)
+
+    def _reset_route_orchestration(self, *, clear_pending: bool) -> None:
+        self.route_generation += 1
+        self.route_snapshot_pending = False
+        self.route_planning = False
+        self.active_route_plan = None
+        self.route_commands.clear()
+        self.route_waiting_for = ""
+        self.route_current_command = ""
+        self.route_deadline = 0.0
+        self.route_firmware_open = False
+        self.route_motion_command_sent = False
+        self.route_expected_occupancy = frozenset()
+        if clear_pending:
+            self.pending_engine_move = None
 
     def _complete_engine_move(self, reported: str) -> None:
         move = self.pending_engine_move
@@ -1395,7 +1728,7 @@ class AutomaticChessboardApp:
             return
         self.board.push(move)
         self.awaiting_promotion_confirmation = bool(move.promotion)
-        self.pending_engine_move = None
+        self._reset_route_orchestration(clear_pending=True)
         self._render()
         if self.board.is_game_over(claim_draw=True) and not self.awaiting_promotion_confirmation:
             self._finish_game()
@@ -1634,6 +1967,22 @@ class AutomaticChessboardApp:
 
     def _send_developer_command(self) -> None:
         command = self.developer_command.get().strip()
+        verb = command.split(maxsplit=1)[0].upper() if command else ""
+        if verb in {"PLAN", "DRAG", "COMMIT"}:
+            messagebox.showwarning(
+                "Verified route command reserved",
+                "PLAN, DRAG, and COMMIT are owned by automatic route orchestration.",
+                parent=self.root,
+            )
+            return
+        if (self.route_snapshot_pending or self.route_planning or
+                self.active_route_plan is not None):
+            messagebox.showwarning(
+                "Route transaction active",
+                "Wait for the verified route to finish, or use the persistent emergency halt.",
+                parent=self.root,
+            )
+            return
         risk = classify_command(command)
         if risk == CommandRisk.UNKNOWN and not command.upper().startswith("SIMMOVE "):
             messagebox.showwarning("Unknown command", "This command is not in the documented protocol.",

@@ -16,7 +16,6 @@ struct BoardState {
 extern BoardState reed_sensor_status;
 extern BoardState reed_sensor_record;
 extern BoardState turn_start_status;
-
 const byte NO_SQUARE = 255;
 extern byte lifted_squares[2];
 extern byte lifted_count;
@@ -64,7 +63,8 @@ enum {
   remote_undo_required,
   remote_sensor_check,
   remote_promotion_wait,
-  host_manual_motion
+  host_manual_motion,
+  remote_route_plan
 };
 extern byte sequence;
 extern byte after_calibration;

@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from protocol import LineBuffer, board_hex_from_squares
+from protocol import LineBuffer, board_hex_from_squares, parse_drag_command, parse_plan_command
 
 HC08_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
 HC08_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
@@ -253,7 +253,7 @@ class Hc08BleTransport:
 
 
 class SimulatorTransport:
-    """No-hardware transport for UI development, demos, and issue reproduction."""
+    """No-hardware transport with separate logical and physical board states."""
 
     kind = "Simulator"
 
@@ -265,6 +265,7 @@ class SimulatorTransport:
         self._connected = False
         self._started = time.monotonic()
         self._board = chess.Board()
+        self._physical_squares: set[int] = set(self._board.piece_map())
         self._pending_human = None
         self._human_white = True
         self._sequence = 1
@@ -272,6 +273,11 @@ class SimulatorTransport:
         self._homed = False
         self._trolley_x = 5
         self._trolley_y = 6
+        self._plan_move = None
+        self._plan_initial: frozenset[int] | None = None
+        self._plan_expected: frozenset[int] | None = None
+        self._plan_capture: int | None = None
+        self._plan_dirty = False
 
     @property
     def is_connected(self) -> bool:
@@ -288,12 +294,19 @@ class SimulatorTransport:
         self._emit("READY ACB1")
 
     def _board_hex(self) -> str:
-        return board_hex_from_squares(set(self._board.piece_map()))
+        return board_hex_from_squares(self._physical_squares)
 
     def _telemetry(self) -> str:
         uptime = int(time.monotonic() - self._started)
         return (f"TELEM ACB2 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)} "
                 f"{int(self._fault)} 0 {self._trolley_x} {self._trolley_y} 1 1 1023 900 {uptime}")
+
+    def _clear_plan(self) -> None:
+        self._plan_move = None
+        self._plan_initial = None
+        self._plan_expected = None
+        self._plan_capture = None
+        self._plan_dirty = False
 
     def send(self, line: str) -> None:
         import chess
@@ -307,12 +320,14 @@ class SimulatorTransport:
             self._homed = False
             self._trolley_x, self._trolley_y = 0, 0
             self._sequence = 10
+            self._clear_plan()
             self._emit("ESTOP REMOTE")
         elif upper in ("PING", "HELLO"):
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 simulator BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,SENSORFRAME"
+                "INFO ACB2 4.1.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE"
             )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)}")
@@ -337,7 +352,11 @@ class SimulatorTransport:
                 self._emit("ERR FAULT")
             else:
                 self._board.reset()
+                self._physical_squares = set(self._board.piece_map())
+                self._clear_plan()
                 self._human_white = upper.endswith("W")
+                self._homed = True
+                self._trolley_x, self._trolley_y = 5, 6
                 self._sequence = 15
                 self._emit(f"OK START {'W' if self._human_white else 'B'}")
                 self._emit("SETUP PRESS A", 0.15)
@@ -349,6 +368,9 @@ class SimulatorTransport:
                 move = chess.Move.from_uci(text.split(maxsplit=1)[1].lower())
                 if move not in self._board.legal_moves:
                     raise ValueError("illegal in current position")
+                physical_after = self._board.copy(stack=False)
+                physical_after.push(move)
+                self._physical_squares = set(physical_after.piece_map())
                 self._pending_human = move
                 self._emit(f"MOVE {move.uci()}")
             except Exception as error:
@@ -361,8 +383,99 @@ class SimulatorTransport:
             self._emit("TURN COMPUTER", 0.1)
         elif upper == "REJECT":
             self._pending_human = None
+            self._physical_squares = set(self._board.piece_map())
             self._sequence = 18
             self._emit("OK REJECT")
+        elif upper.startswith("PLAN "):
+            try:
+                if self._fault:
+                    raise RuntimeError("FAULT")
+                if not self._homed or self._sequence != 17 or self._plan_move is not None:
+                    raise RuntimeError("NOT READY")
+                request = parse_plan_command(text)
+                move = chess.Move.from_uci(request.uci)
+                if move not in self._board.legal_moves:
+                    raise ValueError("BAD MOVE")
+                if frozenset(self._physical_squares) != frozenset(self._board.piece_map()):
+                    raise RuntimeError("PLAN STATE")
+
+                capture = None
+                if self._board.is_en_passant(move):
+                    capture = chess.square(
+                        chess.square_file(move.to_square), chess.square_rank(move.from_square)
+                    )
+                elif self._board.is_capture(move):
+                    capture = move.to_square
+                if request.capture_square != capture:
+                    raise ValueError("BAD CAPTURE")
+
+                expected_mode = "-"
+                if self._board.is_castling(move):
+                    expected_mode = "k" if move.to_square > move.from_square else "c"
+                elif move.promotion:
+                    expected_mode = chess.piece_symbol(move.promotion)
+                if request.mode != expected_mode:
+                    raise ValueError("BAD PLAN MODE")
+
+                initial = frozenset(self._physical_squares)
+                after = self._board.copy(stack=False)
+                after.push(move)
+                self._plan_move = move
+                self._plan_initial = initial
+                self._plan_expected = frozenset(after.piece_map())
+                self._plan_capture = capture
+                self._plan_dirty = capture is not None
+                self._sequence = 22
+                if capture is not None:
+                    self._physical_squares.remove(capture)
+                self._emit("PLAN READY", 0.12 if capture is not None else 0.04)
+            except Exception as error:
+                self._emit(f"ERR {error}")
+        elif upper.startswith("DRAG "):
+            try:
+                if self._plan_move is None:
+                    raise RuntimeError("NO PLAN")
+                route = parse_drag_command(text)
+                if route.source not in self._physical_squares:
+                    raise ValueError("SOURCE EMPTY")
+                if route.target in self._physical_squares:
+                    raise ValueError("TARGET FULL")
+                stationary = self._physical_squares - {route.source}
+                if any(square in stationary for square in route.path[1:]):
+                    raise ValueError("ROUTE BLOCKED")
+                label = f"{chess.square_name(route.source)}{chess.square_name(route.target)}"
+                self._emit(f"MOVING PIECE {label}")
+                self._physical_squares.remove(route.source)
+                self._physical_squares.add(route.target)
+                self._trolley_x = chess.square_file(route.target) + 1
+                self._trolley_y = chess.square_rank(route.target) + 1
+                self._plan_dirty = True
+                self._emit(f"MOVED PIECE {label}", 0.12)
+            except Exception as error:
+                self._emit(f"ERR {error}")
+        elif upper == "COMMIT":
+            try:
+                if (self._plan_move is None or self._plan_initial is None or
+                        self._plan_expected is None):
+                    raise RuntimeError("NO PLAN")
+                current = frozenset(self._physical_squares)
+                if current == self._plan_initial:
+                    self._clear_plan()
+                    self._sequence = 17
+                    self._emit("PLAN CANCELLED")
+                elif current != self._plan_expected:
+                    raise RuntimeError("PLAN INCOMPLETE")
+                else:
+                    move = self._plan_move
+                    self._board.push(move)
+                    self._clear_plan()
+                    self._sequence = 16
+                    label = move.uci()[:4]
+                    self._emit(f"DONE {label}")
+                    if move.promotion:
+                        self._emit(f"PROMOTE {chess.piece_symbol(move.promotion)}", 0.08)
+            except Exception as error:
+                self._emit(f"ERR {error}")
         elif upper.startswith("PLAY "):
             try:
                 if self._fault:
@@ -375,6 +488,7 @@ class SimulatorTransport:
 
                 def finish() -> None:
                     self._board.push(move)
+                    self._physical_squares = set(self._board.piece_map())
                     self._sequence = 16
                     self.on_line(f"DONE {uci}")
 
@@ -406,19 +520,20 @@ class SimulatorTransport:
                     raise ValueError("COMMAND")
                 source = chess.parse_square(move[:2])
                 target = chess.parse_square(move[2:])
-                if source not in self._board.piece_map():
+                if source not in self._physical_squares:
                     raise ValueError("SOURCE EMPTY")
-                if target in self._board.piece_map():
+                if target in self._physical_squares:
                     raise ValueError("TARGET FULL")
                 self._emit(f"MOVING PIECE {move}")
-                piece = self._board.remove_piece_at(source)
-                self._board.set_piece_at(target, piece)
+                self._physical_squares.remove(source)
+                self._physical_squares.add(target)
                 self._trolley_x = chess.square_file(target) + 1
                 self._trolley_y = chess.square_rank(target) + 1
                 self._emit(f"MOVED PIECE {move}", 0.25)
             except Exception as error:
                 self._emit(f"ERR {error}")
         elif upper == "STOP":
+            self._clear_plan()
             self._sequence = 1
             self._emit("STOPPED")
         elif upper.startswith("GAMEOVER"):

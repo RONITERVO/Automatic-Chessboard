@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.0.0.
+ * Automatic Chessboard firmware 4.1.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -16,7 +16,7 @@
 #include "global.h"
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.0.0"
+#define FIRMWARE_VERSION "4.1.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -328,6 +328,13 @@ void loop() {
       break;
 
     case remote_wait_host:
+      if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
+      break;
+
+    case remote_route_plan:
+      // Button B always leaves the transaction safely idle with the magnet off.
+      // A partially rearranged board then requires visual/sensor recovery before
+      // another game; it is never silently committed as a chess move.
       if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
       break;
 

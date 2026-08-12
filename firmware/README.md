@@ -1,12 +1,12 @@
 # Nano firmware development
 
-Firmware 4.0 keeps the Nano responsible for deterministic motion, sensor
+Firmware 4.1 keeps the Nano responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.0.0 behavior
+## Release 4.1.0 behavior
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
@@ -20,13 +20,22 @@ deliberately removed workflow; the configurable logged endurance tool below is
 its more useful connected replacement. It is unavailable without a companion,
 but its absence does not affect playing or servicing the board.
 
+Firmware 4.1 advertises `PLANROUTE`. A trusted host opens a fixed-width `PLAN`,
+sends one or more straight orthogonal `DRAG` commands, and finishes with
+`COMMIT`. The Nano compares the full normalized reed frame before the plan,
+before and after every drag, and before commit. It independently rejects stale
+state, occupied destinations, blocked corridors, incomplete capture/castling
+occupancy, and unexpected sensor transitions. Complex evacuation, restoration,
+staging, and recursive clearing remain host responsibilities so Nano memory and
+motion behaviour stay deterministic. See `windows_app/FIRMWARE_PROTOCOL.md`.
+
 For deterministic limit-input commissioning, send `SWTEST` from USB or the
 guarded developer console and follow its `PRESS A`, `RELEASE`, and `PRESS B`
 prompts. Unlike ordinary telemetry, the test temporarily owns the shared
 button/limit inputs so standalone menu actions cannot consume the press. It
 never moves hardware and forces the magnet off before sampling.
 
-For one-driver-at-a-time commissioning, firmware 4.0.0 advertises `DEVJOG`.
+For one-driver-at-a-time commissioning, firmware 4.0+ advertises `DEVJOG`.
 `JOG W+`, `JOG W-`, `JOG B+`, and `JOG B-` pulse only that driver for 20 full
 steps. They are idle-only motion commands, keep the magnet off, and deliberately
 invalidate the carriage coordinate so calibration is mandatory afterward.
@@ -72,10 +81,42 @@ Upload is intentionally explicit:
 Disconnect 24 V motor/magnet power before ordinary firmware uploads. Uploading
 or connecting must never begin movement.
 
+## Motionless release validation
+
+From the repository root, the complete hardware-free workflow is:
+
+```powershell
+./test-no-motion.ps1 -Port COM7
+```
+
+`route_transaction_model.py` is an independent occupancy-only digital twin of
+the Nano executor. Its tests exhaustively cover every clear straight drag, every
+non-straight rejection, every possible intermediate corridor blocker, Plan A
+evacuation/restore sequencing, capture, en passant, promotion, both standard
+castles, exact commit/cancel behavior, emergency halt, and injected stale or
+failed sensor transitions. No model code is compiled into the Nano.
+
+`non_motion_serial_test.py` samples a connected Nano using a hard allowlist of
+only `PING`, `INFO`, `STATUS`, `TELEM`, and `BOARD`. It checks firmware identity,
+capabilities, framing, magnet-off telemetry, and repeated serial stability. Reed
+occupancy is recorded but deliberately not judged. The probe cannot send an
+upload, calibration, movement, magnet, transaction, stop, or emergency command.
+Some Nano USB adapters can reset when their serial port opens even with DTR held
+inactive; normal firmware startup therefore remains part of the magnet/STEP-low
+safety contract.
+
+If the Nano does not answer with DTR held inactive, rerun the root workflow with
+`-AllowSerialReset` after making startup electrically safe. This permits only
+the ordinary USB DTR reset; the command allowlist remains unchanged.
+
+Motionless validation does not replace commissioning of motor direction and
+step retention, magnet pickup/release, reed mapping, limit switches, carriage
+clearance, or real-piece collision behavior.
+
 ## Connected endurance test
 
 The old fixed 200-ply AI-vs-AI service routine consumed scarce Nano flash and
-SRAM and could not be configured or logged. Firmware 4.0 replaces it with the
+SRAM and could not be configured or logged. Firmware 4.0+ replaces it with the
 magnet-free `PATH` developer command and a USB tool:
 
 ```powershell

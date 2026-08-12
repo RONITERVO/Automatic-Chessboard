@@ -12,7 +12,8 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /** Single source of truth for connection, protocol, polling, and safety state. */
-class BoardRepository(private val recorder: EventRecorder) : BoardTransport.Listener, AutoCloseable {
+class BoardRepository(private val recorder: EventRecorder) :
+    BoardTransport.Listener, GameBoardChannel, AutoCloseable {
     private data class PendingRequest(val expected: String, val command: String, val startedMs: Long)
 
     interface Observer {
@@ -36,8 +37,13 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
     private var pollBoardNext = false
     private var lastPeriodicPollMs = 0L
     private var motionStartedMs: Long? = null
+    private var routeExclusive = false
     @Volatile var state = MonitorState()
         private set
+
+    override val firmwareCapabilities: Set<String> get() = state.firmware?.capabilities.orEmpty()
+    override val physicalOccupancy: Set<Int>? get() = state.sensorSquares
+    override val connected: Boolean get() = state.connected
 
     fun addObserver(observer: Observer) {
         val timelineSnapshot = synchronized(stateLock) {
@@ -58,6 +64,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
             requestQueue.clear()
             responseCounts.clear()
             motionStartedMs = null
+            routeExclusive = false
             state = state.copy(connected = false, connectionText = "Connecting\u2026", lastError = "")
             stateLock.notifyAll()
             if (pollFuture == null) {
@@ -75,6 +82,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
             pending = null
             requestQueue.clear()
             motionStartedMs = null
+            routeExclusive = false
             state = state.copy(connected = false, connectionText = "Disconnected", motionExpected = false)
             stateLock.notifyAll()
         }
@@ -123,10 +131,19 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
         publishState()
     }
 
-    fun sendCommand(command: String): Result<Unit> = runCatching {
+    override fun sendCommand(command: String): Result<Unit> = runCatching {
         val active = transport ?: error("Connect to the board first")
         check(active.isConnected) { "Board connection is not ready" }
         val risk = Protocol.classifyCommand(command)
+        val verb = command.trim().substringBefore(' ').uppercase()
+        synchronized(stateLock) {
+            check(!routeExclusive || risk == CommandRisk.EMERGENCY) {
+                "A verified route transaction currently owns the board connection"
+            }
+        }
+        check(verb !in PRIVATE_ROUTE_COMMANDS) {
+            "Route transaction commands are reserved for verified game orchestration"
+        }
         if (risk == CommandRisk.READ_ONLY) {
             enqueueRequests(command)
             return@runCatching
@@ -147,6 +164,60 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
         }
         recorder.record("error", "send_failed", mapOf("command" to command, "error" to error.toString()))
         publishState()
+    }
+
+    override fun beginRouteTransaction(): Result<Unit> = runCatching {
+        synchronized(stateLock) {
+            val active = transport ?: error("Connect to the board first")
+            check(active.isConnected) { "Board connection is not ready" }
+            check(!routeExclusive) { "Another route transaction is active" }
+            check(pending == null) { "A board request is still awaiting its response" }
+            requestQueue.clear()
+            routeExclusive = true
+            motionStartedMs = System.currentTimeMillis()
+            state = state.copy(motionExpected = true)
+        }
+        publishState()
+        Unit
+    }
+
+    override fun sendRouteCommand(command: String): Result<Unit> = runCatching {
+        val normalized = command.trim()
+        val verb = normalized.substringBefore(' ').uppercase()
+        check(verb in ROUTE_COMMANDS || verb == "STOP") { "Invalid route command: $verb" }
+        val active = synchronized(stateLock) {
+            check(routeExclusive) { "No route transaction is active" }
+            val current = transport ?: error("Connect to the board first")
+            check(current.isConnected) { "Board connection is not ready" }
+            motionStartedMs = motionStartedMs ?: System.currentTimeMillis()
+            state = state.copy(motionExpected = true)
+            current
+        }
+        active.send(normalized)
+        recorder.record("protocol_tx", normalized)
+        addTimeline("TX", verb, normalized.substringAfter(' ', "verified route"))
+        publishState()
+        Unit
+    }.onFailure { error ->
+        synchronized(stateLock) { state = state.copy(lastError = error.message ?: "Route send failed") }
+        recorder.record("error", "route_send_failed", mapOf("command" to command, "error" to error.toString()))
+        publishState()
+    }
+
+    override fun finishRouteTransaction() {
+        synchronized(stateLock) {
+            routeExclusive = false
+            motionStartedMs = null
+            state = state.copy(motionExpected = false)
+            lastPeriodicPollMs = System.currentTimeMillis()
+        }
+        publishState()
+    }
+
+    override fun abortRouteTransaction(): Result<Unit> {
+        val result = sendRouteCommand("STOP")
+        finishRouteTransaction()
+        return result
     }
 
     fun emergencyHalt(): Result<Unit> {
@@ -170,6 +241,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
             val active = synchronized(stateLock) {
                 val current = transport ?: return
                 if (!current.isConnected) return
+                if (routeExclusive) return
                 val now = System.currentTimeMillis()
                 when (handleMotionTimeoutLocked(now)) {
                     MotionPollState.WAITING -> return
@@ -256,6 +328,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                     pending = null
                     requestQueue.clear()
                     motionStartedMs = null
+                    routeExclusive = false
                 }
                 state = state.copy(connected = connected, connectionText = status)
                 stateLock.notifyAll()
@@ -282,7 +355,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                         "INFO" -> next.copy(firmware = Protocol.parseInfo(event), lastError = "")
                         "TELEM" -> {
                             val telemetry = Protocol.parseTelemetry(event)
-                            val moving = telemetry.sequence in setOf(3, 8, 19, 21)
+                            val moving = telemetry.sequence in setOf(3, 8, 19, 21, 22)
                             motionStartedMs = if (moving) motionStartedMs ?: now else null
                             next.copy(telemetry = telemetry, motionExpected = moving, lastError = "")
                         }
@@ -293,7 +366,7 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")
-                        "SETUP", "DONE", "MOVED", "CALIBRATED", "ESTOP", "ERR", "STOPPED" -> {
+                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
                         }
@@ -349,6 +422,8 @@ class BoardRepository(private val recorder: EventRecorder) : BoardTransport.List
         const val SAFE_REFRESH_TIMEOUT_MS = 18_000L
         const val MAX_MOTION_DURATION_MS = 10 * 60_000L
         private val SAFE_REFRESH_COMMANDS = arrayOf("PING", "INFO", "TELEM", "BOARD")
+        private val ROUTE_COMMANDS = setOf("PLAN", "DRAG", "COMMIT", "BOARD")
+        private val PRIVATE_ROUTE_COMMANDS = setOf("PLAN", "DRAG", "COMMIT")
     }
 
     private enum class MotionPollState { READY, WAITING, TIMED_OUT }
