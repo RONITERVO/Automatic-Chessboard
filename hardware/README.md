@@ -1,6 +1,6 @@
 # Hardware build guide
 
-This folder is the electrical build contract for firmware **4.2.0**. It is
+This folder is the electrical build contract for firmware **4.3.0**. It is
 intended to be detailed enough for a school lab or first-time builder without
 pretending that the prototype PCB is a manufacturing-ready product.
 
@@ -13,6 +13,11 @@ Start with these documents, in order:
 5. [Working prototype and enclosure reference](PROTOTYPE.md)
 6. [Staged assembly](ASSEMBLY.md)
 7. [First-power commissioning](COMMISSIONING.md)
+
+Builders replacing the Nano and external driver/transistor assembly with the
+integrated ATmega2560 board in the supplied photograph should instead follow
+the complete [MKS Gen L V1.0 profile](MKS_GEN_L_V1.md). It retains the same
+sensor/square map and mechanics but has its own connector-level pin contract.
 
 The [`printFiles`](printFiles/README.md) directory contains the project's 3D
 print models, separately attributed third-party models, and optional printable
@@ -34,7 +39,8 @@ repository root after changing hardware pins, firmware pins, or the sensor map.
 
 | Artifact | Status | Use |
 | --- | --- | --- |
-| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.2.0 hardware from these |
+| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.3.0 Nano hardware from these |
+| `MKS_GEN_L_V1.md` and `mks-gen-l-v1-connections.csv` | Current alternative | Replace Nano, external drivers, and TIP120 with an MKS Gen L V1.0 |
 | Firmware constants in `global.h` | Current | Pin and motion configuration |
 | Commissioning checklist | Current | Required before first movement |
 | [Photographed working build](PROTOTYPE.md) | Tested prototype | Evidence for the mechanism, enclosure integration, controller rework, component choices, and 0.720 V driver setting |

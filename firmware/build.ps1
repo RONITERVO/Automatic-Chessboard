@@ -1,17 +1,35 @@
 [CmdletBinding()]
 param(
-  [string]$Fqbn = "arduino:avr:nano:cpu=atmega328old",
+  [ValidateSet("nano", "mks-gen-l-v1")]
+  [string]$HardwareProfile = "nano",
+  [string]$Fqbn,
   [switch]$InstallDependencies,
   [switch]$Upload,
   [string]$Port,
-  [int]$MaxFlashBytes = 28562,
-  [int]$MaxRamBytes = 1118
+  [int]$MaxFlashBytes,
+  [int]$MaxRamBytes
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$output = Join-Path $repo "build/nano"
 $mainSketch = Join-Path $repo "Automatic_Chessboard_V3_27_i2c_value.ino"
+
+if ($HardwareProfile -eq "mks-gen-l-v1") {
+  if (-not $Fqbn) { $Fqbn = "arduino:avr:mega:cpu=atmega2560" }
+  if ($Fqbn -notmatch '^arduino:avr:mega:') {
+    throw "mks-gen-l-v1 requires an ATmega2560 Mega FQBN."
+  }
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 253952 }
+  if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 8192 }
+  $profileBuildFlags = "-DACB_PROFILE_MKS_GEN_L_V1"
+}
+else {
+  if (-not $Fqbn) { $Fqbn = "arduino:avr:nano:cpu=atmega328old" }
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 28562 }
+  if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 1118 }
+  $profileBuildFlags = ""
+}
+$output = Join-Path $repo ("build/" + $HardwareProfile)
 
 function Find-ArduinoCli {
   $command = Get-Command arduino-cli -ErrorAction SilentlyContinue
@@ -35,6 +53,8 @@ if ($InstallDependencies) {
   }
   & $cli lib install "hd44780@1.3.2"
   if ($LASTEXITCODE -ne 0) { throw "Could not install hd44780@1.3.2." }
+  & $cli lib install "SoftwareWire@1.6.0"
+  if ($LASTEXITCODE -ne 0) { throw "Could not install SoftwareWire@1.6.0." }
 }
 
 New-Item -ItemType Directory -Force -Path $output | Out-Null
@@ -65,11 +85,14 @@ try {
     "--warnings", "default"
     "--clean"
     "--output-dir", $output
-    $stagedSketch
   )
+  if ($profileBuildFlags) {
+    $compileArguments += @("--build-property", "build.extra_flags=$profileBuildFlags")
+  }
+  $compileArguments += $stagedSketch
   $result = & $cli @compileArguments 2>&1 | Out-String
   Write-Host $result.TrimEnd()
-  if ($LASTEXITCODE -ne 0) { throw "Nano compilation failed." }
+  if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile compilation failed." }
 
   $flashMatch = [regex]::Match($result, "Sketch uses (\d+) bytes")
   $ramMatch = [regex]::Match($result, "Global variables use (\d+) bytes")
@@ -91,9 +114,14 @@ try {
     if (-not $Port) {
       throw "-Upload requires an explicit -Port (for example COM7)."
     }
-    & $cli upload --fqbn $Fqbn --port $Port --input-dir $output $stagedSketch
-    if ($LASTEXITCODE -ne 0) { throw "Nano upload failed." }
-    Write-Host "Uploaded firmware to $Port."
+    $uploadArguments = @(
+      "upload", "--fqbn", $Fqbn, "--port", $Port,
+      "--input-dir", $output
+    )
+    $uploadArguments += $stagedSketch
+    & $cli @uploadArguments
+    if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile upload failed." }
+    Write-Host "Uploaded $HardwareProfile firmware to $Port."
   }
 }
 finally {

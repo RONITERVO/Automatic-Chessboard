@@ -326,7 +326,7 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.2.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "INFO ACB2 4.3.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
                 "SENSORFRAME,PLANROUTE"
             )
         elif upper == "STATUS":

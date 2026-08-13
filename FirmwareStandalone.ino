@@ -2,8 +2,12 @@
 
 // Waits for release so the same input can become an emergency stop during motion.
 byte readControlPin(byte pin) {
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  return digitalRead(pin);
+#else
   if (pin == BUTTON_B_LIMIT_BLACK) return analogRead(pin) >= 512 ? HIGH : LOW;
   return digitalRead(pin);
+#endif
 }
 
 boolean buttonPressed(byte pin) {

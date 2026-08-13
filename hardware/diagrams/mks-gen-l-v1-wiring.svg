@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="920" viewBox="0 0 1400 920">
+  <style>
+    .title { font: 700 30px sans-serif; fill: #17202a; }
+    .sub { font: 16px sans-serif; fill: #34495e; }
+    .head { font: 700 18px sans-serif; fill: #17202a; }
+    .text { font: 14px monospace; fill: #17202a; }
+    .small { font: 12px sans-serif; fill: #34495e; }
+    .board { fill: #f8fbf7; stroke: #287233; stroke-width: 4; }
+    .connector { fill: #ffffff; stroke: #34495e; stroke-width: 2; }
+    .power { stroke: #c0392b; stroke-width: 4; fill: none; }
+    .ground { stroke: #1f618d; stroke-width: 4; fill: none; }
+    .signal { stroke: #7d3c98; stroke-width: 3; fill: none; }
+    .warn { fill: #fff3cd; stroke: #d68910; stroke-width: 2; }
+  </style>
+
+  <text x="700" y="42" text-anchor="middle" class="title">Automatic Chessboard - MKS Gen L V1.0 profile</text>
+  <text x="700" y="70" text-anchor="middle" class="sub">Connector-level overview; follow the CSV/table for individual AUX-2 pin numbers</text>
+
+  <rect x="260" y="100" width="880" height="670" rx="24" class="board"/>
+  <text x="700" y="137" text-anchor="middle" class="head">MKS Gen_L V1.0 / ATmega2560</text>
+
+  <rect x="355" y="165" width="250" height="92" rx="8" class="connector"/>
+  <text x="480" y="190" text-anchor="middle" class="head">X DRIVER + MOTOR</text>
+  <text x="480" y="216" text-anchor="middle" class="text">STEP54 DIR55 EN38</text>
+  <text x="480" y="239" text-anchor="middle" class="text">2B  2A  1A  1B</text>
+
+  <rect x="795" y="165" width="250" height="92" rx="8" class="connector"/>
+  <text x="920" y="190" text-anchor="middle" class="head">Y DRIVER + MOTOR</text>
+  <text x="920" y="216" text-anchor="middle" class="text">STEP60 DIR61 EN56</text>
+  <text x="920" y="239" text-anchor="middle" class="text">2B  2A  1A  1B</text>
+
+  <rect x="292" y="305" width="230" height="90" rx="8" class="connector"/>
+  <text x="407" y="331" text-anchor="middle" class="head">12/24V INPUT</text>
+  <text x="407" y="359" text-anchor="middle" class="text">+24V   GND</text>
+  <text x="407" y="382" text-anchor="middle" class="small">fuse + cutoff upstream</text>
+
+  <rect x="292" y="430" width="230" height="90" rx="8" class="connector"/>
+  <text x="407" y="456" text-anchor="middle" class="head">HE0 / D10</text>
+  <text x="407" y="484" text-anchor="middle" class="text">-HE0   +HE0</text>
+  <text x="407" y="507" text-anchor="middle" class="small">external flyback diode required</text>
+
+  <rect x="565" y="305" width="270" height="120" rx="8" class="connector"/>
+  <text x="700" y="331" text-anchor="middle" class="head">AUX-2 - FOUR MUX MODULES</text>
+  <text x="590" y="359" class="text">S0 A9/63</text><text x="715" y="359" class="text">S1 A5/59</text>
+  <text x="590" y="383" class="text">S2 D40</text><text x="715" y="383" class="text">S3 D42</text>
+  <text x="590" y="407" class="text">EN0 A11/65</text><text x="715" y="407" class="text">EN1 A10/64</text>
+
+  <rect x="565" y="450" width="270" height="84" rx="8" class="connector"/>
+  <text x="700" y="476" text-anchor="middle" class="head">AUX-2 CONTINUED</text>
+  <text x="590" y="504" class="text">EN2 D44</text><text x="715" y="504" class="text">EN3 A12/66</text>
+  <text x="700" y="524" text-anchor="middle" class="small">pin 2=5V, pin 1=GND</text>
+
+  <rect x="875" y="305" width="230" height="90" rx="8" class="connector"/>
+  <text x="990" y="331" text-anchor="middle" class="head">LIMITS / BUTTONS</text>
+  <text x="990" y="360" text-anchor="middle" class="text">X- S=D3, G=GND</text>
+  <text x="990" y="384" text-anchor="middle" class="text">Y- S=D14, G=GND</text>
+
+  <rect x="875" y="430" width="230" height="90" rx="8" class="connector"/>
+  <text x="990" y="456" text-anchor="middle" class="head">SERVOS2 - MUX SIG</text>
+  <text x="990" y="484" text-anchor="middle" class="text">D4 = all SIG</text>
+  <text x="990" y="507" text-anchor="middle" class="text">GND contact = GND</text>
+
+  <rect x="292" y="585" width="230" height="105" rx="8" class="connector"/>
+  <text x="407" y="611" text-anchor="middle" class="head">SERVOS1 - LCD</text>
+  <text x="407" y="639" text-anchor="middle" class="text">D11 SDA   D6 SCL</text>
+  <text x="407" y="663" text-anchor="middle" class="text">5V VCC    GND GND</text>
+  <text x="407" y="684" text-anchor="middle" class="small">software I2C</text>
+
+  <rect x="585" y="585" width="230" height="105" rx="8" class="connector"/>
+  <text x="700" y="611" text-anchor="middle" class="head">BLUETOOTH INPUT</text>
+  <text x="700" y="639" text-anchor="middle" class="text">EXP1 pin 3 / D17 RX2</text>
+  <text x="700" y="663" text-anchor="middle" class="text">&lt;- HC-08 TXD</text>
+  <text x="700" y="684" text-anchor="middle" class="small">clean hardware UART input</text>
+
+  <rect x="875" y="585" width="230" height="105" rx="8" class="connector"/>
+  <text x="990" y="611" text-anchor="middle" class="head">AUX-1 - BLUETOOTH</text>
+  <text x="990" y="639" text-anchor="middle" class="text">D1 TX0 -> 1k -> RXD</text>
+  <text x="990" y="663" text-anchor="middle" class="text">RXD node -> 2k -> GND</text>
+  <text x="990" y="684" text-anchor="middle" class="small">5V only for regulated carrier</text>
+
+  <rect x="55" y="315" width="160" height="92" rx="8" class="connector"/>
+  <text x="135" y="341" text-anchor="middle" class="head">24 V SUPPLY</text>
+  <text x="135" y="368" text-anchor="middle" class="text">FUSE</text>
+  <text x="135" y="391" text-anchor="middle" class="text">CUTOFF</text>
+  <path d="M215 345 H292" class="power"/><path d="M215 380 H292" class="ground"/>
+
+  <rect x="55" y="450" width="160" height="92" rx="8" class="connector"/>
+  <text x="135" y="477" text-anchor="middle" class="head">H2520 MAGNET</text>
+  <text x="135" y="504" text-anchor="middle" class="text">+  COIL  -</text>
+  <text x="135" y="528" text-anchor="middle" class="small">stripe of diode at +</text>
+  <path d="M215 476 H292" class="power"/><path d="M215 510 H292" class="ground"/>
+
+  <rect x="1185" y="315" width="170" height="128" rx="8" class="connector"/>
+  <text x="1270" y="341" text-anchor="middle" class="head">4 x CD74HC4067</text>
+  <text x="1270" y="368" text-anchor="middle" class="text">64 REED SWITCHES</text>
+  <text x="1270" y="394" text-anchor="middle" class="text">S0-S3 shared</text>
+  <text x="1270" y="418" text-anchor="middle" class="text">SIG shared, EN separate</text>
+  <path d="M835 365 H1185" class="signal"/><path d="M1105 475 H1150 V410 H1185" class="signal"/>
+
+  <rect x="1185" y="500" width="170" height="92" rx="8" class="connector"/>
+  <text x="1270" y="526" text-anchor="middle" class="head">16 x 2 LCD</text>
+  <text x="1270" y="553" text-anchor="middle" class="text">I2C BACKPACK</text>
+  <text x="1270" y="577" text-anchor="middle" class="text">SDA SCL 5V GND</text>
+  <path d="M1105 637 H1155 V560 H1185" class="signal"/>
+
+  <rect x="1185" y="640" width="170" height="92" rx="8" class="connector"/>
+  <text x="1270" y="666" text-anchor="middle" class="head">HC-08 CARRIER</text>
+  <text x="1270" y="693" text-anchor="middle" class="text">TXD RXD VCC GND</text>
+  <text x="1270" y="717" text-anchor="middle" class="small">BLE serial module</text>
+  <path d="M815 637 H1185" class="signal"/><path d="M1105 670 H1185" class="signal"/>
+
+  <rect x="160" y="805" width="1080" height="74" rx="10" class="warn"/>
+  <text x="700" y="834" text-anchor="middle" class="head">POWER-OFF RULE</text>
+  <text x="700" y="861" text-anchor="middle" class="sub">Remove USB and 24 V before inserting drivers, changing jumpers, moving motor plugs, or rewiring HE0. Calibrate after any lost step.</text>
+</svg>

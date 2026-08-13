@@ -25,7 +25,7 @@ microstep selection are configured on the driver hardware.
 
 For a complete beginner-oriented build, start with the
 [`hardware` build guide](hardware/README.md). It includes protected power
-wiring, a BOM, exact Nano and 64-square sensor maps, staged assembly,
+wiring, a BOM, exact Nano/MKS Gen L V1.0 and 64-square sensor maps, staged assembly,
 commissioning checks, diagrams, photographs of the working prototype, and
 rework notes for the operational long PCB whose design predates the current
 Bluetooth and A6 additions. Its archived KiCad source is reference-only, not a
@@ -40,9 +40,9 @@ The release build is reproducible from PowerShell:
 ./firmware/test.ps1 -InstallDependencies
 ```
 
-It pins the Nano core and `hd44780` library, validates the hardware contract,
-runs tool tests, compiles for the classic Nano old bootloader, and enforces
-flash/SRAM budgets. See [`firmware/README.md`](firmware/README.md) for the
+It pins the AVR core and display libraries, validates the hardware contract,
+runs tool tests, compiles the classic Nano and MKS Gen L V1.0 profiles, and
+enforces flash/SRAM budgets. See [`firmware/README.md`](firmware/README.md) for the
 modular source layout, explicit upload command, and contributor policy. The
 main `.ino` can still be opened normally in Arduino IDE; its sibling `.ino`
 tabs are compiled together automatically.
@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.2.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.3.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only

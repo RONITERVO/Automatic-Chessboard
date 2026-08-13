@@ -27,16 +27,16 @@ finally {
 }
 
 if ($Port) {
-  Write-Host "Read-only Nano protocol probe on $Port"
+  Write-Host "Read-only controller protocol probe on $Port"
   $venvPython = Join-Path $repo "windows_app/.venv/Scripts/python.exe"
   $probePython = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { "python" }
   $probeArguments = @((Join-Path $repo "firmware/non_motion_serial_test.py"), "--port", $Port, "--samples", "20")
   if ($AllowSerialReset) { $probeArguments += "--allow-reset" }
   & $probePython @probeArguments
-  if ($LASTEXITCODE -ne 0) { throw "Read-only Nano protocol probe failed." }
+  if ($LASTEXITCODE -ne 0) { throw "Read-only controller protocol probe failed." }
 }
 else {
-  Write-Host "No serial port supplied; skipped the optional read-only Nano probe."
+  Write-Host "No serial port supplied; skipped the optional read-only controller probe."
 }
 
 Write-Host "PASS: hardware-free release validation completed."

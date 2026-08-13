@@ -79,6 +79,39 @@ enum {
 extern byte service_item;
 extern byte service_file;
 
+// Hardware profiles. The classic Nano build remains the default. Select the
+// MKS profile only through firmware/build.ps1 -HardwareProfile mks-gen-l-v1;
+// making a Mega target implicit would be unsafe because generic Mega wiring
+// does not match the integrated MKS driver and MOSFET connectors.
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+const char HARDWARE_PROFILE_NAME[] PROGMEM = "MKS_GEN_L_V1";
+
+// MKS Gen L V1.0 HE0 is the D10 low-side MOSFET output.
+const byte MAGNET = 10;
+
+// Integrated X and Y StepStick sockets.
+const byte MOTOR_WHITE_STEP = 54;  // X STEP / A0
+const byte MOTOR_WHITE_DIR = 55;   // X DIR / A1
+const byte MOTOR_WHITE_ENABLE = 38;
+const byte MOTOR_BLACK_STEP = 60;  // Y STEP / A6
+const byte MOTOR_BLACK_DIR = 61;   // Y DIR / A7
+const byte MOTOR_BLACK_ENABLE = 56;
+const boolean MOTOR_ENABLE_ACTIVE_LOW = true;
+
+// AUX-2 carries all eight control lines. These are Arduino pin numbers;
+// A9/A5/A11/A10/A12 are also D63/D59/D65/D64/D66 respectively.
+const byte MUX_ADDR[4] = {A9, A5, 40, 42};
+const byte MUX_SELECT[4] = {A11, A10, 44, A12};
+const byte MUX_OUTPUT = 4;  // SERVOS2 D4 signal pin (unfiltered digital input)
+
+// Use the signal and GND contacts of the X- and Y- endstop connectors.
+const byte BUTTON_A_LIMIT_WHITE = 3;
+const byte BUTTON_B_LIMIT_BLACK = 14;
+
+// SERVOS1 provides D11=SDA and D6=SCL for the software-I2C LCD bus.
+const byte LCD_SOFTWARE_SDA = 11;
+const byte LCD_SOFTWARE_SCL = 6;
+#else
 // Electromagnet.
 const byte MAGNET = 6;
 
@@ -87,6 +120,7 @@ const byte MOTOR_WHITE_DIR = 2;
 const byte MOTOR_WHITE_STEP = 3;
 const byte MOTOR_BLACK_DIR = 4;
 const byte MOTOR_BLACK_STEP = 5;
+#endif
 // This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
 // Supported A4988 values are 1, 2, 4, 8, and 16.
 const byte MOTOR_MICROSTEPS = 1;
@@ -130,7 +164,8 @@ const unsigned int HOME_MAX_STEPS =
 const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = RANK_PITCH_STEPS;
 const unsigned long MAGNET_MAX_ON_MS = 30000UL;
 
-// Reed-sensor multiplexers.
+// Reed-sensor multiplexers (classic Nano profile).
+#if !defined(ACB_PROFILE_MKS_GEN_L_V1)
 const byte MUX_ADDR[4] = {A3, A2, A1, A0};
 const byte MUX_SELECT[4] = {13, 9, 8, 7};
 const byte MUX_OUTPUT = 12;
@@ -141,5 +176,6 @@ const byte MUX_OUTPUT = 12;
 const byte BUTTON_A_LIMIT_WHITE = 11;
 const byte BUTTON_B_LIMIT_BLACK = A6;
 const byte BLUETOOTH_RX = 10;
+#endif
 
 #endif

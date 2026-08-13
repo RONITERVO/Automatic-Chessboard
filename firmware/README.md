@@ -1,12 +1,19 @@
 # Nano firmware development
 
-Firmware 4.2 keeps the Nano responsible for deterministic motion, sensor
+Firmware 4.3 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.2.0 behavior
+## Release 4.3.0 behavior
+
+Firmware 4.3 adds an explicit `mks-gen-l-v1` build profile for the integrated
+ATmega2560 board. It preserves the same deterministic runtime, standalone play,
+geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
+sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
+and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
+the default and retains its exact 28562-byte flash / 1118-byte SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
@@ -89,15 +96,23 @@ From the repository root:
 ./firmware/test.ps1 -InstallDependencies
 ```
 
-This installs the pinned `hd44780` dependency when requested, validates the
+This installs pinned `hd44780` and `SoftwareWire` dependencies when requested,
+validates the
 hardware/firmware pin contract, runs developer-tool tests, compiles for
-`arduino:avr:nano:cpu=atmega328old`, and enforces flash/global-SRAM budgets.
+`arduino:avr:nano:cpu=atmega328old` and `arduino:avr:mega:cpu=atmega2560`, and
+enforces both profiles' flash/global-SRAM budgets.
 Later runs can omit `-InstallDependencies`.
 
 Upload is intentionally explicit:
 
 ```powershell
 ./firmware/build.ps1 -Upload -Port COM7
+```
+
+The MKS alternative must always be selected explicitly:
+
+```powershell
+./firmware/build.ps1 -HardwareProfile mks-gen-l-v1 -Upload -Port COM11
 ```
 
 Disconnect 24 V motor/magnet power before ordinary firmware uploads. Uploading

@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.2.0.
+ * Automatic Chessboard firmware 4.3.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -7,16 +7,27 @@
  * See ATTRIBUTION.md and LICENSE.md for lineage, changes, and exceptions.
  */
 
-#include <Wire.h>
 #include <EEPROM.h>
 #include <avr/pgmspace.h>
+#include "global.h"
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+#include <SoftwareWire.h>
+SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
+// hd44780_I2Cexp uses the Wire API by name. SoftwareWire supplies the same
+// master API on MKS connector pins because SDA/SCL are not broken out there.
+#define Wire acbLcdWire
+#else
+#include <Wire.h>
 #include <SoftwareSerial.h>
+#endif
 #include <hd44780.h>
 #include <hd44780ioClass/hd44780_I2Cexp.h>
-#include "global.h"
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+#undef Wire
+#endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.2.0"
+#define FIRMWARE_VERSION "4.3.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -46,10 +57,13 @@ byte service_item = SERVICE_CALIBRATE;
 byte service_file = CALIBRATION_PARK_FILE;
 
 hd44780_I2Cexp lcd;
-// Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
-// Bluetooth commands use D10 so the onboard USB bridge cannot fight HC-08 TXD.
-// The transmit argument is D1 but this receive-only object never writes it.
+// Both profiles fan replies from hardware TX/D1 to USB and HC-08 RXD. The
+// Nano receives on D10; MKS receives on Serial2 RX/D17 at EXP1 pin 3.
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+#define bluetoothInput Serial2
+#else
 SoftwareSerial bluetoothInput(BLUETOOTH_RX, 1);
+#endif
 
 // The compact line protocol keeps the Nano responsible for motion and safety
 // while a Windows host can provide full chess rules and Stockfish.
@@ -136,6 +150,18 @@ void setup() {
   digitalWrite(MOTOR_WHITE_STEP, LOW);
   digitalWrite(MOTOR_BLACK_STEP, LOW);
 
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  // Keep both integrated drivers disabled until STEP and DIR are known. Once
+  // enabled they remain holding, matching the always-enabled Nano wiring and
+  // preserving the calibrated CoreXY reference between moves.
+  pinMode(MOTOR_WHITE_ENABLE, OUTPUT);
+  pinMode(MOTOR_BLACK_ENABLE, OUTPUT);
+  digitalWrite(MOTOR_WHITE_ENABLE,
+               MOTOR_ENABLE_ACTIVE_LOW ? HIGH : LOW);
+  digitalWrite(MOTOR_BLACK_ENABLE,
+               MOTOR_ENABLE_ACTIVE_LOW ? HIGH : LOW);
+#endif
+
   for (byte i = 0; i < 4; i++) {
     pinMode(MUX_ADDR[i], OUTPUT);
     digitalWrite(MUX_ADDR[i], LOW);
@@ -145,8 +171,12 @@ void setup() {
   pinMode(MUX_OUTPUT, INPUT_PULLUP);
 
   pinMode(BUTTON_A_LIMIT_WHITE, INPUT_PULLUP);
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  pinMode(BUTTON_B_LIMIT_BLACK, INPUT_PULLUP);
+#else
   // A6 has no digital input buffer or internal pull-up. The external 10 kOhm
   // pull-up makes a released switch read near 1023 and a pressed switch near 0.
+#endif
 
   const int lcd_status = lcd.begin(16, 2);
   if (lcd_status) {
@@ -159,6 +189,12 @@ void setup() {
   AI_reset();
   scanSensors();
   syncSensorState();
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  digitalWrite(MOTOR_WHITE_ENABLE,
+               MOTOR_ENABLE_ACTIVE_LOW ? LOW : HIGH);
+  digitalWrite(MOTOR_BLACK_ENABLE,
+               MOTOR_ENABLE_ACTIVE_LOW ? LOW : HIGH);
+#endif
   sequence = main_menu;
   showMainMenu();
   Serial.println(F("READY ACB1"));

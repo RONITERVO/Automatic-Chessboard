@@ -22,14 +22,30 @@ int freeRam() {
   return (int)&stack_top - (__brkval ? (int)__brkval : (int)&__heap_start);
 }
 
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+static inline int readControlPinRaw(byte pin) {
+  return readControlPin(pin) == HIGH ? 1023 : 0;
+}
+#endif
+
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
+  Serial.print(',');
+  Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
+#else
   Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
+#endif
 }
 
 void sendTelemetry() {
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+  int black_raw = readControlPinRaw(BUTTON_B_LIMIT_BLACK);
+#else
   int black_raw = analogRead(BUTTON_B_LIMIT_BLACK);
+#endif
   Serial.print(F("TELEM ACB2 "));
   Serial.print(sequence);
   Serial.print(' ');
@@ -121,7 +137,11 @@ void runHostSwitchTest() {
     }
     if (index == 1) {
       Serial.print(F("SWTEST B RAW "));
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+      Serial.println(readControlPinRaw(BUTTON_B_LIMIT_BLACK));
+#else
       Serial.println(analogRead(BUTTON_B_LIMIT_BLACK));
+#endif
     }
     Serial.print(F("SWTEST RELEASE "));
     Serial.println(label);

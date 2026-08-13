@@ -16,3 +16,6 @@ if ($LASTEXITCODE -ne 0) { throw "Firmware geometry-calculator tests failed." }
 & (Join-Path $PSScriptRoot "build.ps1") `
   -InstallDependencies:$InstallDependencies
 if (-not $?) { throw "Firmware build failed." }
+
+& (Join-Path $PSScriptRoot "build.ps1") -HardwareProfile mks-gen-l-v1
+if (-not $?) { throw "MKS Gen L V1 firmware build failed." }
