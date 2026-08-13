@@ -9,21 +9,6 @@ void configureMotorDirection(byte direction) {
                (direction == B_T || direction == R_L || direction == RL_BT) ? HIGH : LOW);
 }
 
-unsigned int motorStepDelay(unsigned int cruise_delay, unsigned int step_index,
-                            unsigned int total_steps) {
-  if (cruise_delay >= MOTOR_START_DELAY || total_steps < 2) return cruise_delay;
-
-  unsigned int ramp_steps = min(MOTOR_RAMP_STEPS, total_steps / 2U);
-  if (ramp_steps == 0) return cruise_delay;
-
-  unsigned int steps_from_end = total_steps - step_index - 1U;
-  unsigned int edge_distance = min(step_index, steps_from_end);
-  if (edge_distance >= ramp_steps) return cruise_delay;
-
-  unsigned long delay_range = MOTOR_START_DELAY - cruise_delay;
-  return MOTOR_START_DELAY - (unsigned int)(delay_range * edge_distance / ramp_steps);
-}
-
 void tripRemoteEmergencyStop() {
   if (remote_stop_requested) return;
   remote_stop_requested = true;
@@ -75,8 +60,7 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
       return false;
     }
 
-    unsigned int current_delay = motorStepDelay(speed_delay, step_count, steps);
-    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+    unsigned int low_time = speed_delay * 2U - MOTOR_STEP_PULSE_US;
 
     digitalWrite(MOTOR_WHITE_STEP,
                  (direction == LR_TB || direction == RL_BT) ? LOW : HIGH);
@@ -130,8 +114,7 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
     if (step_white) white_accumulator -= event_count;
     if (step_black) black_accumulator -= event_count;
 
-    unsigned int current_delay = motorStepDelay(speed_delay, event, event_count);
-    unsigned int low_time = current_delay * 2U - MOTOR_STEP_PULSE_US;
+    unsigned int low_time = speed_delay * 2U - MOTOR_STEP_PULSE_US;
     digitalWrite(MOTOR_WHITE_STEP, step_white ? HIGH : LOW);
     digitalWrite(MOTOR_BLACK_STEP, step_black ? HIGH : LOW);
     delayMicroseconds(MOTOR_STEP_PULSE_US);
@@ -165,8 +148,8 @@ boolean moveTrolleyStraightTo(byte target_x, byte target_y,
     return false;
   }
 
-  int delta_x = ((int)target_x - trolley_coordinate_X) * (int)SQUARE_SIZE;
-  int delta_y = ((int)target_y - trolley_coordinate_Y) * (int)SQUARE_SIZE;
+  int delta_x = ((int)target_x - trolley_coordinate_X) * (int)FILE_PITCH_STEPS;
+  int delta_y = ((int)target_y - trolley_coordinate_Y) * (int)RANK_PITCH_STEPS;
   if (!pulseCoreXYLine(delta_x, delta_y, speed_delay, true)) return false;
   trolley_coordinate_X = target_x;
   trolley_coordinate_Y = target_y;
@@ -178,8 +161,8 @@ boolean moveTrolleyStraightTo(byte target_x, byte target_y,
 // path gives the weakest magnet the least lateral acceleration. Knights enter
 // the square-boundary lane, traverse it, and enter the destination square.
 boolean moveHeldPieceSafely(byte from_x, byte from_y, byte to_x, byte to_y) {
-  int dx = ((int)to_x - from_x) * (int)SQUARE_SIZE;
-  int dy = ((int)to_y - from_y) * (int)SQUARE_SIZE;
+  int dx = ((int)to_x - from_x) * (int)FILE_PITCH_STEPS;
+  int dy = ((int)to_y - from_y) * (int)RANK_PITCH_STEPS;
   byte squares_x = abs((int)to_x - from_x);
   byte squares_y = abs((int)to_y - from_y);
   boolean ok;
@@ -222,7 +205,7 @@ boolean prepareFirstCalibrationApproach() {
   if (trolley_position_known &&
       trolley_coordinate_Y > CALIBRATION_PARK_RANK) {
     int delta_y = ((int)CALIBRATION_PARK_RANK - trolley_coordinate_Y) *
-                  (int)SQUARE_SIZE;
+                  (int)RANK_PITCH_STEPS;
     if (!pulseCoreXYLine(0, delta_y, SPEED_FAST, false)) return false;
     trolley_coordinate_Y = CALIBRATION_PARK_RANK;
     rememberTrolleyPosition();

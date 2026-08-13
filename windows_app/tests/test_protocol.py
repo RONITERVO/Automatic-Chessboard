@@ -38,11 +38,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(event.kind, "STATUS")
         self.assertEqual(event.args, ("ACB1", "17", "1", "1"))
 
-    def test_calibration_command_risks(self):
-        self.assertEqual(classify_command("CALGET"), CommandRisk.READ_ONLY)
-        self.assertEqual(classify_command("CALSET 354 871"), CommandRisk.CONTROL)
-        self.assertEqual(classify_command("NUDGE X+ 1"), CommandRisk.MOTION)
-
     def test_special_move_commands(self):
         self.assertEqual(play_command("e1g1", castling=True), "PLAY e1g1 C")
         self.assertEqual(play_command("e5d6", en_passant=True), "PLAY e5d6 E")

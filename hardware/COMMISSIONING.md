@@ -46,6 +46,12 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
    cause no motor or magnet activity.
 6. Verify the monitor reports firmware 4.2.0 and fresh telemetry.
 
+For a differently sized or positioned playing field, finish normal switch and
+motion commissioning first, then use **Service > Geometry** as documented in
+`firmware/README.md`. It requires only a visible magnetic marker; reed sensors,
+a calibration sheet, a camera, and either companion app are optional. Rebuild
+and upload the reported constants, calibrate, then verify separated squares.
+
 ## Stage C: switches and 64 sensors
 
 1. Observe both switch states released.

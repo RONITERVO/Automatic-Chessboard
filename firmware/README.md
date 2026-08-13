@@ -10,8 +10,10 @@ or computer.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
-reed inspection, manual head positioning, magnet service, EEPROM position
-recovery, LCD guidance, and two-button controls remain local.
+geometry measurement, EEPROM position recovery, LCD guidance, and two-button
+controls remain local. Full 64-square sensor inspection remains available from
+either app or a serial terminal through `BOARD`; removing its duplicate local
+screen pays for geometry setup without increasing Nano flash.
 
 Connected USB/BLE clients retain remote games, occupancy/telemetry, safe
 diagnostics, app calibration, head-only and sensor-verified piece movement, and
@@ -29,16 +31,25 @@ occupancy, and unexpected sensor transitions. Complex evacuation, restoration,
 staging, and recursive clearing remain host responsibilities so Nano memory and
 motion behaviour stay deterministic. See `windows_app/FIRMWARE_PROTOCOL.md`.
 
-Firmware 4.2 also advertises `CALPROFILE`. Windows and Android provide the same
-guided visual offset wizard: put one magnetic marker on e6, calibrate, and tap
-board-direction arrows until it is centered. This needs no sensors, sheet, or
-camera. A marked sheet, ruler, or camera can optionally improve the visual
-reference. Corrections are bounded to 60 motor steps per axis, may be cancelled
-by returning to the original reference, and are stored in a checksummed,
-commit-last EEPROM profile only when the user taps Save. Saving invalidates the
-carriage position, so a new calibration verifies the result before any play or
-manual movement. The wizard reports a portable answer such as `Black offset
-354; white offset 871`; advanced users can reinstall it with `CALSET 354 871`.
+Firmware 4.2 adds an app-independent **Service > Geometry** measurement mode.
+It displays the compiled file/rank pitches and corner-to-e6 park values, lets a
+builder select any square, and nudges a visible magnetic marker in coordinated
+physical axes one precise step at a time. Finishing reports, for example,
+`a2 X+3 Y-1` on the LCD. It does not save or change geometry and uses no
+additional EEPROM.
+
+Record two widely separated reports whose files and ranks both differ, then use
+the documented formulas in `global.h` or the optional offline calculator:
+
+```powershell
+python ./firmware/geometry_calculator.py `
+  "GEOMETRY a2 X+3 Y-1" "GEOMETRY h7 X+10 Y-6"
+```
+
+Edit `FILE_PITCH_STEPS`, `RANK_PITCH_STEPS`, and both
+`CALIBRATION_PARK_*_STEPS` values in `global.h`, upload, calibrate again, and
+verify several separated squares before enabling play. The mode reuses normal
+service state, so global SRAM remains at the 4.1 release level.
 
 For deterministic limit-input commissioning, send `SWTEST` from USB or the
 guarded developer console and follow its `PRESS A`, `RELEASE`, and `PRESS B`
@@ -64,7 +75,6 @@ Disconnect the untested driver's VMOT and the magnet branch before using them.
 - `FirmwarePieces.ino` implements captures, castling, and carried moves.
 - `FirmwareService.ino` contains local maintenance controls.
 - `PositionJournal.ino` owns power-loss-safe EEPROM position records.
-- `CalibrationProfile.ino` owns the persistent board offset and bounded nudges.
 - `Micro_Max.cpp` is the separately attributed standalone engine adaptation.
 
 Arduino concatenates the `.ino` tabs into one translation unit, which keeps the
@@ -143,8 +153,7 @@ a certified safety function.
 
 ## Resource policy
 
-`build.ps1` currently reserves at least 2048 bytes of flash and 848 bytes beyond
-global data for stack/local use. A change exceeding either budget must first
-reduce another cost or deliberately revise the documented budget with measured
-hardware evidence. The packed three-snapshot reed representation uses 24 bytes
-instead of 192 bytes.
+`build.ps1` rejects any global SRAM increase beyond 1118 bytes and keeps the
+sketch at or below 28562 bytes, leaving at least 2158 bytes of physical Nano
+flash for future maintenance. The packed three-snapshot reed representation
+uses 24 bytes instead of 192 bytes.

@@ -1,6 +1,7 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.2.0). It covers the Windows
+This is the phone-first companion for firmware 3.31+ (current firmware 4.2.0).
+It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
 
@@ -10,7 +11,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | --- | --- |
 | Connection | Native BLE scan, saved-device reconnect, HC-08 FFE0/FFE1 GATT, exponential retry, 20-byte writes |
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
-| Move | Tap squares for head/piece movement; quick calibration or a guided visual e6 offset wizard with a portable answer |
+| Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
 | Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |
@@ -29,13 +30,6 @@ session and requires inspection; it is never retried from an assumed state.
 The **Route** button on the Play page adjusts the bounded search duration and
 maximum number of temporarily moved pieces without adding a scrolling settings
 page. Firmware 4.0 and earlier continue to use the legacy `PLAY` path.
-
-On the Move page, **Calibrate** offers quick carriage calibration or **Visually
-align board offset**. The latter needs only one magnetic marker on e6 and a view
-from above; a sheet, ruler, and the Camera page are optional. The fixed dialog
-has no scrolling, labels arrows by board direction, offers fine/coarse taps,
-returns to the starting reference on cancel, and copies the saved two-number
-answer. The Nano requires another calibration before movement after saving.
 
 No page contains a `ScrollView`, horizontally scrolling container, or vertically
 scrolling list. Dense histories and logs use explicit pages. Portrait and

@@ -25,7 +25,8 @@ h-file tiles instead of against their outer edge. The safety inset and field
 translation are motion calibration values, not universal CoreXY geometry. If
 pulley tooth count, belt pitch, motor step angle, microstepping, carriage
 geometry, board placement, or available clearance changes, measure and update
-`FULL_STEPS_PER_SQUARE`, the two `CALIBRATION_PARK_*_STEPS` values, and
+`FILE_PITCH_STEPS`, `RANK_PITCH_STEPS`, the two
+`CALIBRATION_PARK_*_STEPS` values, and
 `MOTOR_MICROSTEPS` before normal play.
 
 ## Confirmed donor-printer rail set

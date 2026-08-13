@@ -46,14 +46,14 @@ class CommandRisk(Enum):
 
 
 READ_ONLY_COMMANDS = frozenset({
-    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "CALGET",
+    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST",
 })
-CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER", "CALSET", "CALRESET", "CALSAVE"})
+CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
 MOTION_COMMANDS = frozenset({
     "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-    "PLAN", "DRAG", "COMMIT", "NUDGE", "CALCANCEL",
+    "PLAN", "DRAG", "COMMIT",
 })
 
 

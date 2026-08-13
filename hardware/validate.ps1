@@ -55,6 +55,24 @@ function Assert-NanoConnection([string]$Constant, [string]$Destination,
   }
 }
 
+foreach ($geometryName in @(
+  "FILE_PITCH_STEPS", "RANK_PITCH_STEPS",
+  "CALIBRATION_PARK_BLACK_STEPS", "CALIBRATION_PARK_WHITE_STEPS"
+)) {
+  $matches = [regex]::Matches(
+    $global,
+    "const\s+unsigned\s+int\s+$geometryName\s*=\s*\d+U\s*\*\s*MOTOR_MICROSTEPS\s*;"
+  )
+  if ($matches.Count -ne 1) {
+    Fail "$geometryName must be one compile-time global.h value scaled by MOTOR_MICROSTEPS"
+  }
+}
+
+if ($global -match 'extern\s+unsigned\s+int\s+calibration_park_' -or
+    $sketch -match 'loadCalibrationProfile') {
+  Fail "Board geometry must not allocate runtime globals or load an EEPROM profile"
+}
+
 Assert-NanoConnection "MAGNET" "R1 1k" "1"
 Assert-NanoConnection "MOTOR_WHITE_DIR" "Driver 1" "DIR"
 Assert-NanoConnection "MOTOR_WHITE_STEP" "Driver 1" "STEP"

@@ -1,10 +1,5 @@
 # Changelog
 
-## 1.3.0
-
-- Added the firmware 4.2 guided visual board-offset wizard, persistent profile,
-  portable human-readable answer, simulator coverage, and optional camera aid.
-
 ## 1.2.0
 
 - Added host-side labeled rearrangement planning for collision-safe automatic

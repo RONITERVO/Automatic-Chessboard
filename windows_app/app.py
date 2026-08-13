@@ -18,7 +18,6 @@ import chess.engine
 import chess.pgn
 
 from camera_source import CameraWorker
-from calibration import BoardOffsetProfile, nudge_command
 from model import (
     ManualSelection,
     MonitorModel,
@@ -48,7 +47,7 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.2.0"
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
@@ -285,9 +284,6 @@ class AutomaticChessboardApp:
         self.manual_pending = ""
         self.manual_pending_selection: ManualSelection | None = None
         self.calibration_reported_square: str | None = None
-        self.alignment_window: tk.Toplevel | None = None
-        self.alignment_status: tk.StringVar | None = None
-        self.alignment_coarse: tk.BooleanVar | None = None
 
         self._configure_style()
         self._build_menu()
@@ -568,10 +564,6 @@ class AutomaticChessboardApp:
         )
         ttk.Button(actions, text="Move", command=self._manual_move).grid(
             row=0, column=2, sticky="ew", padx=(3, 0)
-        )
-        ttk.Button(actions, text="Visually align board offsetâ€¦",
-                   command=self._start_visual_alignment).grid(
-            row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0)
         )
 
     def _build_diagnostics_tab(self) -> None:
@@ -988,47 +980,12 @@ class AutomaticChessboardApp:
             self.manual_status.set("Calibrating; keep the mechanism clear.")
         elif event.kind == "CALIBRATED":
             self.motion_expected = False
-            if self.manual_pending == "visual-calibration":
-                self.calibration_reported_square = event.args[0] if event.args else None
-                if self.calibration_reported_square != "e6":
-                    self._alignment_failed("Firmware did not confirm the e6 reference.")
-                else:
-                    self._open_alignment_controls()
-            elif self.manual_pending == "calibration":
+            if self.manual_pending == "calibration":
                 self.calibration_reported_square = event.args[0] if event.args else None
                 self.manual_status.set(
                     f"Calibration ended at {self.calibration_reported_square or 'unknown'}; checking fresh telemetry."
                 )
                 self._queue_safe_requests("TELEM", "BOARD")
-        elif event.kind == "NUDGED" and self.alignment_status is not None:
-            self.motion_expected = False
-            offsets = " / ".join(event.args[:2]) if len(event.args) >= 2 else "accepted"
-            self.alignment_status.set(f"Adjustment: {offsets} steps. Keep centering the marker.")
-        elif event.kind == "CALCANCELLED":
-            self.motion_expected = False
-            self._close_alignment_window()
-            self._clear_manual_pending()
-            self.manual_status.set("Visual alignment cancelled; the saved offset was not changed.")
-        elif event.kind == "CALPROFILE" and self.manual_pending == "visual-save":
-            self.motion_expected = False
-            try:
-                profile = BoardOffsetProfile.from_event_args(event.args)
-            except ValueError as error:
-                self._alignment_failed(str(error))
-            else:
-                self.root.clipboard_clear()
-                self.root.clipboard_append(profile.answer)
-                self._close_alignment_window()
-                self._clear_manual_pending()
-                self.manual_calibration_verified = False
-                self.manual_status.set(
-                    f"Saved. {profile.answer}. Recalibrate once to verify it; the answer was copied."
-                )
-                messagebox.showinfo(
-                    "Board offset saved",
-                    f"{profile.answer}\n\nThis answer is copied to the clipboard. "
-                    "Run Calibrate once more before moving or playing.", parent=self.root,
-                )
         elif event.kind == "PLAN" and event.args:
             if self.active_route_plan is not None and self.route_waiting_for == "PLAN":
                 if event.args[0] == "READY":
@@ -1117,8 +1074,6 @@ class AutomaticChessboardApp:
             if self.manual_pending:
                 self._clear_manual_pending()
                 self.manual_status.set(f"Board rejected the operation: {' '.join(event.args)}")
-            if self.alignment_window is not None:
-                self._alignment_failed(f"Board rejected alignment: {' '.join(event.args)}")
         elif event.kind == "STOPPED":
             self.session_active = False
             self.motion_expected = False
@@ -1288,111 +1243,6 @@ class AutomaticChessboardApp:
         self.manual_status.set("Calibration command sent; keep hands clear.")
         if not self._send("CALIBRATE"):
             self._clear_manual_pending()
-
-    def _start_visual_alignment(self) -> None:
-        if self.manual_pending:
-            self.manual_status.set("An operation is already in progress; wait for verification.")
-            return
-        if not self._manual_capability_ready():
-            return
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "CALPROFILE" not in capabilities:
-            messagebox.showerror("Firmware update required",
-                                 "Install firmware 4.2 or newer for visual board alignment.",
-                                 parent=self.root)
-            return
-        if not messagebox.askokcancel(
-            "Visually align board offset",
-            "Put one magnetic chess piece or loose marker exactly on e6. Clear every other piece. "
-            "The carriage will calibrate, then the arrow buttons will briefly energize the magnet "
-            "and move it 1 or 5 motor steps. Keep the physical cutoff accessible.\n\n"
-            "No sheet or camera is required; looking straight down is enough. A ruler, marked sheet, "
-            "or camera may be used if you prefer.", parent=self.root,
-        ):
-            return
-        self.manual_calibration_verified = False
-        self.manual_pending = "visual-calibration"
-        self.calibration_reported_square = None
-        self.manual_status.set("Finding the reference; keep hands clear.")
-        if not self._send("CALIBRATE"):
-            self._clear_manual_pending()
-
-    def _open_alignment_controls(self) -> None:
-        self._close_alignment_window()
-        window = tk.Toplevel(self.root)
-        self.alignment_window = window
-        window.title("Center the e6 marker")
-        window.resizable(False, False)
-        window.transient(self.root)
-        window.grab_set()
-        window.protocol("WM_DELETE_WINDOW", self._cancel_visual_alignment)
-        panel = ttk.Frame(window, padding=16)
-        panel.grid()
-        ttk.Label(panel, text="Center the marker on e6", style="Heading.TLabel").grid(
-            row=0, column=0, columnspan=3, pady=(0, 5))
-        ttk.Label(panel, text="Tap arrows while watching from above. Each tap briefly grips the marker.",
-                  wraplength=420, justify="center").grid(row=1, column=0, columnspan=3)
-        self.alignment_status = tk.StringVar(value="Adjustment: 0 / 0 steps")
-        ttk.Label(panel, textvariable=self.alignment_status, style="Quiet.TLabel").grid(
-            row=2, column=0, columnspan=3, pady=(6, 8))
-        self.alignment_coarse = tk.BooleanVar(value=True)
-        ttk.Checkbutton(panel, text="Coarse (5 steps, about 1 mm)",
-                        variable=self.alignment_coarse).grid(row=3, column=0, columnspan=3)
-        ttk.Button(panel, text="Toward black / rank 8",
-                   command=lambda: self._alignment_nudge("Y", True)).grid(
-            row=4, column=1, sticky="ew", pady=4)
-        ttk.Button(panel, text="Toward a-file",
-                   command=lambda: self._alignment_nudge("X", False)).grid(
-            row=5, column=0, sticky="ew", padx=4)
-        ttk.Label(panel, text="e6", anchor="center", style="Heading.TLabel").grid(row=5, column=1)
-        ttk.Button(panel, text="Toward h-file",
-                   command=lambda: self._alignment_nudge("X", True)).grid(
-            row=5, column=2, sticky="ew", padx=4)
-        ttk.Button(panel, text="Toward white / rank 1",
-                   command=lambda: self._alignment_nudge("Y", False)).grid(
-            row=6, column=1, sticky="ew", pady=4)
-        ttk.Button(panel, text="Cancel and return", command=self._cancel_visual_alignment).grid(
-            row=7, column=0, columnspan=1, sticky="ew", pady=(12, 0))
-        ttk.Button(panel, text="Save offset", command=self._save_visual_alignment).grid(
-            row=7, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=(12, 0))
-
-    def _alignment_nudge(self, axis: str, positive: bool) -> None:
-        coarse = bool(self.alignment_coarse and self.alignment_coarse.get())
-        if self._send(nudge_command(axis, positive, coarse)):
-            self.motion_expected = True
-
-    def _save_visual_alignment(self) -> None:
-        self.manual_pending = "visual-save"
-        if self.alignment_status is not None:
-            self.alignment_status.set("Saving to the boardâ€¦")
-        if not self._send("CALSAVE"):
-            self.manual_pending = "visual-calibration"
-
-    def _cancel_visual_alignment(self) -> None:
-        if self.alignment_status is not None:
-            self.alignment_status.set("Returning to the original referenceâ€¦")
-        if self._send("CALCANCEL"):
-            self.motion_expected = True
-        else:
-            self._alignment_failed("Could not send cancel. Inspect and recalibrate before motion.")
-
-    def _close_alignment_window(self) -> None:
-        if self.alignment_window is not None:
-            try:
-                self.alignment_window.grab_release()
-                self.alignment_window.destroy()
-            except tk.TclError:
-                pass
-        self.alignment_window = None
-        self.alignment_status = None
-        self.alignment_coarse = None
-
-    def _alignment_failed(self, detail: str) -> None:
-        self._close_alignment_window()
-        self._clear_manual_pending()
-        self.manual_calibration_verified = False
-        self.manual_status.set(detail)
-        messagebox.showerror("Visual alignment stopped", detail, parent=self.root)
 
     def _manual_move(self) -> None:
         if self.manual_pending:

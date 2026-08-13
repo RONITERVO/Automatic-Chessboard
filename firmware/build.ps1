@@ -4,8 +4,8 @@ param(
   [switch]$InstallDependencies,
   [switch]$Upload,
   [string]$Port,
-  [int]$MaxFlashBytes = 30000,
-  [int]$MaxRamBytes = 1200
+  [int]$MaxFlashBytes = 28562,
+  [int]$MaxRamBytes = 1118
 )
 
 $ErrorActionPreference = "Stop"

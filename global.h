@@ -54,9 +54,7 @@ enum {
   game_over_screen,
   fault_screen,
   service_menu,
-  service_sensors,
-  service_move_file,
-  service_move_rank,
+  service_geometry_nudge,
   remote_setup_check,
   remote_human,
   remote_wait_host,
@@ -74,15 +72,12 @@ enum {T_B, B_T, L_R, R_L, LR_BT, RL_TB, LR_TB, RL_BT};
 
 enum {
   SERVICE_CALIBRATE,
-  SERVICE_SENSORS,
-  SERVICE_MOVE,
-  SERVICE_MAGNET,
+  SERVICE_GEOMETRY,
   SERVICE_EXIT,
   SERVICE_COUNT
 };
 extern byte service_item;
 extern byte service_file;
-extern byte service_rank;
 
 // Electromagnet.
 const byte MAGNET = 6;
@@ -95,21 +90,32 @@ const byte MOTOR_BLACK_STEP = 5;
 // This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
 // Supported A4988 values are 1, 2, 4, 8, and 16.
 const byte MOTOR_MICROSTEPS = 1;
-// Repeated collision-free camera registration measured about 188 steps per
-// square. This keeps every outer square inside the proven physical envelope.
-const unsigned int SQUARE_SIZE = 188U * MOTOR_MICROSTEPS;
-// Physical corner-to-e6 offsets are deliberately independent of logical
-// square pitch. These values register the e6 park to a camera-observed physical
-// calibration sheet; keep them separate so future board revisions can change
-// the origin without changing the measured square pitch.
-const unsigned int DEFAULT_PARK_BLACK_STEPS = 354U * MOTOR_MICROSTEPS;
-const unsigned int DEFAULT_PARK_WHITE_STEPS = 871U * MOTOR_MICROSTEPS;
-extern unsigned int calibration_park_black_steps;
-extern unsigned int calibration_park_white_steps;
-#define CALIBRATION_PARK_BLACK_STEPS calibration_park_black_steps
-#define CALIBRATION_PARK_WHITE_STEPS calibration_park_white_steps
+// ------------------------ Builder geometry ------------------------------
+// These four compile-time values are the complete board registration. They
+// consume no global SRAM and are never written to EEPROM. Service > GEOMETRY
+// reports signed X/Y corrections at any chosen square. Record the reports,
+// apply the formulas below, edit these values, upload, calibrate, and verify.
+//
+// FILE/RANK_PITCH_STEPS are center-to-center travel along the printed grid.
+// Keep them separate: nominally square tiles can still need different step
+// counts because of pulley, belt, printer, or mechanism tolerances.
+const unsigned int FILE_PITCH_STEPS = 188U * MOTOR_MICROSTEPS;
+const unsigned int RANK_PITCH_STEPS = 188U * MOTOR_MICROSTEPS;
+// The park values are raw motor steps from the repeatable two-switch corner to
+// the logical e6 center. Service > GEOMETRY reports their corrected values.
+const unsigned int CALIBRATION_PARK_BLACK_STEPS = 354U * MOTOR_MICROSTEPS;
+const unsigned int CALIBRATION_PARK_WHITE_STEPS = 871U * MOTOR_MICROSTEPS;
+// With two reports A and B, choose different files to measure file pitch and
+// different ranks to measure rank pitch (far-apart points reduce visual error):
+//   new FILE = old FILE + (XB-XA)/(fileB-fileA)
+//   new RANK = old RANK + (YB-YA)/(rankB-rankA)
+// Round each result to the nearest whole step. Then translate either report A
+// to the e6 park using those pitch changes:
+//   e6X = XA-(fileA-5)*(new FILE-old FILE)
+//   e6Y = YA-(rankA-6)*(new RANK-old RANK)
+//   new WHITE = old WHITE+e6X; new BLACK = old BLACK-e6Y
 const unsigned int CAPTURE_SIDE_X_STEPS =
-    (SQUARE_SIZE * 12UL + 12UL) / 25UL;
+    (FILE_PITCH_STEPS * 12UL + 12UL) / 25UL;
 
 // Hardware-validated half-period delay for the current full-step drive. Using
 // the same value for start, carrying, and unloaded travel intentionally
@@ -119,9 +125,9 @@ const unsigned int MOTOR_START_DELAY = 1000U / MOTOR_MICROSTEPS;
 const unsigned int SPEED_SLOW = 1000U / MOTOR_MICROSTEPS;
 const unsigned int SPEED_FAST = 1000U / MOTOR_MICROSTEPS;
 const unsigned int MOTOR_STEP_PULSE_US = 4;
-const unsigned int MOTOR_RAMP_STEPS = 48U * MOTOR_MICROSTEPS;
-const unsigned int HOME_MAX_STEPS = SQUARE_SIZE * 9U;
-const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = SQUARE_SIZE;
+const unsigned int HOME_MAX_STEPS =
+    (FILE_PITCH_STEPS > RANK_PITCH_STEPS ? FILE_PITCH_STEPS : RANK_PITCH_STEPS) * 9U;
+const unsigned int CALIBRATION_LANE_CLEARANCE_STEPS = RANK_PITCH_STEPS;
 const unsigned long MAGNET_MAX_ON_MS = 30000UL;
 
 // Reed-sensor multiplexers.

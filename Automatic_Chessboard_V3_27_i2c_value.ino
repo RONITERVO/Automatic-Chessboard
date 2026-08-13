@@ -43,10 +43,7 @@ char mov[5] = {0, 0, 0, 0, 0};
 byte sequence = start_up;
 byte after_calibration = setup_check;
 byte service_item = SERVICE_CALIBRATE;
-byte service_file = 1;
-byte service_rank = 1;
-unsigned int calibration_park_black_steps = DEFAULT_PARK_BLACK_STEPS;
-unsigned int calibration_park_white_steps = DEFAULT_PARK_WHITE_STEPS;
+byte service_file = CALIBRATION_PARK_FILE;
 
 hd44780_I2Cexp lcd;
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
@@ -157,7 +154,6 @@ void setup() {
     Serial.println(lcd_status);
   }
   lcd.backlight();
-  loadCalibrationProfile();
   loadPersistedTrolleyPosition();
   showPersistedTrolleyPosition();
   AI_reset();
@@ -296,16 +292,8 @@ void loop() {
       serviceMenuLoop();
       break;
 
-    case service_sensors:
-      serviceSensorLoop();
-      break;
-
-    case service_move_file:
-      serviceMoveFileLoop();
-      break;
-
-    case service_move_rank:
-      serviceMoveRankLoop();
+    case service_geometry_nudge:
+      serviceGeometryNudgeLoop();
       break;
 
     case remote_setup_check:

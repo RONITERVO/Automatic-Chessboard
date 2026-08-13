@@ -220,20 +220,30 @@ cannot prove that no individual missed step was later cancelled in the opposite
 direction; detecting every stall in real time requires motor encoders or a
 driver with suitable diagnostic feedback.
 
-## Visual board-offset calibration
+## Builder geometry measurement
 
-The Windows and Android Move pages include a guided visual alignment tool for
-different board placements and builds. It calibrates to the repeatable corner,
-parks at e6, and lets the user center one magnetic marker using clearly labeled
-board-direction arrows. No reed readings, calibration sheet, technical motor
-knowledge, or camera is required. Looking straight down at the tile is enough;
-a ruler, marked sheet, or the optional camera view can improve precision.
+Firmware 4.2 keeps board geometry as four compile-time constants, uses no
+geometry EEPROM, and does not depend on either app. After normal calibration,
+open **Service > Geometry**, select any square, place one visible magnetic
+marker there, and align it using precise, coordinated one-step file/rank
+movements. The LCD reports the selected square and signed X/Y correction
+without changing the installed geometry.
 
-The Nano hard-limits adjustments, supports a physical return-to-start cancel,
-stores the two-number offset with checksum and commit-last EEPROM writes, and
-requires a fresh calibration after saving. The apps copy the final answer in a
-portable form (`Black offset N; white offset N`) so even a nontechnical user can
-send it to a contributor or reinstall it after replacing a controller.
+Measure two widely separated squares with different files and ranks. The
+formulas beside the constants in [`global.h`](global.h) give the new values, or
+run the optional offline calculator:
+
+```powershell
+python ./firmware/geometry_calculator.py `
+  "GEOMETRY a2 X+3 Y-1" "GEOMETRY h7 X+10 Y-6"
+```
+
+Edit the four reported constants, upload, calibrate again, and verify at least
+four widely separated squares. This corrects translation and independent axis
+scale; a rotated, skewed, or nonuniform board must be aligned mechanically.
+The former duplicate local sensor screen was replaced to hold the Nano within
+its established flash budget; both apps and the `BOARD` command retain complete
+64-square sensor inspection.
 
 ## Piece-retention travel planner
 

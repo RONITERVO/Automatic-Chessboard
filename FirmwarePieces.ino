@@ -13,8 +13,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   }
 
   int end_x = (int)CAPTURE_SIDE_X_STEPS -
-              (int)file * (int)SQUARE_SIZE;
-  int end_y = -(int)SQUARE_SIZE / 2;
+              (int)file * (int)FILE_PITCH_STEPS;
+  int end_y = -(int)RANK_PITCH_STEPS / 2;
   if (!pulseCoreXYCorridor(0, end_y, end_x, 0, 0, 0,
                            SPEED_SLOW, true)) return false;
   // The corridor completes before release. setMagnet(false) keeps the head
@@ -28,7 +28,7 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   // starting the first calibration approach.
   if (rank > CALIBRATION_PARK_RANK) {
     int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
-                        (int)SQUARE_SIZE;
+                        (int)RANK_PITCH_STEPS;
     if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
   }
   calibration_lane_confirmed = true;
@@ -62,8 +62,8 @@ boolean moveCastlingPieces(byte from_x, byte rank, byte to_x,
   if (!moveTrolleyStraightTo(rook_from, rank, SPEED_FAST)) return false;
   if (use_magnet) setMagnet(true);
 
-  int dx = ((int)rook_to - rook_from) * (int)SQUARE_SIZE;
-  int clearance = rank <= 4 ? (int)SQUARE_SIZE / 2 : -(int)SQUARE_SIZE / 2;
+  int dx = ((int)rook_to - rook_from) * (int)FILE_PITCH_STEPS;
+  int clearance = rank <= 4 ? (int)RANK_PITCH_STEPS / 2 : -(int)RANK_PITCH_STEPS / 2;
   if (!pulseCoreXYCorridor(0, clearance, dx, 0, 0, -clearance,
                            SPEED_SLOW, true)) return false;
   trolley_coordinate_X = rook_to;

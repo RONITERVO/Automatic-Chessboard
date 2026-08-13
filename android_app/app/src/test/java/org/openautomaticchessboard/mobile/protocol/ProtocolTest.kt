@@ -7,11 +7,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ProtocolTest {
-    @Test fun calibrationCommandRisksAreGuarded() {
-        assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("CALGET"))
-        assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("CALSET 354 871"))
-        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("NUDGE X+ 1"))
-    }
     @Test fun reassemblesSplitBleLines() {
         val buffer = LineBuffer()
         assertTrue(buffer.feed("MOVE e2".toByteArray()).isEmpty())

@@ -25,17 +25,7 @@ int freeRam() {
 void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,CALPROFILE"));
-}
-
-boolean parseProfileNumber(char *&text, unsigned int &value) {
-  value = 0;
-  byte digits = 0;
-  while (*text >= '0' && *text <= '9' && digits < 4) {
-    value = value * 10U + (*text++ - '0');
-    digits++;
-  }
-  return digits && (*text == ' ' || *text == 0);
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
 }
 
 void sendTelemetry() {
@@ -233,8 +223,6 @@ void runHostCalibration() {
     return;
   }
 
-  if (visualAlignmentActive()) cancelVisualAlignment();
-  if (motion_fault) return;
   sequence = calibration;
   showCalibration();
   Serial.println(F("CALIBRATING"));
@@ -261,8 +249,8 @@ void runHostHeadMove(const char *square) {
     sendHostError(F("BUSY"));
     return;
   }
-  if (motion_fault || visualAlignmentActive()) {
-    sendHostError(visualAlignmentActive() ? F("ALIGN") : F("FAULT"));
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
     return;
   }
   if (!trolley_homed) {
@@ -290,8 +278,8 @@ void runHostPieceMove(const char *move, boolean routed) {
     sendHostError(routed ? F("NO PLAN") : F("BUSY"));
     return;
   }
-  if (motion_fault || visualAlignmentActive()) {
-    sendHostError(visualAlignmentActive() ? F("ALIGN") : F("FAULT"));
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
     return;
   }
   if (!trolley_homed) {
@@ -385,8 +373,8 @@ void runHostPathTest(const char *move) {
     sendHostError(F("BUSY"));
     return;
   }
-  if (motion_fault || visualAlignmentActive()) {
-    sendHostError(visualAlignmentActive() ? F("ALIGN") : F("FAULT"));
+  if (motion_fault) {
+    sendHostError(F("FAULT"));
     return;
   }
   if (!trolley_homed) {
@@ -543,40 +531,6 @@ void processHostCommand(char *line) {
   }
   if (strcmp(line, "BOARD") == 0) {
     sendSensorSnapshot();
-    return;
-  }
-  if (strcmp(line, "CALGET") == 0) {
-    sendCalibrationProfile();
-    return;
-  }
-  if (strcmp(line, "CALRESET") == 0) {
-    applyCalibrationProfile(DEFAULT_PARK_BLACK_STEPS, DEFAULT_PARK_WHITE_STEPS);
-    return;
-  }
-  if (strcmp(line, "CALSAVE") == 0) {
-    saveVisualAlignment();
-    return;
-  }
-  if (strcmp(line, "CALCANCEL") == 0) {
-    cancelVisualAlignment();
-    return;
-  }
-  if (strncmp(line, "CALSET ", 7) == 0) {
-    char *end = line + 7;
-    unsigned int black, white;
-    if (!parseProfileNumber(end, black) || *end++ != ' ' ||
-        !parseProfileNumber(end, white) || *end) {
-      sendHostError(F("PROFILE"));
-      return;
-    }
-    applyCalibrationProfile(black, white);
-    return;
-  }
-  if (strncmp(line, "NUDGE ", 6) == 0 &&
-      (line[6] == 'X' || line[6] == 'Y') &&
-      (line[7] == '+' || line[7] == '-') && line[8] == ' ' &&
-      (line[9] == '1' || line[9] == '5') && line[10] == 0) {
-    nudgeVisualAlignment(line[6], line[7], line[9] - '0');
     return;
   }
   if (strcmp(line, "BTTEST") == 0) {

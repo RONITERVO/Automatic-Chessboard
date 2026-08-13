@@ -19,10 +19,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var plan: PlanRouteRequest? = null
     private var planInitial: Set<Int>? = null
     private var planExpected: Set<Int>? = null
-    private var calibrationBlack = 354
-    private var calibrationWhite = 871
-    private var nudgeX = 0
-    private var nudgeY = 0
 
     override fun start() {
         isConnected = true
@@ -42,22 +38,11 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.2.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,CALPROFILE", 30)
+            "INFO" -> emit("INFO ACB2 4.2.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0}", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
             "BTTEST" -> emit("BT SKIP SIMULATOR", 30)
-            "CALGET" -> emit("CALPROFILE $calibrationBlack $calibrationWhite", 30)
-            "CALSAVE" -> {
-                calibrationBlack -= nudgeY; calibrationWhite += nudgeX
-                nudgeX = 0; nudgeY = 0; homed = false
-                emit("CALPROFILE $calibrationBlack $calibrationWhite", 30)
-            }
-            "CALCANCEL" -> { nudgeX = 0; nudgeY = 0; emit("CALCANCELLED", 30) }
-            "CALRESET" -> {
-                calibrationBlack = 354; calibrationWhite = 871; homed = false
-                emit("CALPROFILE 354 871", 30)
-            }
             "STOP" -> {
                 clearPlan()
                 sequence = 1
@@ -95,23 +80,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     emit("MOVING $move", 50)
                     applyMove(move, fields.getOrNull(2))
                     emit("DONE $move", 250)
-                }
-                command.matches(Regex("NUDGE [XY][+-] [15]")) -> {
-                    if (!homed) emit("ERR NUDGE", 30) else {
-                        val fields = command.split(' ')
-                        val amount = fields[2].toInt() * if (fields[1][1] == '+') 1 else -1
-                        if (fields[1][0] == 'X') nudgeX += amount else nudgeY += amount
-                        if (maxOf(kotlin.math.abs(nudgeX), kotlin.math.abs(nudgeY)) > 60) {
-                            if (fields[1][0] == 'X') nudgeX -= amount else nudgeY -= amount
-                            emit("ERR NUDGE", 30)
-                        } else emit("NUDGED $nudgeX $nudgeY", 80)
-                    }
-                }
-                command.matches(Regex("CALSET \\d+ \\d+")) -> {
-                    val values = command.split(' ')
-                    calibrationBlack = values[1].toInt(); calibrationWhite = values[2].toInt()
-                    homed = false
-                    emit("CALPROFILE $calibrationBlack $calibrationWhite", 30)
                 }
                 command.startsWith("PLAN ") -> beginPlan(command)
                 command.startsWith("DRAG ") -> runDrag(command)
