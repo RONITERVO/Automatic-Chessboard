@@ -71,6 +71,7 @@ class CameraController(
             active = true
             generation
         }
+        view.keepScreenOn = true
         if (!view.isAvailable) {
             synchronized(stateLock) { if (isCurrentLocked(token)) pendingSource = normalized }
             onStatus("Waiting for camera surface…")
@@ -253,6 +254,7 @@ class CameraController(
     fun snapshot(): Bitmap? = if (view.isAvailable) view.bitmap else null
 
     fun stop() {
+        view.keepScreenOn = false
         val resources = synchronized(stateLock) {
             generation++
             active = false
@@ -269,6 +271,7 @@ class CameraController(
             active = false
             takeResourcesLocked()
         }
+        main.post { view.keepScreenOn = false }
         release(resources)
         onStatus(message)
     }

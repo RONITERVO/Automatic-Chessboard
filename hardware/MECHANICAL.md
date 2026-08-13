@@ -14,11 +14,20 @@ only the following measurable interfaces.
 - The mechanism must resist racking and belt slip over repeated diagonal
   moves. Both axes must remain square to the playing field.
 
-The current firmware uses 195 full motor steps per square. That is a measured
-value for this mechanism, not a universal CoreXY value. If pulley tooth count,
-belt pitch, motor step angle, microstepping, or carriage geometry changes,
-measure and update `FULL_STEPS_PER_SQUARE` and `MOTOR_MICROSTEPS` before normal
-play.
+The mechanism measures about 195 full motor steps across the nominal 37.5 mm
+square pitch. Release firmware intentionally commands a 190-step logical pitch
+and recenters the e6 calibration park, keeping every outer square about 3.3 to
+3.5 mm inside the measured travel boundary so the carriage cannot contact the
+frame. The prototype's 297 mm tile assembly is offset relative to its
+calibration hardware, so its file axis is additionally translated about
+6.5 mm toward the white switch/a-files. This places the 24 mm magnet under the
+h-file tiles instead of against their outer edge. The safety inset and field
+translation are motion calibration values, not universal CoreXY geometry. If
+pulley tooth count, belt pitch, motor step angle, microstepping, carriage
+geometry, board placement, or available clearance changes, measure and update
+`FILE_PITCH_STEPS`, `RANK_PITCH_STEPS`, the two
+`CALIBRATION_PARK_*_STEPS` values, and
+`MOTOR_MICROSTEPS` before normal play.
 
 ## Confirmed donor-printer rail set
 

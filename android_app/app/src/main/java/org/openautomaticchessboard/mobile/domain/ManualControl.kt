@@ -46,13 +46,21 @@ data class SelectionResult(val selection: ManualSelection, val message: String)
 object ManualVerification {
     const val CALIBRATION_SQUARE = "e6"
 
+    fun positionIsTrusted(telemetry: Telemetry?): Boolean = telemetry?.let {
+        it.homed && !it.motionFault && it.trolleyX in 1..8 && it.trolleyY in 1..8
+    } == true
+
+    fun trustedPosition(telemetry: Telemetry?): Pair<Int, Int>? = telemetry
+        ?.takeIf(::positionIsTrusted)
+        ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+
     fun calibrationMatches(reportedSquare: String?, telemetry: Telemetry?): Boolean =
         reportedSquare?.lowercase() == CALIBRATION_SQUARE &&
             telemetry?.homed == true && !telemetry.motionFault && !telemetry.magnetOn &&
             telemetry.trolleyX == 5 && telemetry.trolleyY == 6
 
     fun headMoveMatches(target: Int, telemetry: Telemetry?): Boolean = telemetry?.let {
-        it.homed && !it.motionFault && !it.magnetOn &&
+        positionIsTrusted(it) && !it.magnetOn &&
             it.trolleyX == target % 8 + 1 && it.trolleyY == target / 8 + 1
     } == true
 

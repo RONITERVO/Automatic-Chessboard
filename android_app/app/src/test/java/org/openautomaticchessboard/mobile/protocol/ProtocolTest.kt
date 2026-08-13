@@ -43,10 +43,16 @@ class ProtocolTest {
 
     @Test fun classifiesAndBuildsGuardedCommands() {
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("TELEM"))
+        assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("SWTEST"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAY e2e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("CALIBRATE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("HEAD e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PIECE e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PATH e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("JOG W+"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAN e2e4---"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("DRAG e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("COMMIT"))
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
@@ -55,6 +61,43 @@ class ProtocolTest {
         assertThrows(IllegalArgumentException::class.java) { Protocol.playCommand("z9z8") }
         assertEquals("HEAD e6", Protocol.headCommand("e6"))
         assertEquals("PIECE e2e4", Protocol.pieceCommand("e2", "e4"))
+    }
+
+    @Test fun buildsAndParsesRouteTransactions() {
+        assertEquals("PLAN e2e4---", Protocol.planCommand("e2e4"))
+        assertEquals("PLAN a7a8q--", Protocol.planCommand("a7a8q"))
+        assertEquals("PLAN e1g1k--", Protocol.planCommand("e1g1", castlingSide = "kingside"))
+        assertEquals("PLAN e5d6-d5", Protocol.planCommand("e5d6", Protocol.squareIndex("d5")))
+
+        val request = Protocol.parsePlanCommand("PLAN e5d6-d5")
+        assertEquals("e5d6", request.uci)
+        assertEquals('-', request.mode)
+        assertEquals(Protocol.squareIndex("d5"), request.captureSquare)
+
+        val path = listOf(
+            Protocol.squareIndex("a1"),
+            Protocol.squareIndex("a2"),
+            Protocol.squareIndex("b2"),
+        )
+        assertEquals(2, Protocol.splitRouteRuns(path).size)
+        assertThrows(IllegalArgumentException::class.java) { Protocol.dragCommand(path) }
+        assertEquals("DRAG a1a2", Protocol.dragCommand(path.take(2)))
+        val drag = Protocol.parseDragCommand("DRAG a1a4")
+        assertEquals(Protocol.squareIndex("a1"), drag.source)
+        assertEquals(Protocol.squareIndex("a4"), drag.target)
+        assertEquals(4, drag.path.size)
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parseDragCommand("DRAG a1b2") }
+        assertThrows(IllegalStateException::class.java) { Protocol.splitRouteRuns(listOf(7, 8)) }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e2e4--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e2e4x--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e1c1k--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e1g1c--") }
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.planCommand("e1c1", castlingSide = "kingside")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.planCommand("e8g8", castlingSide = "queenside")
+        }
     }
 
     @Test fun telemetryPreservesReleasedAndFaultFlags() {

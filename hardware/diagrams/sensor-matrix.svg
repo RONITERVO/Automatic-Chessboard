@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
   <title id="title">Reed sensor to CD74HC4067 multiplexer map</title>
-  <desc id="desc">Four multiplexers share address and signal lines. The diagram gives the exact channel-to-square map used by firmware 3.29.</desc>
+  <desc id="desc">Four multiplexers share address and signal lines. The diagram gives the exact channel-to-square map used by firmware 4.0.0.</desc>
   <defs>
     <style>
       .title{font:700 30px Arial,sans-serif;fill:#1f2328}.sub{font:16px Arial,sans-serif;fill:#59636e}.box{fill:#dafbe1;stroke:#1a7f37;stroke-width:2;rx:12}.nano{fill:#ddf4ff;stroke:#0969da;stroke-width:3;rx:12}.head{font:700 18px Arial,sans-serif;fill:#1f2328}.text{font:15px Arial,sans-serif;fill:#1f2328}.mono{font:15px Consolas,monospace;fill:#1f2328}.small{font:13px Arial,sans-serif;fill:#59636e}.bus{stroke:#1a7f37;stroke-width:5;fill:none}.signal{stroke:#0969da;stroke-width:5;fill:none}.ground{stroke:#30363d;stroke-width:4;fill:none}.grid{stroke:#8c959f;stroke-width:1}.rank1{fill:#ffffff}.rank2{fill:#f6f8fa}

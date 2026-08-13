@@ -88,6 +88,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var devPageLabel: TextView? = null
     private var monitorUpdater: (() -> Unit)? = null
     private var playUpdater: (() -> Unit)? = null
+    private var lastRouteFailureDialog = ""
     private var manualUpdater: (() -> Unit)? = null
     private var manualSelection = ManualSelection()
     private var manualStatus = "Calibrate from this page before moving the head."
@@ -110,7 +111,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         recorder = EventRecorder(this)
         repository = BoardRepository(recorder)
         engine = StockfishEngine(this)
-        game = GameController(engine, repository::sendCommand, ::onGameChanged) { reported, choose ->
+        game = GameController(engine, repository, ::onGameChanged) { reported, choose ->
             AlertDialog.Builder(this).setTitle("Promotion")
                 .setItems(arrayOf("Queen", "Rook", "Bishop", "Knight")) { _, index ->
                     choose(charArrayOf('q', 'r', 'b', 'n')[index])
@@ -118,6 +119,8 @@ class MainActivity : Activity(), BoardRepository.Observer {
         }
         game.elo = prefs.getInt("elo", 2000)
         game.thinkMillis = prefs.getLong("think_ms", 800)
+        game.routeTimeMillis = prefs.getLong("route_ms", 8_000)
+        game.routeMaxTemporaryPieces = prefs.getInt("route_temporary_pieces", 10)
         gameState = game.snapshot
         game.chooseHumanSide(prefs.getBoolean("human_white", true))
         diagnosticsRunner = DiagnosticsRunner(this, repository, engine)
@@ -235,10 +238,10 @@ class MainActivity : Activity(), BoardRepository.Observer {
             trolley = trolleyPosition()
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val status = text(gameState.status, if (landscape) 12f else 15f, Color.WHITE, true).apply { maxLines = 2 }
+        val status = text(gameState.status, if (landscape) 12f else 14f, Color.WHITE, true).apply { maxLines = 2 }
         controls.addView(status,
             if (landscape) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28))
-            else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, .8f))
+            else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
         val side = buildSideSelector()
         controls.addView(side.view, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 30 else 42)))
         controls.addView(buildPlaySliders(landscape), LinearLayout.LayoutParams(
@@ -315,6 +318,30 @@ class MainActivity : Activity(), BoardRepository.Observer {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .72f).apply { marginStart = dp(4) })
         addView(button("PGN") { createPgn() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .65f).apply { marginStart = dp(4) })
+        addView(button("Route") { showRouteSettings() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .65f).apply { marginStart = dp(4) })
+    }
+
+    private fun showRouteSettings() {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = rounded(NAVY)
+            addView(sliderRow("Search s", 1, 30, (game.routeTimeMillis / 1_000).toInt()) {
+                game.routeTimeMillis = it * 1_000L
+                prefs.edit().putLong("route_ms", game.routeTimeMillis).apply()
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+            addView(sliderRow("Temp pieces", 0, 30, game.routeMaxTemporaryPieces) {
+                game.routeMaxTemporaryPieces = it
+                prefs.edit().putInt("route_temporary_pieces", it).apply()
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Collision-safe routing")
+            .setMessage("Longer search and more temporary pieces solve harder positions but use more phone resources.")
+            .setView(content)
+            .setPositiveButton("Done", null)
+            .show()
     }
 
     private fun buildHistoryPager(update: () -> Unit): View = LinearLayout(this).apply {
@@ -512,12 +539,16 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     override fun onBoardState(state: MonitorState) {
+        game.connectionChanged(state.connected)
         if (!state.connected && monitorState.connected) {
-            manualCalibrationVerified = false
-            manualPending = ManualPending.NONE
-            manualPendingSelection = null
-            manualSelection = ManualSelection(manualSelection.mode)
-            manualStatus = "Connection lost; calibrate again after reconnecting."
+            invalidateManualCalibration("Connection lost; calibrate again after reconnecting.")
+        } else if (manualCalibrationVerified && !ManualVerification.positionIsTrusted(state.telemetry)) {
+            val reason = if (state.telemetry?.motionFault == true) {
+                "Motion stopped with the carriage position unknown. Inspect locally, recover the fault, and recalibrate."
+            } else {
+                "Carriage position is no longer homed. Recalibrate before moving."
+            }
+            invalidateManualCalibration(reason)
         }
         if (state.connected && !monitorState.connected && !manualCalibrationVerified) {
             manualStatus = "Connected; calibrate from this page before moving."
@@ -544,6 +575,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
             "MOVING" -> if (event.args.firstOrNull() in setOf("HEAD", "PIECE")) {
                 manualStatus = "${event.args.first()} movement in progress; keep hands clear."
             }
+            "ESTOP" -> invalidateManualCalibration(
+                "Remote halt stopped motion and invalidated the carriage position. Inspect locally and recalibrate."
+            )
             "MOVED" -> handleManualMoved(event.args)
             "TELEM" -> handleManualTelemetry(event)
             "BOARD" -> handleManualBoard(event)
@@ -637,6 +671,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
         if (verified) manualSelection = ManualSelection(pendingSelection.mode)
     }
 
+    private fun invalidateManualCalibration(message: String) {
+        manualCalibrationVerified = false
+        manualPending = ManualPending.NONE
+        manualPendingSelection = null
+        manualSelection = ManualSelection(manualSelection.mode)
+        manualStatus = message
+    }
+
     override fun onTimelineChanged(entries: List<TimelineEntry>) {
         timeline = entries
         if (currentTab == TAB_DEVELOPER) updateDeveloperLog()
@@ -645,6 +687,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun onGameChanged(snapshot: GameSnapshot) {
         gameState = snapshot
         repository.setExpectedSquares(snapshot.expectedSquares)
+        if (snapshot.status.startsWith("Collision-safe route stopped:") &&
+            snapshot.status != lastRouteFailureDialog
+        ) {
+            lastRouteFailureDialog = snapshot.status
+            alert("Collision-safe route stopped", snapshot.status.removePrefix("Collision-safe route stopped: "))
+        } else if (!snapshot.status.startsWith("Collision-safe route stopped:")) {
+            lastRouteFailureDialog = ""
+        }
         if (currentTab == TAB_PLAY) playUpdater?.invoke()
         else if (currentTab == TAB_BOARD) monitorUpdater?.invoke()
         else if (currentTab == TAB_MOVE) manualUpdater?.invoke()
@@ -1019,8 +1069,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun released(value: Boolean) = if (value) "released" else "ACTIVE"
     private fun fileRank(x: Int, y: Int) = if (x in 1..8 && y in 1..8) "${('a'.code + x - 1).toChar()}$y" else "unknown"
     private fun trolleyPosition(state: MonitorState = monitorState): Pair<Int, Int>? =
-        state.telemetry?.takeIf { it.trolleyX in 1..8 && it.trolleyY in 1..8 }
-            ?.let { it.trolleyX - 1 to it.trolleyY - 1 }
+        ManualVerification.trustedPosition(state.telemetry)
     private fun stamp(seconds: Boolean = false) = SimpleDateFormat(if (seconds) "yyyyMMdd-HHmmss" else "yyyyMMdd-HHmm", Locale.US).format(Date())
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun alert(title: String, message: String) = AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
@@ -1028,6 +1077,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun settingsSnapshot(): Map<String, Any?> = mapOf(
         "ble_name" to prefs.getString("ble_name", ""), "ble_address" to prefs.getString("ble_address", ""),
         "elo" to game.elo, "think_ms" to game.thinkMillis, "human_white" to gameState.humanWhite,
+        "route_ms" to game.routeTimeMillis, "route_temporary_pieces" to game.routeMaxTemporaryPieces,
         "camera_source" to if (cameraSource.contains("://")) "<network-camera-url-redacted>" else cameraSource,
     )
 
@@ -1052,7 +1102,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     override fun onDestroy() {
         stopScan?.invoke(); closeCamera(); ui.removeCallbacksAndMessages(null)
         diagnosticsRunner.close()
-        repository.removeObserver(this); repository.close(); game.close()
+        repository.removeObserver(this); game.close(); repository.close()
         recorder.record("app", "session_closed")
         recorder.close()
         super.onDestroy()

@@ -25,7 +25,7 @@ microstep selection are configured on the driver hardware.
 
 For a complete beginner-oriented build, start with the
 [`hardware` build guide](hardware/README.md). It includes protected power
-wiring, a BOM, exact Nano and 64-square sensor maps, staged assembly,
+wiring, a BOM, exact Nano/MKS Gen L V1.0 and 64-square sensor maps, staged assembly,
 commissioning checks, diagrams, photographs of the working prototype, and
 rework notes for the operational long PCB whose design predates the current
 Bluetooth and A6 additions. Its archived KiCad source is reference-only, not a
@@ -34,13 +34,47 @@ not `VIN`.
 
 ## Building
 
-Open `Automatic_Chessboard_V3_27_i2c_value.ino` in the Arduino IDE, install the
-`hd44780` library by Bill Perry, select the board used by the project, and
-compile or upload the sketch. The firmware uses `hd44780_I2Cexp` so common
-PCF8574 LCD backpacks are detected without assuming one fixed pin mapping.
+The release build is reproducible from PowerShell:
+
+```powershell
+./firmware/test.ps1 -InstallDependencies
+```
+
+It pins the AVR core and display libraries, validates the hardware contract,
+runs tool tests, compiles the classic Nano and MKS Gen L V1.0 profiles, and
+enforces flash/SRAM budgets. See [`firmware/README.md`](firmware/README.md) for the
+modular source layout, explicit upload command, and contributor policy. The
+main `.ino` can still be opened normally in Arduino IDE; its sibling `.ino`
+tabs are compiled together automatically.
 
 Review the pin assignments, travel calibration, limit-switch behavior, driver
 current limit, and microstep settings before powering the motion hardware.
+
+## Full validation without motion
+
+When motors, piece magnets, or trustworthy reed readings are unavailable, run:
+
+```powershell
+./test-no-motion.ps1 -Port COM7
+```
+
+The workflow compiles the Nano firmware, enforces its memory budgets, exhaustively
+tests the motionless `PLAN` / `DRAG` / `COMMIT` occupancy model, runs Windows and
+Android planner/protocol/simulator tests, builds both apps, and optionally samples
+the real Nano over USB. The COM probe is allowlisted to `PING`, `INFO`, `STATUS`,
+`TELEM`, and `BOARD`; it validates BOARD framing but does not require any particular
+occupancy. It never uploads firmware or requests calibration, motor steps, magnet
+power, or a chess move.
+
+The probe first tries to keep DTR/RTS inactive. If a classic Nano does not
+answer without its normal USB reset, use `-AllowSerialReset` only after checking
+that firmware startup cannot energize the mechanism; this still does not send
+an upload or any motion-capable protocol command.
+
+This is the strongest release test possible without actuation, but it cannot prove
+motor direction or step accuracy, magnet current/pickup/release, reed wiring and
+orientation, mechanical clearance, homing repeatability, or physical collision
+behavior. Those remain staged commissioning checks.
 
 ## Windows and Bluetooth companion
 
@@ -65,19 +99,30 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 3.31 adds versioned `INFO`/`TELEM` monitoring, fully normalized reed-sensor
-coordinates, guarded in-app calibration and direct head/piece movement, and a best-effort `!` remote halt
-checked inside motion loops. Bluetooth and cameras are not safety
+Firmware 4.3.0 keeps the standalone two-button/LCD and Micro-Max play
+experience while adding a small transactional executor for host-planned
+collision-safe rearrangements. Windows can evacuate and restore blockers, stage
+the main piece, and recursively clear trapped pieces; the Nano accepts only
+straight orthogonal drags and proves the complete sensor frame before and after
+each one. Capture, en passant, promotion occupancy, and standard castling are
+included. Firmware 4.0 clients retain their original `PLAY` path.
+
+Reproducible resource-budgeted builds, measured calibration references, the
+configurable connected endurance tool, the 30-second continuous-magnet timeout,
+normalized sensor coordinates, guarded calibration/direct movement, and the
+best-effort `!` halt remain available. Bluetooth and cameras are not safety
 systems, so a local physical power cutoff remains required for remote operation.
 
 ## Android Bluetooth companion
 
 `android_app` provides the same working range from a phone: native HC-08 BLE
 with reconnect, live logical/physical board comparison, Stockfish 18 play,
-guided safe diagnostics, phone and network-camera views, PGN export, structured
-logs, privacy-sanitized support ZIPs, a hardware-free simulator, guarded raw
-commands, and a persistent best-effort halt control. Every page uses a fixed,
-adaptive layout with pagination instead of horizontal or vertical scrolling.
+the same collision-safe blocker rearrangement and verified route transaction as
+Windows, guided safe diagnostics, phone and network-camera views, PGN export,
+structured logs, privacy-sanitized support ZIPs, a hardware-free simulator,
+guarded raw commands, and a persistent best-effort halt control. Every page uses
+a fixed, adaptive layout with pagination instead of horizontal or vertical
+scrolling.
 
 Run `android_app/download-stockfish.ps1`, then open `android_app` in Android
 Studio or run `android_app/gradlew.bat assembleDebug`. See
@@ -119,8 +164,8 @@ rank 6. If the black switch is already active, the head moves one full square
 away to clear that lane. The staging move never travels toward the black switch.
 
 During normal calibration both switches are approached one step at a time. The
-white switch stays pressed while the black switch is found. Capture parking and
-step-loss reference calibrations use the same sequence. After both switches
+white switch stays pressed while the black switch is found. Capture recovery and
+developer reference calibrations use the same sequence. After both switches
 establish the corner, the head moves directly to the exact e6 park offset with
 no separate release/backoff stage or switch-specific release-distance setting.
 
@@ -129,7 +174,7 @@ abort calibration. Use the board's power switch for an emergency stop during
 this sequence. Button emergency stops remain enabled for normal board and test
 movements outside calibration.
 
-Every successful calibration and step-test reference pass parks the head at
+Every successful calibration and endurance-test reference pass parks the head at
 e6. This keeps the normal power-cycle and new-game starting position out of the
 black-switch lane before the next white-switch approach.
 
@@ -159,48 +204,67 @@ or below; after the next startup, select calibration and confirm `A=READY`.
 This recovery confirmation is also required on the first boot after installing
 firmware that has no valid position journal yet.
 
-## Step-loss test
+## Connected endurance test
 
-The service menu includes **STEP LOSS**, a long-running motion repeatability
-test. Remove all pieces from the board before starting it. The test:
+Firmware 4.0 and later move the former fixed on-device AI self-play workload to the
+configurable [`firmware/endurance_test.py`](firmware/endurance_test.py) tool.
+This recovers scarce Nano memory while retaining real production straight and
+knight planning through the guarded, developer-only `PATH` protocol command.
+The magnet is forced off, results are logged on the computer, cycle count and
+reference frequency are configurable, and both homing step counts are compared
+against a measured baseline. See [`firmware/README.md`](firmware/README.md) for
+the exact command and physical safety requirements.
 
-1. homes both axes and restores the normal e6 service position;
-2. repeats the homing pass to establish a switch-to-position baseline;
-3. lets the Micro-Max chess engine play both sides of a sequence of legal games;
-4. mirrors those games on a separate in-memory board, so captures, en passant,
-   promotions, and castling are exercised without reading or modifying the
-   real reed-sensor board state;
-5. runs the same production travel planner used for real moves, with the
-   electromagnet kept off because the physical board must be empty; and
-6. returns to both home switches every eight half-moves and compares the
-   measured step counts with the baseline, for a total of 200 half-moves.
+This test detects accumulated position drift using the existing switches. It
+cannot prove that no individual missed step was later cancelled in the opposite
+direction; detecting every stall in real time requires motor encoders or a
+driver with suitable diagnostic feedback.
 
-A difference greater than four full steps, scaled to the configured microstep
-mode, is reported as step loss. Either shared limit/button input stops regular
-test motion. During a homing reference both inputs are endstops and button abort
-handling is disabled; use the board power switch for an emergency stop. Any
-abort during regular test motion or any homing failure invalidates the trolley
-position and requires calibration before further use.
+## Builder geometry measurement
 
-This detects accumulated position drift using the existing switches. It cannot
-prove that no individual step was missed and later cancelled by a missed step
-in the opposite direction. Detecting every stall in real time still requires
-motor encoders or a driver with suitable diagnostic feedback.
+Firmware 4.2 keeps board geometry as four compile-time constants, uses no
+geometry EEPROM, and does not depend on either app. After normal calibration,
+open **Service > Geometry**, select any square, place one visible magnetic
+marker there, and align it using precise, coordinated one-step file/rank
+movements. The LCD reports the selected square and signed X/Y correction
+without changing the installed geometry.
+
+Measure two widely separated squares with different files and ranks. The
+formulas beside the constants in [`global.h`](global.h) give the new values, or
+run the optional offline calculator:
+
+```powershell
+python ./firmware/geometry_calculator.py `
+  "GEOMETRY a2 X+3 Y-1" "GEOMETRY h7 X+10 Y-6"
+```
+
+Edit the four reported constants, upload, calibrate again, and verify at least
+four widely separated squares. This corrects translation and independent axis
+scale; a rotated, skewed, or nonuniform board must be aligned mechanically.
+The former duplicate local sensor screen was replaced to hold the Nano within
+its established flash budget; both apps and the `BOARD` command retain complete
+64-square sensor inspection.
 
 ## Piece-retention travel planner
 
-For a weak magnet, the production planner uses the shortest straight path for
-normal legal moves. A legal rook, bishop, queen, pawn, or king move already has
-a clear corridor, and a straight path has no corner-induced lateral jerk.
-Knight moves use a 12-segment cubic S-curve through the middle of the normal
-L-shaped clearance corridor instead of two sharp 90-degree corners. Capture
-removal and the rook part of castling use rounded cubic detours. Unloaded head
-travel is also coordinated directly in X/Y instead of moving one axis and then
-the other.
+The standalone and legacy `PLAY` planner uses the shortest straight path for
+normal legal moves. Knight moves use three exact straight segments through the
+open square-boundary lane. Capture removal and the rook part of castling use the
+same explicit clearance lanes.
 
-Each curve ends on an exact whole-step destination; interpolation rounding is
-not allowed to accumulate between moves. All paths keep the current tested
-full-step timing values (`2000`, `1800`, and `1000` microseconds) unchanged.
+For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
+configurations. It uses only orthogonal square-to-square carried paths, so the
+physical diagonal-clearance constraint is satisfied conservatively. Turning
+paths are split at square centres into straight sensor-verified `DRAG` commands.
+The search minimizes disturbed pieces first, then actual magnet pickups,
+distance, turns, and clearance risk. Time, node, parking, corridor, temporary-
+piece, and recursion limits prevent unbounded work; failure stops the move rather
+than falling back to an unverified path.
+
+Every corridor ends on an exact whole-step destination, with no interpolation
+rounding to accumulate between moves. Hardware validation uses a `1000`
+microsecond half-period for start, carrying, and unloaded motion. Keeping these
+equal intentionally avoids the mechanism's strong low-speed resonance.
 
 ## Captured-piece bin
 
@@ -211,16 +275,14 @@ conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
 
 For every capture, the head first moves half a rank toward the lower clearance
-line and then follows a rounded cubic turn to that left-side release point.
-The curve uses the normal carrying speed and decelerates completely at its
-endpoint. The head remains stationary through the magnet's release delay and
-for another 400 ms while the piece falls into the bin. It then immediately
+line and then follows that straight lane to the left-side release point. The
+corridor uses the normal carrying speed and finishes before magnet release.
+The head remains stationary through the magnet's release delay and for another
+400 ms while the piece falls into the bin. It then immediately
 homes both axes from the nearby calibration side and restores the known e6
 position before moving the AI piece. Nothing is stored on the travel rail, so
 later captures cannot collide with earlier ones.
 
-The AI-vs-AI step-loss test recognizes captures on its virtual chessboard and
-runs this exact same exit curve followed by the same two-axis re-home.
-Its electromagnet and release dwell remain disabled because no physical pieces
-are present, but the motor workload, off-board travel, and capture correction
-are included in the endurance measurement.
+Capture behavior remains covered by normal standalone and connected game paths.
+The magnet-free endurance test intentionally focuses on repeatable production
+board travel; capture-bin testing requires a guarded physical-piece test.

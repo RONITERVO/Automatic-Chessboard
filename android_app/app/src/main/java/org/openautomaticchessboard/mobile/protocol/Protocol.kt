@@ -24,15 +24,30 @@ data class Telemetry(
     val uptimeSeconds: Long,
 )
 
+data class DragRoute(
+    val source: Int,
+    val target: Int,
+    val path: List<Int>,
+)
+
+data class PlanRouteRequest(
+    val uci: String,
+    val mode: Char,
+    val captureSquare: Int?,
+)
+
 enum class CommandRisk { READ_ONLY, CONTROL, MOTION, EMERGENCY, UNKNOWN }
 
 object Protocol {
     const val SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
     const val CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
-    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST")
+    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
-    private val motion = setOf("START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE")
+    private val motion = setOf(
+        "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
+        "PLAN", "DRAG", "COMMIT",
+    )
 
     fun parseEvent(line: String): BoardEvent {
         val fields = line.trim().split(Regex("\\s+")).filter(String::isNotBlank)
@@ -109,6 +124,121 @@ object Protocol {
             "Invalid manual piece move: $from$to"
         }
         return "PIECE $from$to"
+    }
+
+    fun squareIndex(name: String): Int {
+        val square = name.trim().lowercase()
+        require(square.matches(Regex("[a-h][1-8]"))) { "Invalid square: $name" }
+        return square[0] - 'a' + (square[1] - '1') * 8
+    }
+
+    fun squareName(square: Int): String {
+        require(square in 0..63) { "Square is outside the board: $square" }
+        return "${'a' + square % 8}${square / 8 + 1}"
+    }
+
+    fun splitRouteRuns(path: List<Int>): List<List<Int>> {
+        require(path.size >= 2) { "A drag route needs source and destination" }
+        val steps = path.zipWithNext(::routeStep)
+        val runs = mutableListOf<List<Int>>()
+        var runStart = 0
+        for (index in 1 until steps.size) {
+            if (steps[index] != steps[index - 1]) {
+                runs += path.subList(runStart, index + 1).toList()
+                runStart = index
+            }
+        }
+        runs += path.subList(runStart, path.size).toList()
+        return runs
+    }
+
+    fun dragCommand(path: List<Int>): String {
+        val runs = splitRouteRuns(path)
+        require(runs.size == 1) { "One DRAG command must be a single straight run" }
+        val run = runs.single()
+        return "DRAG ${squareName(run.first())}${squareName(run.last())}"
+    }
+
+    fun parseDragCommand(line: String): DragRoute {
+        val fields = line.trim().split(Regex("\\s+"))
+        require(fields.size == 2 && fields[0].equals("DRAG", ignoreCase = true) &&
+            fields[1].matches(Regex("[a-h][1-8][a-h][1-8]"))) {
+            "Malformed DRAG command: $line"
+        }
+        val source = squareIndex(fields[1].take(2))
+        val target = squareIndex(fields[1].drop(2))
+        require(source != target) { "DRAG endpoints must differ" }
+        val sameFile = source % 8 == target % 8
+        val sameRank = source / 8 == target / 8
+        require(sameFile || sameRank) { "DRAG must be orthogonally straight" }
+        val step = if (sameFile) if (target > source) 8 else -8 else if (target > source) 1 else -1
+        val path = buildList {
+            var current = source
+            add(current)
+            while (current != target) {
+                current += step
+                add(current)
+            }
+        }
+        return DragRoute(source, target, path)
+    }
+
+    fun planCommand(
+        uci: String,
+        captureSquare: Int? = null,
+        castlingSide: String? = null,
+    ): String {
+        val normalized = normalizeUci(uci)
+        val castle = when (castlingSide?.lowercase()?.replace("-", "")?.replace("_", "")) {
+            null -> null
+            "k", "king", "kingside" -> 'k'
+            "c", "q", "queen", "queenside" -> 'c'
+            else -> error("Invalid castling side: $castlingSide")
+        }
+        val mode = if (castle != null) {
+            require(normalized.length == 4) { "Castling cannot also be a promotion" }
+            val allowed = if (castle == 'k') setOf("e1g1", "e8g8") else setOf("e1c1", "e8c8")
+            require(normalized in allowed) { "UCI move does not match $castlingSide castling: $uci" }
+            castle
+        } else normalized.getOrNull(4) ?: '-'
+        val capture = captureSquare?.let(::squareName) ?: "--"
+        return "PLAN ${normalized.take(4)}$mode$capture"
+    }
+
+    fun parsePlanCommand(line: String): PlanRouteRequest {
+        val fields = line.trim().split(Regex("\\s+"))
+        require(fields.size == 2 && fields[0].equals("PLAN", ignoreCase = true) &&
+            fields[1].length == 7) { "Malformed PLAN command: $line" }
+        val payload = fields[1].lowercase()
+        val baseUci = normalizeUci(payload.take(4))
+        val mode = payload[4]
+        require(mode in "-qrbnkc") { "Invalid PLAN mode: $mode" }
+        if (mode == 'k') require(baseUci in setOf("e1g1", "e8g8")) {
+            "King-side PLAN mode does not match its UCI endpoints"
+        }
+        if (mode == 'c') require(baseUci in setOf("e1c1", "e8c8")) {
+            "Queen-side PLAN mode does not match its UCI endpoints"
+        }
+        val captureText = payload.takeLast(2)
+        val capture = if (captureText == "--") null else squareIndex(captureText)
+        val move = baseUci + if (mode in "qrbn") mode else ""
+        return PlanRouteRequest(move, mode, capture)
+    }
+
+    private fun normalizeUci(uci: String): String {
+        val normalized = uci.trim().lowercase()
+        require(normalized.matches(Regex("[a-h][1-8][a-h][1-8][qrbn]?"))) {
+            "Invalid UCI move: $uci"
+        }
+        require(normalized.take(2) != normalized.substring(2, 4)) { "Invalid UCI move: $uci" }
+        return normalized
+    }
+
+    private fun routeStep(first: Int, second: Int): Int {
+        val delta = second - first
+        if (delta == 8 || delta == -8) return delta
+        if ((delta == 1 || delta == -1) && first / 8 == second / 8) return delta
+        error("Route contains a non-orthogonal step ${squareName(first)}->${squareName(second)}")
     }
 }
 

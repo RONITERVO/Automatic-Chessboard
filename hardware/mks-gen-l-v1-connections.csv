@@ -1,0 +1,35 @@
+id,board_connector,board_contact,arduino_pin,destination,destination_pin,net,required,notes
+PWR-01,12/24V,+,,Protected 24V,+,PROTECTED_24V,yes,"Use the existing fuse, latching cutoff, and reverse-polarity stage"
+PWR-02,12/24V,-,,Ground distribution,GND,GND,yes,Logic and motor ground are common on the MKS board
+M1-01,X motor,2B+2A+1A+1B,,Motor 1,coil B + coil A,MOTOR_WHITE,yes,Identify the two coil pairs before insertion
+M2-01,Y motor,2B+2A+1A+1B,,Motor 2,coil B + coil A,MOTOR_BLACK,yes,Identify the two coil pairs before insertion
+MAG-01,HE0,+,D10,H2520 electromagnet,+,MAGNET_24V,yes,HE0 is the onboard low-side MOSFET output
+MAG-02,HE0,-,D10,H2520 electromagnet,-,MAGNET_LOW_SIDE,yes,
+MAG-03,H2520 electromagnet,+,,Flyback diode,CATHODE,PROTECTED_24V,yes,Diode stripe at magnet positive
+MAG-04,H2520 electromagnet,-,,Flyback diode,ANODE,MAGNET_LOW_SIDE,yes,Mount directly across the magnet wires
+SW-01,X-,S,D3,Switch A,NO,SWITCH_A,yes,Use S and G only; never short 5V to GND
+SW-02,X-,G,,Switch A,COM,GND,yes,Pressed reads LOW
+SW-03,Y-,S,D14,Switch B,NO,SWITCH_B,yes,Use S and G only; never short 5V to GND
+SW-04,Y-,G,,Switch B,COM,GND,yes,Pressed reads LOW
+MUX-01,AUX-2,pin 4 / A9,D63,MUX0..MUX3,S0,MUX_S0,yes,Shared address bit 0
+MUX-02,AUX-2,pin 3 / A5,D59,MUX0..MUX3,S1,MUX_S1,yes,Shared address bit 1
+MUX-03,AUX-2,pin 6 / D40,D40,MUX0..MUX3,S2,MUX_S2,yes,Shared address bit 2
+MUX-04,AUX-2,pin 8 / D42,D42,MUX0..MUX3,S3,MUX_S3,yes,Shared address bit 3
+MUX-05,AUX-2,pin 10 / A11,D65,MUX0,EN,MUX0_ENABLE,yes,Active LOW
+MUX-06,AUX-2,pin 5 / A10,D64,MUX1,EN,MUX1_ENABLE,yes,Active LOW
+MUX-07,AUX-2,pin 7 / D44,D44,MUX2,EN,MUX2_ENABLE,yes,Active LOW
+MUX-08,AUX-2,pin 9 / A12,D66,MUX3,EN,MUX3_ENABLE,yes,Active LOW
+MUX-09,SERVOS2,D4,D4,MUX0..MUX3,SIG,MUX_SIGNAL,yes,All four SIG pins share the firmware pull-up
+MUX-10,AUX-2,pin 1 / GND,,MUX0..MUX3,GND,GND,yes,
+MUX-11,AUX-2,pin 2 / 5V,,MUX0..MUX3,VCC,VCC_5V,yes,
+LCD-01,SERVOS1,D11,D11,LCD backpack,SDA,LCD_SDA,yes,Software I2C in this profile
+LCD-02,SERVOS1,D6,D6,LCD backpack,SCL,LCD_SCL,yes,Software I2C in this profile
+LCD-03,SERVOS1,5V,,LCD backpack,VCC,VCC_5V,yes,
+LCD-04,SERVOS1,GND,,LCD backpack,GND,GND,yes,
+BLE-01,AUX-1,TX / D1,D1,R1 1k,1,SERIAL_TX,yes,Shared USB and Bluetooth reply output
+BLE-02,R1 1k,2,,HC-08,RXD,BLE_RX_3V3,yes,Divider node
+BLE-03,HC-08,RXD,,R2 2k,1,BLE_RX_3V3,yes,Divider node
+BLE-04,R2 2k,2,,Ground distribution,GND,GND,yes,
+BLE-05,HC-08,TXD,,EXP1,pin 3 / D17,BLE_TX,yes,Serial2 RX; direct 3.3V logic is valid HIGH
+BLE-06,AUX-1,5V,,HC-08 carrier,VCC,VCC_5V,yes,Only a carrier rated for a 5V supply
+BLE-07,AUX-1,GND,,HC-08,GND,GND,yes,

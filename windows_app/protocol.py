@@ -45,11 +45,16 @@ class CommandRisk(Enum):
     UNKNOWN = "Unknown command"
 
 
-READ_ONLY_COMMANDS = frozenset({"PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST"})
+READ_ONLY_COMMANDS = frozenset({
+    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST",
+})
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
-MOTION_COMMANDS = frozenset({"START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE"})
+MOTION_COMMANDS = frozenset({
+    "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
+    "PLAN", "DRAG", "COMMIT",
+})
 
 
 class LineBuffer:
@@ -152,12 +157,22 @@ def classify_command(line: str) -> CommandRisk:
     return CommandRisk.UNKNOWN
 
 
+def _normalize_uci(uci: str) -> str:
+    text = uci.strip().lower()
+    if len(text) not in (4, 5):
+        raise ValueError(f"Invalid UCI move: {uci!r}")
+    source = _square_index(text[:2])
+    target = _square_index(text[2:4])
+    if source == target or (len(text) == 5 and text[4] not in "qrbn"):
+        raise ValueError(f"Invalid UCI move: {uci!r}")
+    return text
+
+
 def play_command(uci: str, *, castling: bool = False,
                  en_passant: bool = False) -> str:
-    if len(uci) not in (4, 5):
-        raise ValueError(f"Invalid UCI move: {uci!r}")
+    normalized = _normalize_uci(uci)
     flag = "C" if castling else "E" if en_passant else ""
-    return f"PLAY {uci}{' ' + flag if flag else ''}"
+    return f"PLAY {normalized}{' ' + flag if flag else ''}"
 
 
 def head_command(square: str) -> str:
@@ -172,3 +187,171 @@ def piece_command(source: str, target: str) -> str:
     if source == target:
         raise ValueError("Source and target must differ")
     return f"PIECE {source}{target}"
+
+
+# PLANROUTE executes one straight orthogonal run per DRAG command. A complete
+# planner path is split at corners, deliberately releasing and reacquiring at
+# square centers so the Nano can reuse its hardware-validated straight mover.
+
+
+@dataclass(frozen=True)
+class DragRoute:
+    source: int
+    target: int
+    path: tuple[int, ...]
+    step_count: int
+
+
+def _square_index(name: str) -> int:
+    square = name.strip().lower()
+    if len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
+        raise ValueError(f"Invalid square: {name!r}")
+    return ord(square[0]) - ord("a") + (int(square[1]) - 1) * 8
+
+
+def _square_text(square: int) -> str:
+    if square not in range(64):
+        raise ValueError(f"Square is outside the board: {square!r}")
+    return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
+
+
+def _route_step(first: int, second: int) -> int:
+    delta = second - first
+    if delta in (-8, 8):
+        return delta
+    if delta in (-1, 1) and first // 8 == second // 8:
+        return delta
+    raise ValueError(
+        f"Route contains a non-orthogonal step {_square_text(first)}->{_square_text(second)}"
+    )
+
+
+def split_route_runs(path: tuple[int, ...] | list[int]) -> tuple[tuple[int, ...], ...]:
+    """Split a valid orthogonal path into maximal straight square-center runs."""
+
+    if len(path) < 2:
+        raise ValueError("A drag route needs source and destination")
+    steps = [_route_step(first, second) for first, second in zip(path, path[1:])]
+    runs: list[tuple[int, ...]] = []
+    run_start = 0
+    for index in range(1, len(steps)):
+        if steps[index] != steps[index - 1]:
+            runs.append(tuple(path[run_start:index + 1]))
+            run_start = index
+    runs.append(tuple(path[run_start:]))
+    return tuple(runs)
+
+
+def drag_command(path: tuple[int, ...] | list[int]) -> str:
+    runs = split_route_runs(path)
+    if len(runs) != 1:
+        raise ValueError("One DRAG command must be a single straight run")
+    run = runs[0]
+    return f"DRAG {_square_text(run[0])}{_square_text(run[-1])}"
+
+
+def parse_drag_command(line: str) -> DragRoute:
+    fields = line.strip().split()
+    if len(fields) != 2 or fields[0].upper() != "DRAG" or len(fields[1]) != 4:
+        raise ValueError(f"Malformed DRAG command: {line!r}")
+    source = _square_index(fields[1][:2])
+    target = _square_index(fields[1][2:])
+    if source == target:
+        raise ValueError("DRAG endpoints must differ")
+    source_file, source_rank = source % 8, source // 8
+    target_file, target_rank = target % 8, target // 8
+    if source_file != target_file and source_rank != target_rank:
+        raise ValueError("DRAG must be orthogonally straight")
+    step = 8 if source_file == target_file and target > source else (
+        -8 if source_file == target_file else (1 if target > source else -1)
+    )
+    path = tuple(range(source, target + step, step))
+    return DragRoute(source, target, path, len(path) - 1)
+
+
+@dataclass(frozen=True)
+class PlanRouteRequest:
+    """Decoded fixed-width PLANROUTE transaction header."""
+
+    uci: str
+    mode: str
+    capture_square: int | None
+
+    @property
+    def castling_side(self) -> str | None:
+        return "kingside" if self.mode == "k" else "queenside" if self.mode == "c" else None
+
+
+def _normalize_castling_side(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace("_", "").replace("-", "")
+    if normalized in {"k", "king", "kingside"}:
+        return "k"
+    if normalized in {"c", "q", "queen", "queenside"}:
+        return "c"
+    raise ValueError(f"Invalid castling side: {value!r}")
+
+
+def plan_command(
+    uci: str,
+    capture_square: int | str | None = None,
+    *,
+    castling_side: str | None = None,
+) -> str:
+    """Open a compact sensor-verified route transaction.
+
+    The payload is exactly seven characters: ``from``, ``to``, one mode byte,
+    and a capture square or ``--``. The mode is ``-`` for a normal move,
+    ``q/r/b/n`` for promotion, or ``k/c`` for standard king/queen-side
+    castling. The Nano independently compares its current 64-square sensor
+    frame with its authoritative pre-move frame before accepting the command.
+    """
+
+    normalized = _normalize_uci(uci)
+    castle = _normalize_castling_side(castling_side)
+    if castle is not None:
+        if len(normalized) != 4:
+            raise ValueError("Castling cannot also be a promotion")
+        expected = {"k": {"e1g1", "e8g8"}, "c": {"e1c1", "e8c8"}}[castle]
+        if normalized not in expected:
+            raise ValueError(f"UCI move does not match {castling_side} castling: {uci!r}")
+        mode = castle
+    else:
+        mode = normalized[4] if len(normalized) == 5 else "-"
+
+    if capture_square is None:
+        capture = "--"
+    elif isinstance(capture_square, int):
+        capture = _square_text(capture_square)
+    else:
+        capture = capture_square.strip().lower()
+        _square_index(capture)
+
+    return f"PLAN {normalized[:4]}{mode}{capture}"
+
+
+def parse_plan_command(line: str) -> PlanRouteRequest:
+    fields = line.strip().split()
+    if len(fields) != 2 or fields[0].upper() != "PLAN" or len(fields[1]) != 7:
+        raise ValueError(f"Malformed PLAN command: {line!r}")
+    payload = fields[1].lower()
+    base_uci = payload[:4]
+    _normalize_uci(base_uci)
+    mode = payload[4]
+    if mode not in "-qrbnkc":
+        raise ValueError(f"Invalid PLAN mode: {mode!r}")
+    if mode == "k" and base_uci not in {"e1g1", "e8g8"}:
+        raise ValueError("King-side PLAN mode does not match its UCI endpoints")
+    if mode == "c" and base_uci not in {"e1c1", "e8c8"}:
+        raise ValueError("Queen-side PLAN mode does not match its UCI endpoints")
+    uci = base_uci + (mode if mode in "qrbn" else "")
+    capture_text = payload[5:]
+    capture_square = None if capture_text == "--" else _square_index(capture_text)
+    return PlanRouteRequest(uci=uci, mode=mode, capture_square=capture_square)
+
+
+def commit_plan_command() -> str:
+    """Ask the Nano to prove the derived chess end frame and commit it."""
+
+    return "COMMIT"

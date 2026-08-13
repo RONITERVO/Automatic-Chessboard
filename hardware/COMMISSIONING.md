@@ -44,13 +44,21 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 3.29 and fresh telemetry.
+6. Verify the monitor reports firmware 4.3.0 and fresh telemetry.
+
+For a differently sized or positioned playing field, finish normal switch and
+motion commissioning first, then use **Service > Geometry** as documented in
+`firmware/README.md`. It requires only a visible magnetic marker; reed sensors,
+a calibration sheet, a camera, and either companion app are optional. Rebuild
+and upload the reported constants, calibrate, then verify separated squares.
 
 ## Stage C: switches and 64 sensors
 
 1. Observe both switch states released.
-2. Press switch A/D11; only the white/A input should change.
-3. Press switch B/A6; only the black/B input should change.
+2. Run the firmware's guided `SWTEST` from the app developer console or a
+   serial terminal.
+3. Follow its prompts to press/release switch A/D11 and then switch B/A6. It
+   must report `SWTEST PASS`; record the pressed A6 raw value.
 4. Place one magnet-equipped piece on each square, one at a time.
 5. Confirm exactly the matching square changes in the visual board.
 6. Remove the piece and confirm the square clears.
@@ -73,13 +81,17 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 
 1. Remove all pieces and expose the mechanism.
 2. Connect driver 1 VMOT and its motor with power off.
-3. Apply power and run only the smallest guarded service move.
-4. Verify smooth motion. Grinding or vibration usually indicates mixed coil
+3. Keep the untested driver's VMOT and the protected magnet 24 V branch
+   physically disconnected before and throughout the JOG test.
+4. Apply power and run `JOG W+` then `JOG W-` for the white driver, or
+   `JOG B+` then `JOG B-` for the black driver, from a guarded developer
+   console. Each command moves only 20 full steps.
+5. Verify smooth motion. Grinding or vibration usually indicates mixed coil
    pairs; stop power before changing wires.
-5. Verify direction against the expected switch. Reverse one complete coil
+6. Verify direction against the expected switch. Reverse one complete coil
    pair only if necessary.
-6. Repeat for driver 2.
-7. Record both VREF values and temperatures after 15 minutes of unloaded test.
+7. Repeat for driver 2.
+8. Record both VREF values and temperatures after 15 minutes of unloaded test.
 
 ## Stage F: calibration and endurance
 
@@ -91,7 +103,8 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 5. Confirm the carriage parks at e6 without striking an end stop.
 6. Close the surface and test empty-board sensor stability.
 7. Test one piece on short straight moves, then diagonal and knight paths.
-8. Run the built-in step-loss test with an empty board.
+8. Optionally run the connected magnet-free endurance test documented in
+   `../firmware/README.md`, with an empty board and someone beside the cutoff.
 
 ## Stop conditions
 
