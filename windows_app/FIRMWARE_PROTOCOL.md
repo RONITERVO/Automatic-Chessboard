@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.1.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.2.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.1.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG
+< INFO ACB2 4.2.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,CALPROFILE
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -158,15 +158,43 @@ best-effort remote halt during calibration and direct movement.
 `DEVPATH` advertises `PATH e2e4`, a developer-only, magnet-free command that
 exercises the production straight or knight piece planner without changing
 sensor state. It has the same calibration, fault, idle-state, and emergency-halt
-guards as direct movement and returns `MOVED PATH e2e4`. It is intended for the
+guards as direct movement and returns `OK PATH`. It is intended for the
 repository endurance tool, not normal game clients.
 
 `DEVJOG` advertises guarded `JOG W+`, `JOG W-`, `JOG B+`, and `JOG B-` commands.
 Each pulses only the selected CoreXY driver for 20 full steps, keeps the magnet
 off, and invalidates the carriage position. Use them only for one-driver-at-a-
 time commissioning with the other driver and magnet power disconnected. A
-successful jog returns `MOVED JOG W+`; calibration is required before any
-coordinate-based movement.
+successful response is `MOVED JOG W+` (with the requested motor/sign).
+
+## Persistent visual board offset (firmware 4.2+)
+
+`CALPROFILE` advertises a guided, sensor-independent correction of the physical
+board position. The square pitch remains the release's hardware-measured 188
+full steps; the saved values are the two corner-to-e6 offsets:
+
+```text
+> CALGET
+< CALPROFILE 354 871
+> NUDGE X+ 5
+< NUDGED 5 0
+> CALSAVE
+< CALPROFILE 354 876
+```
+
+`NUDGE <X|Y><+|-> <1|5>` requires an idle, calibrated carriage at e6. It briefly
+energizes the magnet, moves at the validated fast/no-ramp setting, and is
+hard-limited to 60 steps from the reference on either axis. `CALCANCEL` returns
+those accumulated steps to zero without changing EEPROM. `CALSAVE` converts the
+correction to the two park offsets, writes a checksum/commit-last EEPROM record,
+and invalidates homing. A fresh `CALIBRATE` is therefore mandatory before play.
+
+`CALSET <black> <white>` installs a previously recorded answer and `CALRESET`
+restores release defaults. Both validate conservative mechanism ranges and
+invalidate homing. Ordinary users should use the fixed-size app wizard, which
+labels arrows by chessboard direction and copies the final human-readable
+answer. Looking straight down is sufficient; a ruler, marked sheet, or app
+camera view is an optional accuracy aid rather than a dependency.
 
 The firmware independently limits any continuous magnet command to 30 seconds.
 On timeout it switches the magnet off, invalidates the carriage position,

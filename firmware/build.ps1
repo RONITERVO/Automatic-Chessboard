@@ -4,7 +4,7 @@ param(
   [switch]$InstallDependencies,
   [switch]$Upload,
   [string]$Port,
-  [int]$MaxFlashBytes = 28672,
+  [int]$MaxFlashBytes = 30000,
   [int]$MaxRamBytes = 1200
 )
 

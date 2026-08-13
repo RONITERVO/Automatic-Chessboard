@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.1.0.
+ * Automatic Chessboard firmware 4.2.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -16,7 +16,7 @@
 #include "global.h"
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.1.0"
+#define FIRMWARE_VERSION "4.2.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -45,6 +45,8 @@ byte after_calibration = setup_check;
 byte service_item = SERVICE_CALIBRATE;
 byte service_file = 1;
 byte service_rank = 1;
+unsigned int calibration_park_black_steps = DEFAULT_PARK_BLACK_STEPS;
+unsigned int calibration_park_white_steps = DEFAULT_PARK_WHITE_STEPS;
 
 hd44780_I2Cexp lcd;
 // Responses use hardware TX/D1, which safely fans out to USB and HC-08 RXD.
@@ -69,11 +71,6 @@ volatile boolean remote_stop_requested = false;
 char remote_move_flags = 0;
 char remote_promotion_piece = 0;
 
-// Board-square centers are x=1..8, so the playing-field edge is x=0.50.
-// Calibration establishes the left limit near x=0.35. x=0.48 is outside
-// the playing field while retaining about 25 full steps from that limit.
-const unsigned int CAPTURE_SIDE_X_STEPS =
-    (SQUARE_SIZE * 12UL + 12UL) / 25UL;
 const unsigned int CAPTURE_DROP_SETTLE_MS = 400;
 
 // Position records are journaled across multiple EEPROM slots. A new UNKNOWN
@@ -160,6 +157,7 @@ void setup() {
     Serial.println(lcd_status);
   }
   lcd.backlight();
+  loadCalibrationProfile();
   loadPersistedTrolleyPosition();
   showPersistedTrolleyPosition();
   AI_reset();

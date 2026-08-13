@@ -38,6 +38,7 @@ import com.github.bhlangonijr.chesslib.Piece
 import org.openautomaticchessboard.mobile.BuildConfig
 import org.openautomaticchessboard.mobile.camera.CameraController
 import org.openautomaticchessboard.mobile.domain.BoardRepository
+import org.openautomaticchessboard.mobile.domain.BoardOffsetProfile
 import org.openautomaticchessboard.mobile.domain.DiagnosticResult
 import org.openautomaticchessboard.mobile.domain.DiagnosticsRunner
 import org.openautomaticchessboard.mobile.domain.EventRecorder
@@ -51,6 +52,7 @@ import org.openautomaticchessboard.mobile.domain.ManualVerification
 import org.openautomaticchessboard.mobile.domain.StockfishEngine
 import org.openautomaticchessboard.mobile.domain.SupportBundle
 import org.openautomaticchessboard.mobile.domain.TimelineEntry
+import org.openautomaticchessboard.mobile.domain.nudgeCommand
 import org.openautomaticchessboard.mobile.protocol.BoardEvent
 import org.openautomaticchessboard.mobile.protocol.CommandRisk
 import org.openautomaticchessboard.mobile.protocol.Protocol
@@ -61,7 +63,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class ManualPending { NONE, CALIBRATION, HEAD, PIECE }
+private enum class ManualPending { NONE, CALIBRATION, VISUAL_CALIBRATION, VISUAL_SAVE, HEAD, PIECE }
 
 class MainActivity : Activity(), BoardRepository.Observer {
     private lateinit var repository: BoardRepository
@@ -95,6 +97,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var manualPending = ManualPending.NONE
     private var manualPendingSelection: ManualSelection? = null
     private var calibrationReportedSquare: String? = null
+    private var alignmentDialog: AlertDialog? = null
+    private var alignmentStatusView: TextView? = null
+    private var alignmentCoarse = true
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
         override fun run() {
@@ -390,7 +395,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         controls.addView(modeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44)))
         controls.addView(selectionText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, .75f))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(button("Calibrate", ACCENT_DARK) { confirmManualCalibration() },
+        actions.addView(button("Calibrate", ACCENT_DARK) { chooseManualCalibration() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         actions.addView(button("Clear") {
             if (manualPending != ManualPending.NONE) {
@@ -565,7 +570,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
         when (event.kind) {
             "CALIBRATING" -> manualStatus = "Calibrating; keep the mechanism clear."
             "CALIBRATED" -> {
-                if (manualPending == ManualPending.CALIBRATION) {
+                if (manualPending == ManualPending.VISUAL_CALIBRATION) {
+                    calibrationReportedSquare = event.args.firstOrNull()
+                    if (calibrationReportedSquare == "e6") showVisualAlignmentControls()
+                    else alignmentFailed("Firmware did not confirm the e6 reference.")
+                } else if (manualPending == ManualPending.CALIBRATION) {
                     calibrationReportedSquare = event.args.firstOrNull()
                     manualStatus = "Calibration ended at ${calibrationReportedSquare ?: "unknown"}; checking fresh telemetry."
                     repository.enqueueRequests("TELEM", "BOARD")
@@ -574,6 +583,26 @@ class MainActivity : Activity(), BoardRepository.Observer {
             "MOVING" -> if (event.args.firstOrNull() in setOf("HEAD", "PIECE")) {
                 manualStatus = "${event.args.first()} movement in progress; keep hands clear."
             }
+            "NUDGED" -> alignmentStatusView?.text =
+                "Adjustment: ${event.args.take(2).joinToString(" / ")} steps"
+            "CALCANCELLED" -> {
+                closeAlignmentDialog()
+                manualPending = ManualPending.NONE
+                manualStatus = "Visual alignment cancelled; the saved offset was not changed."
+            }
+            "CALPROFILE" -> if (manualPending == ManualPending.VISUAL_SAVE) {
+                runCatching { BoardOffsetProfile.fromEvent(event.args) }
+                    .onSuccess { profile ->
+                        closeAlignmentDialog()
+                        manualPending = ManualPending.NONE
+                        manualCalibrationVerified = false
+                        manualStatus = "Saved. ${profile.answer}. Recalibrate once to verify it."
+                        (getSystemService(ClipboardManager::class.java)).setPrimaryClip(
+                            ClipData.newPlainText("board offset", profile.answer)
+                        )
+                        alert("Board offset saved", "${profile.answer}\n\nThe answer was copied. Run Calibrate once more before moving or playing.")
+                    }.onFailure { alignmentFailed(it.message ?: "Malformed board offset response") }
+            }
             "ESTOP" -> invalidateManualCalibration(
                 "Remote halt stopped motion and invalidated the carriage position. Inspect locally and recalibrate."
             )
@@ -581,9 +610,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
             "TELEM" -> handleManualTelemetry(event)
             "BOARD" -> handleManualBoard(event)
             "ERR" -> if (manualPending != ManualPending.NONE || event.args.joinToString(" ").contains("CALIBRATE")) {
-                manualPending = ManualPending.NONE
-                manualPendingSelection = null
-                manualStatus = "Board rejected the operation: ${event.args.joinToString(" ")}"
+                val detail = "Board rejected the operation: ${event.args.joinToString(" ")}"
+                if (alignmentDialog != null || manualPending in setOf(ManualPending.VISUAL_CALIBRATION, ManualPending.VISUAL_SAVE)) {
+                    alignmentFailed(detail)
+                } else {
+                    manualPending = ManualPending.NONE
+                    manualPendingSelection = null
+                    manualStatus = detail
+                }
             }
         }
         if (currentTab == TAB_MOVE) manualUpdater?.invoke()
@@ -825,6 +859,123 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 }
                 manualUpdater?.invoke()
             }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun chooseManualCalibration() {
+        if (manualPending != ManualPending.NONE) {
+            manualStatus = "An operation is already in progress; wait for verification."
+            manualUpdater?.invoke()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Board calibration")
+            .setItems(arrayOf("Quick carriage calibration", "Visually align board offset")) { _, which ->
+                if (which == 0) confirmManualCalibration() else startVisualAlignment()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun startVisualAlignment() {
+        if (!manualCapabilityReady()) return
+        if ("CALPROFILE" !in monitorState.firmware?.capabilities.orEmpty()) {
+            alert("Firmware update required", "Install firmware 4.2 or newer for visual board alignment.")
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Visually align board offset")
+            .setMessage(
+                "Put one magnetic chess piece or loose marker exactly on e6. Clear every other piece. " +
+                    "The carriage will calibrate; arrow taps then briefly grip and move the marker. " +
+                    "Keep the physical cutoff accessible.\n\nNo sheet or camera is required. " +
+                    "A ruler, marked sheet, or camera is optional."
+            ).setPositiveButton("Start") { _, _ ->
+                manualCalibrationVerified = false
+                manualPending = ManualPending.VISUAL_CALIBRATION
+                calibrationReportedSquare = null
+                manualStatus = "Finding the reference; keep hands clear."
+                repository.sendCommand("CALIBRATE").onFailure {
+                    manualPending = ManualPending.NONE
+                    manualStatus = it.message ?: "Calibration send failed"
+                }
+                manualUpdater?.invoke()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun showVisualAlignmentControls() {
+        closeAlignmentDialog()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), 0)
+        }
+        panel.addView(text("Watch from directly above. Tap arrows until the marker is centered on e6.", 14f, Color.DKGRAY).apply {
+            gravity = Gravity.CENTER; maxLines = 3
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)))
+        alignmentStatusView = text("Adjustment: 0 / 0 steps", 13f, Color.DKGRAY, true).apply {
+            gravity = Gravity.CENTER
+        }
+        panel.addView(alignmentStatusView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)))
+        val coarse = CheckBox(this).apply {
+            text = "Coarse (5 steps, about 1 mm)"; isChecked = true
+            setOnCheckedChangeListener { _, checked -> alignmentCoarse = checked }
+        }
+        panel.addView(coarse, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        fun arrow(label: String, axis: Char, positive: Boolean) = button(label, ACCENT_DARK) {
+            repository.sendCommand(nudgeCommand(axis, positive, alignmentCoarse)).onFailure {
+                alignmentFailed(it.message ?: "Nudge send failed")
+            }
+        }
+        panel.addView(arrow("Toward black / rank 8", 'Y', true),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        val middle = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        middle.addView(arrow("Toward a-file", 'X', false), LinearLayout.LayoutParams(0, dp(48), 1f))
+        middle.addView(text("e6", 18f, Color.DKGRAY, true).apply { gravity = Gravity.CENTER },
+            LinearLayout.LayoutParams(dp(54), dp(48)))
+        middle.addView(arrow("Toward h-file", 'X', true), LinearLayout.LayoutParams(0, dp(48), 1f))
+        panel.addView(middle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        panel.addView(arrow("Toward white / rank 1", 'Y', false),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        alignmentDialog = AlertDialog.Builder(this).setTitle("Center the e6 marker")
+            .setView(panel)
+            .setNegativeButton("Cancel and return", null)
+            .setPositiveButton("Save offset", null)
+            .setOnCancelListener { cancelVisualAlignment() }
+            .create().also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { cancelVisualAlignment() }
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { saveVisualAlignment() }
+                }
+                dialog.show()
+            }
+    }
+
+    private fun saveVisualAlignment() {
+        manualPending = ManualPending.VISUAL_SAVE
+        alignmentStatusView?.text = "Saving to the boardâ€¦"
+        repository.sendCommand("CALSAVE").onFailure {
+            manualPending = ManualPending.VISUAL_CALIBRATION
+            alignmentStatusView?.text = it.message ?: "Save failed"
+        }
+    }
+
+    private fun cancelVisualAlignment() {
+        alignmentStatusView?.text = "Returning to the original referenceâ€¦"
+        repository.sendCommand("CALCANCEL").onFailure {
+            alignmentFailed("Could not return automatically. Inspect and recalibrate before motion.")
+        }
+    }
+
+    private fun closeAlignmentDialog() {
+        alignmentDialog?.setOnCancelListener(null)
+        alignmentDialog?.dismiss()
+        alignmentDialog = null
+        alignmentStatusView = null
+        alignmentCoarse = true
+    }
+
+    private fun alignmentFailed(detail: String) {
+        closeAlignmentDialog()
+        manualPending = ManualPending.NONE
+        manualPendingSelection = null
+        manualCalibrationVerified = false
+        manualStatus = detail
+        alert("Visual alignment stopped", detail)
     }
 
     private fun confirmManualMove() {

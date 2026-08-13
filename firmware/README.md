@@ -1,12 +1,12 @@
 # Nano firmware development
 
-Firmware 4.1 keeps the Nano responsible for deterministic motion, sensor
+Firmware 4.2 keeps the Nano responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.1.0 behavior
+## Release 4.2.0 behavior
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
@@ -28,6 +28,17 @@ state, occupied destinations, blocked corridors, incomplete capture/castling
 occupancy, and unexpected sensor transitions. Complex evacuation, restoration,
 staging, and recursive clearing remain host responsibilities so Nano memory and
 motion behaviour stay deterministic. See `windows_app/FIRMWARE_PROTOCOL.md`.
+
+Firmware 4.2 also advertises `CALPROFILE`. Windows and Android provide the same
+guided visual offset wizard: put one magnetic marker on e6, calibrate, and tap
+board-direction arrows until it is centered. This needs no sensors, sheet, or
+camera. A marked sheet, ruler, or camera can optionally improve the visual
+reference. Corrections are bounded to 60 motor steps per axis, may be cancelled
+by returning to the original reference, and are stored in a checksummed,
+commit-last EEPROM profile only when the user taps Save. Saving invalidates the
+carriage position, so a new calibration verifies the result before any play or
+manual movement. The wizard reports a portable answer such as `Black offset
+354; white offset 871`; advanced users can reinstall it with `CALSET 354 871`.
 
 For deterministic limit-input commissioning, send `SWTEST` from USB or the
 guarded developer console and follow its `PRESS A`, `RELEASE`, and `PRESS B`
@@ -53,6 +64,7 @@ Disconnect the untested driver's VMOT and the magnet branch before using them.
 - `FirmwarePieces.ino` implements captures, castling, and carried moves.
 - `FirmwareService.ino` contains local maintenance controls.
 - `PositionJournal.ino` owns power-loss-safe EEPROM position records.
+- `CalibrationProfile.ino` owns the persistent board offset and bounded nudges.
 - `Micro_Max.cpp` is the separately attributed standalone engine adaptation.
 
 Arduino concatenates the `.ino` tabs into one translation unit, which keeps the

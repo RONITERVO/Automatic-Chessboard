@@ -64,6 +64,7 @@ class CameraController(
 
     fun start(source: String) {
         stop()
+        view.keepScreenOn = true
         val normalized = source.trim()
         val token = synchronized(stateLock) {
             if (closed) return
@@ -253,6 +254,7 @@ class CameraController(
     fun snapshot(): Bitmap? = if (view.isAvailable) view.bitmap else null
 
     fun stop() {
+        view.keepScreenOn = false
         val resources = synchronized(stateLock) {
             generation++
             active = false

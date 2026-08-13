@@ -278,6 +278,10 @@ class SimulatorTransport:
         self._plan_expected: frozenset[int] | None = None
         self._plan_capture: int | None = None
         self._plan_dirty = False
+        self._cal_black = 354
+        self._cal_white = 871
+        self._nudge_x = 0
+        self._nudge_y = 0
 
     @property
     def is_connected(self) -> bool:
@@ -326,8 +330,8 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.1.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE"
+                "INFO ACB2 4.2.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE,CALPROFILE"
             )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)}")
@@ -335,6 +339,45 @@ class SimulatorTransport:
             self._emit(self._telemetry())
         elif upper == "BOARD":
             self._emit(f"BOARD {self._board_hex()}")
+        elif upper == "CALGET":
+            self._emit(f"CALPROFILE {self._cal_black} {self._cal_white}")
+        elif upper.startswith("NUDGE "):
+            try:
+                axis_sign, amount = upper.split()[1:]
+                delta = int(amount) * (1 if axis_sign[1] == "+" else -1)
+                if not self._homed or int(amount) not in (1, 5):
+                    raise ValueError("NUDGE")
+                if axis_sign[0] == "X":
+                    self._nudge_x += delta
+                elif axis_sign[0] == "Y":
+                    self._nudge_y += delta
+                else:
+                    raise ValueError("NUDGE")
+                if max(abs(self._nudge_x), abs(self._nudge_y)) > 60:
+                    raise ValueError("NUDGE")
+                self._emit(f"NUDGED {self._nudge_x} {self._nudge_y}")
+            except (ValueError, IndexError):
+                self._emit("ERR NUDGE")
+        elif upper == "CALSAVE":
+            self._cal_black -= self._nudge_y
+            self._cal_white += self._nudge_x
+            self._nudge_x = self._nudge_y = 0
+            self._homed = False
+            self._emit(f"CALPROFILE {self._cal_black} {self._cal_white}")
+        elif upper == "CALCANCEL":
+            self._nudge_x = self._nudge_y = 0
+            self._emit("CALCANCELLED")
+        elif upper.startswith("CALSET "):
+            try:
+                self._cal_black, self._cal_white = map(int, text.split()[1:])
+                self._homed = False
+                self._emit(f"CALPROFILE {self._cal_black} {self._cal_white}")
+            except ValueError:
+                self._emit("ERR PROFILE")
+        elif upper == "CALRESET":
+            self._cal_black, self._cal_white = 354, 871
+            self._homed = False
+            self._emit("CALPROFILE 354 871")
         elif upper == "BTTEST":
             self._emit("BT SIMULATED")
         elif upper == "CALIBRATE":

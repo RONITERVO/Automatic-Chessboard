@@ -95,20 +95,21 @@ const byte MOTOR_BLACK_STEP = 5;
 // This value must match the MS1/MS2/MS3 wiring on both STEP/DIR drivers.
 // Supported A4988 values are 1, 2, 4, 8, and 16.
 const byte MOTOR_MICROSTEPS = 1;
-// The mechanism measures about 5.2 full steps/mm. A 190-step logical pitch,
-// combined with the centered park correction below, keeps every outer square
-// about 3.3-3.5 mm inside the former travel boundary to avoid frame contact.
-const unsigned int FULL_STEPS_PER_SQUARE = 190;
-const unsigned int SQUARE_SIZE = FULL_STEPS_PER_SQUARE * MOTOR_MICROSTEPS;
+// Repeated collision-free camera registration measured about 188 steps per
+// square. This keeps every outer square inside the proven physical envelope.
+const unsigned int SQUARE_SIZE = 188U * MOTOR_MICROSTEPS;
 // Physical corner-to-e6 offsets are deliberately independent of logical
-// square pitch. The reduced grid's centered correction shifts e6 by two X
-// steps and seven Y steps. This prototype's playing field is also registered
-// 34 X steps (about 6.5 mm) toward the white switch/a-files so h-file targets
-// sit under their tiles instead of against the outer tile edge.
-const unsigned int CALIBRATION_PARK_BLACK_STEPS =
-    354U * MOTOR_MICROSTEPS;
-const unsigned int CALIBRATION_PARK_WHITE_STEPS =
-    871U * MOTOR_MICROSTEPS;
+// square pitch. These values register the e6 park to a camera-observed physical
+// calibration sheet; keep them separate so future board revisions can change
+// the origin without changing the measured square pitch.
+const unsigned int DEFAULT_PARK_BLACK_STEPS = 354U * MOTOR_MICROSTEPS;
+const unsigned int DEFAULT_PARK_WHITE_STEPS = 871U * MOTOR_MICROSTEPS;
+extern unsigned int calibration_park_black_steps;
+extern unsigned int calibration_park_white_steps;
+#define CALIBRATION_PARK_BLACK_STEPS calibration_park_black_steps
+#define CALIBRATION_PARK_WHITE_STEPS calibration_park_white_steps
+const unsigned int CAPTURE_SIDE_X_STEPS =
+    (SQUARE_SIZE * 12UL + 12UL) / 25UL;
 
 // Hardware-validated half-period delay for the current full-step drive. Using
 // the same value for start, carrying, and unloaded travel intentionally

@@ -147,6 +147,34 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn("MOVED PIECE e2e4", lines)
         transport.close()
 
+    def test_visual_offset_save_cancel_and_portable_profile(self):
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("CALIBRATE")
+        threading.Event().wait(0.3)
+        transport.send("NUDGE X+ 5")
+        transport.send("NUDGE Y- 1")
+        threading.Event().wait(0.2)
+        self.assertIn("NUDGED 5 -1", lines)
+        transport.send("CALCANCEL")
+        transport.send("CALGET")
+        threading.Event().wait(0.1)
+        self.assertIn("CALCANCELLED", lines)
+        self.assertIn("CALPROFILE 354 871", lines)
+
+        transport.send("NUDGE X+ 5")
+        transport.send("CALSAVE")
+        threading.Event().wait(0.1)
+        self.assertIn("CALPROFILE 354 876", lines)
+        transport.send("HEAD e4")
+        threading.Event().wait(0.1)
+        self.assertIn("ERR CALIBRATE", lines)
+        transport.send("CALSET 355 875")
+        threading.Event().wait(0.1)
+        self.assertIn("CALPROFILE 355 875", lines)
+        transport.close()
+
     def test_planroute_requires_a_homed_computer_turn(self):
         from protocol import plan_command
 

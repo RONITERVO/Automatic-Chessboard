@@ -366,7 +366,8 @@ class BoardRepository(private val recorder: EventRecorder) :
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")
-                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "ESTOP", "ERR", "STOPPED" -> {
+                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "NUDGED",
+                        "CALCANCELLED", "CALPROFILE", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
                         }

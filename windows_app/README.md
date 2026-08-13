@@ -18,6 +18,7 @@ next steps. Raw protocol data remains available in the Developer tab.
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
 | Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Board offset setup | Center one marker at e6 with board-direction arrows; saves and copies a portable two-number answer | Requires firmware 4.2; sheet, ruler, and camera are optional aids |
 | Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Requires firmware 4.1; bounded search can report that no verified plan was found |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
@@ -142,6 +143,16 @@ earlier retain the legacy direct/knight `PLAY` path as a compatibility fallback.
 The guided routine checks the connection, firmware identity, telemetry, all 64
 sensors, control inputs, Stockfish, and optional camera dependencies. A support
 bundle can then be saved for a GitHub issue.
+
+### Move head / piece
+
+**Visually align board offset** is a fixed-size, no-scroll wizard. Put one
+magnetic marker on e6, clear other pieces, and follow the direction-labeled
+arrows while looking down at the square. Fine taps move one step; coarse taps
+move five steps (about 1 mm on the reference build). Cancel returns the head to
+its starting reference without saving. Save writes the Nano profile, copies the
+plain-language offset answer, and requires one more normal calibration before
+movement. A sheet, ruler, or Camera tab is optional.
 
 ### Camera
 

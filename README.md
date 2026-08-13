@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.1.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.2.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
@@ -219,6 +219,21 @@ This test detects accumulated position drift using the existing switches. It
 cannot prove that no individual missed step was later cancelled in the opposite
 direction; detecting every stall in real time requires motor encoders or a
 driver with suitable diagnostic feedback.
+
+## Visual board-offset calibration
+
+The Windows and Android Move pages include a guided visual alignment tool for
+different board placements and builds. It calibrates to the repeatable corner,
+parks at e6, and lets the user center one magnetic marker using clearly labeled
+board-direction arrows. No reed readings, calibration sheet, technical motor
+knowledge, or camera is required. Looking straight down at the tile is enough;
+a ruler, marked sheet, or the optional camera view can improve precision.
+
+The Nano hard-limits adjustments, supports a physical return-to-start cancel,
+stores the two-number offset with checksum and commit-last EEPROM writes, and
+requires a fresh calibration after saving. The apps copy the final answer in a
+portable form (`Black offset N; white offset N`) so even a nontechnical user can
+send it to a contributor or reinstall it after replacing a controller.
 
 ## Piece-retention travel planner
 

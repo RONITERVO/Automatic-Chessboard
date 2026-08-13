@@ -114,7 +114,7 @@ def main() -> int:
         for cycle in range(1, args.cycles + 1):
             for move in ROUTE:
                 print(f"> PATH {move}")
-                link.command(f"PATH {move}", f"MOVED PATH {move}")
+                link.command(f"PATH {move}", "OK PATH")
             if cycle % args.reference_every and cycle != args.cycles:
                 continue
 
