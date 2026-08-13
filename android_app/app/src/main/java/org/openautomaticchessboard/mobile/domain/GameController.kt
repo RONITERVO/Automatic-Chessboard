@@ -53,6 +53,7 @@ class GameController(
     private val routeCommands = ArrayDeque<String>()
     private var routeCurrentCommand = ""
     private var routeExpectedOccupancy = emptySet<Int>()
+    private var routeSnapshotRequestedMs = 0L
     private var routeMotionSent = false
     private var routeExclusive = false
     private var routeGeneration = 0
@@ -223,6 +224,7 @@ class GameController(
         if ("PLANROUTE" in channel.firmwareCapabilities) {
             routePhase = RoutePhase.SNAPSHOT
             routeGeneration++
+            routeSnapshotRequestedMs = System.currentTimeMillis()
             status = "Reading board for collision-safe routing…"
             channel.sendCommand("BOARD")
                 .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
@@ -244,94 +246,100 @@ class GameController(
 
     private fun handleRouteEvent(event: BoardEvent): Boolean {
         if (routePhase == RoutePhase.NONE) return false
-        when (event.kind) {
-            "BOARD" -> if (routePhase == RoutePhase.SNAPSHOT) {
-                cancelRouteTimeout()
-                startRoutePlanning()
-                return true
-            } else if (routePhase == RoutePhase.BOARD) {
-                val actual = channel.physicalOccupancy
-                if (actual == null || actual != routeExpectedOccupancy) {
-                    val missing = routeExpectedOccupancy - actual.orEmpty()
-                    val unexpected = actual.orEmpty() - routeExpectedOccupancy
-                    failRoute(
-                        "routed sensor proof failed (missing ${formatSquares(missing)}; " +
-                            "extra ${formatSquares(unexpected)})",
-                    )
-                } else {
-                    cancelRouteTimeout()
-                    advanceRoute()
-                }
-                return true
-            }
-            "PLAN" -> {
-                if (routePhase != RoutePhase.PLAN || event.args.firstOrNull() != "READY") {
-                    failRoute("PLAN acknowledgement mismatch")
-                } else {
-                    val captured = activeRoutePlan?.problem?.capturedSquare
-                    if (captured != null) {
-                        if (captured !in routeExpectedOccupancy) {
-                            failRoute("Capture square was absent from the planned start frame")
-                            return true
-                        }
-                        routeExpectedOccupancy = routeExpectedOccupancy - captured
-                    }
-                    cancelRouteTimeout()
-                    advanceRoute()
-                }
-                return true
-            }
-            "MOVED" -> {
-                if (routePhase != RoutePhase.MOVED) {
-                    failRoute("Unexpected MOVED acknowledgement")
-                    return true
-                }
-                try {
-                    val drag = Protocol.parseDragCommand(routeCurrentCommand)
-                    val expectedLabel = routeCurrentCommand.substringAfter(' ')
-                    require(event.args.size >= 2 && event.args[0] == "PIECE" &&
-                        event.args[1].equals(expectedLabel, ignoreCase = true)) {
-                        "MOVED acknowledgement mismatch"
-                    }
-                    require(drag.source in routeExpectedOccupancy && drag.target !in routeExpectedOccupancy) {
-                        "Route occupancy diverged before sensor proof"
-                    }
-                    routeExpectedOccupancy = (routeExpectedOccupancy - drag.source) + drag.target
-                    cancelRouteTimeout()
-                    advanceRoute()
-                } catch (error: Exception) {
-                    failRoute(error.message ?: "Invalid routed move acknowledgement")
-                }
-                return true
-            }
-            "DONE" -> {
-                if (routePhase != RoutePhase.DONE || routeCurrentCommand != "COMMIT") {
-                    failRoute("Unexpected DONE acknowledgement")
-                } else {
-                    val reported = event.args.firstOrNull()
-                    if (reported == null) failRoute("DONE did not include a move")
-                    else {
-                        cancelRouteTimeout()
-                        channel.finishRouteTransaction()
-                        routeExclusive = false
-                        resetRoute()
-                        completeEngineMove(reported)
-                    }
-                }
-                return true
-            }
+        return when (event.kind) {
+            "BOARD" -> handleRouteBoard()
+            "PLAN" -> handleRoutePlan(event)
+            "MOVED" -> handleRouteMoved(event)
+            "DONE" -> handleRouteDone(event)
             "ERR" -> {
                 failRoute(event.args.joinToString(" ").ifBlank { "unknown route error" })
-                return true
+                true
             }
             "ESTOP", "STOPPED" -> {
-                if (routeExclusive) channel.finishRouteTransaction()
-                routeExclusive = false
                 resetRoute()
-                return false
+                false
             }
+            else -> false
         }
-        return false
+    }
+
+    private fun handleRouteBoard(): Boolean {
+        if (routePhase == RoutePhase.SNAPSHOT) {
+            cancelRouteTimeout()
+            startRoutePlanning()
+            return true
+        }
+        if (routePhase != RoutePhase.BOARD) return false
+        val actual = channel.physicalOccupancy
+        if (actual == null || actual != routeExpectedOccupancy) {
+            val missing = routeExpectedOccupancy - actual.orEmpty()
+            val unexpected = actual.orEmpty() - routeExpectedOccupancy
+            failRoute(
+                "routed sensor proof failed (missing ${formatSquares(missing)}; " +
+                    "extra ${formatSquares(unexpected)})",
+            )
+        } else {
+            cancelRouteTimeout()
+            advanceRoute()
+        }
+        return true
+    }
+
+    private fun handleRoutePlan(event: BoardEvent): Boolean {
+        if (routePhase != RoutePhase.PLAN || event.args.firstOrNull() != "READY") {
+            failRoute("PLAN acknowledgement mismatch")
+            return true
+        }
+        val captured = activeRoutePlan?.problem?.capturedSquare
+        if (captured != null) {
+            if (captured !in routeExpectedOccupancy) {
+                failRoute("Capture square was absent from the planned start frame")
+                return true
+            }
+            routeExpectedOccupancy = routeExpectedOccupancy - captured
+        }
+        cancelRouteTimeout()
+        advanceRoute()
+        return true
+    }
+
+    private fun handleRouteMoved(event: BoardEvent): Boolean {
+        if (routePhase != RoutePhase.MOVED) {
+            failRoute("Unexpected MOVED acknowledgement")
+            return true
+        }
+        try {
+            val drag = Protocol.parseDragCommand(routeCurrentCommand)
+            val expectedLabel = routeCurrentCommand.substringAfter(' ')
+            require(event.args.size >= 2 && event.args[0] == "PIECE" &&
+                event.args[1].equals(expectedLabel, ignoreCase = true)) {
+                "MOVED acknowledgement mismatch"
+            }
+            require(drag.source in routeExpectedOccupancy && drag.target !in routeExpectedOccupancy) {
+                "Route occupancy diverged before sensor proof"
+            }
+            routeExpectedOccupancy = (routeExpectedOccupancy - drag.source) + drag.target
+            cancelRouteTimeout()
+            advanceRoute()
+        } catch (error: Exception) {
+            failRoute(error.message ?: "Invalid routed move acknowledgement")
+        }
+        return true
+    }
+
+    private fun handleRouteDone(event: BoardEvent): Boolean {
+        if (routePhase != RoutePhase.DONE || routeCurrentCommand != "COMMIT") {
+            failRoute("Unexpected DONE acknowledgement")
+            return true
+        }
+        val reported = event.args.firstOrNull()
+        if (reported == null) failRoute("DONE did not include a move")
+        else {
+            cancelRouteTimeout()
+            resetRoute()
+            completeEngineMove(reported)
+        }
+        return true
     }
 
     private fun startRoutePlanning() {
@@ -340,7 +348,12 @@ class GameController(
             return
         }
         val sensors = channel.physicalOccupancy
+        val sensorUpdatedMs = channel.sensorUpdatedMs
         val expected = logicalOccupancy()
+        if (sensorUpdatedMs == null || sensorUpdatedMs < routeSnapshotRequestedMs) {
+            failRoute("The board snapshot was stale; request a fresh sensor frame")
+            return
+        }
         if (sensors == null || sensors != expected) {
             val missing = expected - sensors.orEmpty()
             val unexpected = sensors.orEmpty() - expected
@@ -366,13 +379,15 @@ class GameController(
         routeExclusive = true
         routePhase = RoutePhase.PLANNING
         status = "Planning collision-safe route on this phone…"
+        val planningLimit = routeTimeMillis.coerceIn(500L, 30_000L)
+        armRouteTimeout(planningLimit + ROUTE_CONTROL_TIMEOUT_MS, "route planning")
         val generation = routeGeneration
         publish()
         worker.execute {
             val result = runCatching {
                 RearrangementPlanner(
                     PlannerConfig(
-                        timeLimitMillis = routeTimeMillis.coerceIn(500L, 30_000L),
+                        timeLimitMillis = planningLimit,
                         maxTemporaryPieces = routeMaxTemporaryPieces.coerceIn(0, 30),
                     ),
                 ).plan(problem)
@@ -458,11 +473,9 @@ class GameController(
         cancelRouteTimeout()
         if (routeExclusive) {
             if (attemptStop && channel.connected) channel.abortRouteTransaction()
-            else channel.finishRouteTransaction()
         } else if (attemptStop && active && channel.connected) {
             channel.sendCommand("STOP")
         }
-        routeExclusive = false
         resetRoute()
         pendingEngineMove = null
         engineThinking = false
@@ -476,6 +489,8 @@ class GameController(
     }
 
     private fun resetRoute() {
+        if (routeExclusive) channel.finishRouteTransaction()
+        routeExclusive = false
         routeGeneration++
         cancelRouteTimeout()
         routePhase = RoutePhase.NONE
@@ -483,8 +498,8 @@ class GameController(
         routeCommands.clear()
         routeCurrentCommand = ""
         routeExpectedOccupancy = emptySet()
+        routeSnapshotRequestedMs = 0L
         routeMotionSent = false
-        routeExclusive = false
     }
 
     fun connectionChanged(isConnected: Boolean) {
@@ -559,6 +574,7 @@ $moves $result
 
     override fun close() {
         if (routeExclusive && channel.connected) channel.abortRouteTransaction()
+        resetRoute()
         closed = true
         active = false
         engineThinking = false

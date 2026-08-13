@@ -43,6 +43,7 @@ class BoardRepository(private val recorder: EventRecorder) :
 
     override val firmwareCapabilities: Set<String> get() = state.firmware?.capabilities.orEmpty()
     override val physicalOccupancy: Set<Int>? get() = state.sensorSquares
+    override val sensorUpdatedMs: Long? get() = state.sensorUpdatedMs
     override val connected: Boolean get() = state.connected
 
     fun addObserver(observer: Observer) {
@@ -215,9 +216,7 @@ class BoardRepository(private val recorder: EventRecorder) :
     }
 
     override fun abortRouteTransaction(): Result<Unit> {
-        val result = sendRouteCommand("STOP")
-        finishRouteTransaction()
-        return result
+        return sendRouteCommand("STOP")
     }
 
     fun emergencyHalt(): Result<Unit> {
@@ -348,7 +347,8 @@ class BoardRepository(private val recorder: EventRecorder) :
             synchronized(stateLock) {
                 val now = System.currentTimeMillis()
                 responseCounts[event.kind] = (responseCounts[event.kind] ?: 0) + 1
-                if (pending?.expected == event.kind) pending = null
+                val requestStartedMs = pending?.takeIf { it.expected == event.kind }?.startedMs
+                if (requestStartedMs != null) pending = null
                 var next = state.copy(connected = true, lastSeenMs = now)
                 try {
                     next = when (event.kind) {
@@ -362,7 +362,7 @@ class BoardRepository(private val recorder: EventRecorder) :
                         "BOARD" -> if (event.args.isNotEmpty()) next.copy(
                             sensorHex = event.args[0],
                             sensorSquares = Protocol.parseBoardHex(event.args[0]),
-                            sensorUpdatedMs = now,
+                            sensorUpdatedMs = requestStartedMs ?: now,
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")

@@ -87,6 +87,17 @@ class ProtocolTest {
         assertEquals(Protocol.squareIndex("a4"), drag.target)
         assertEquals(4, drag.path.size)
         assertThrows(IllegalArgumentException::class.java) { Protocol.parseDragCommand("DRAG a1b2") }
+        assertThrows(IllegalStateException::class.java) { Protocol.splitRouteRuns(listOf(7, 8)) }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e2e4--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e2e4x--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e1c1k--") }
+        assertThrows(IllegalArgumentException::class.java) { Protocol.parsePlanCommand("PLAN e1g1c--") }
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.planCommand("e1c1", castlingSide = "kingside")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.planCommand("e8g8", castlingSide = "queenside")
+        }
     }
 
     @Test fun telemetryPreservesReleasedAndFaultFlags() {

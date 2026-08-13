@@ -3,7 +3,7 @@
 ## 1.2.0
 
 - Added host-side labeled rearrangement planning for collision-safe automatic
-  moves on firmware 4.1.
+  moves on firmware 4.3.
 - Added bounded blocker evacuation/restoration, main-piece staging, and recursive
   clearing for trapped blockers.
 - Added transactional `PLAN` / straight `DRAG` / `COMMIT` execution with fresh
@@ -18,7 +18,7 @@
 - Added an exhaustive motionless Nano transaction model, read-only serial probe,
   and one-command firmware/Windows/Android validation workflow for contributors
   without functional motion or reed hardware.
-- Aligned both app simulators with firmware 4.1 homing, remote-state, promotion,
+- Aligned both app simulators with firmware 4.3 homing, remote-state, promotion,
   and four-coordinate `DONE` behavior.
 - Added routing architecture and safety documentation plus a versioned release
   ZIP produced by the build script.

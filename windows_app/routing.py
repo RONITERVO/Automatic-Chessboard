@@ -584,12 +584,20 @@ class RearrangementPlanner:
         self._deadline = 0.0
         self._expanded_total = 0
         self._generated_total = 0
+        self._parking_environment_cache: dict[
+            tuple[frozenset[int], int], tuple[frozenset[int], frozenset[int]]
+        ] = {}
+        self._parking_path_cache: dict[
+            tuple[frozenset[int], int], dict[int, tuple[int, ...] | None]
+        ] = {}
 
     def plan(self, problem: PlanningProblem) -> MotionPlan:
         started = monotonic()
         self._deadline = started + self.config.time_limit_s
         self._expanded_total = 0
         self._generated_total = 0
+        self._parking_environment_cache.clear()
+        self._parking_path_cache.clear()
 
         if problem.initial_physical_occupancy is not None:
             expected_before_capture = set(problem.initial_occupancy_before_capture)
@@ -980,22 +988,26 @@ class RearrangementPlanner:
     ) -> tuple[_SearchAction, ...]:
         source = state.positions[piece_index]
         occupied = frozenset(occupant)
-        reachable = reachable_empty_squares(source, occupied)
+        cache_key = (occupied, source)
+        environment = self._parking_environment_cache.get(cache_key)
+        if environment is None:
+            free_after_lift = frozenset(range(BOARD_SQUARES)) - (occupied - {source})
+            environment = (
+                reachable_empty_squares(source, occupied),
+                _articulation_points(free_after_lift),
+            )
+            self._parking_environment_cache[cache_key] = environment
+        reachable, articulation = environment
         if not reachable:
             return ()
 
         goals_of_others = {
             piece.goal for index, piece in enumerate(problem.pieces) if index != piece_index
         }
-        free_after_lift = frozenset(range(BOARD_SQUARES)) - (occupied - {source})
-        articulation = _articulation_points(free_after_lift)
-        scored: list[tuple[tuple[int, ...], int, tuple[int, ...]]] = []
+        scored: list[tuple[tuple[int, ...], int]] = []
         for target in reachable:
             reserved = target in forbidden or target in goals_of_others
             if reserved and not allow_reserved:
-                continue
-            path = find_empty_path(source, target, occupied)
-            if path is None or len(path) < 2:
                 continue
             mobility = sum(
                 neighbor not in (occupied - {source}) and neighbor != target
@@ -1006,13 +1018,12 @@ class RearrangementPlanner:
             score = (
                 int(reserved),
                 int(target in articulation),
-                len(path) - 1,
+                manhattan(source, target),
                 manhattan(target, problem.pieces[piece_index].start),
                 -mobility,
-                route_turns(path),
                 target,
             )
-            scored.append((score, target, path))
+            scored.append((score, target))
 
         # A focused pass can become over-restrictive if every reachable square
         # lies on a reserved corridor.  Retain a few penalized choices rather
@@ -1030,11 +1041,19 @@ class RearrangementPlanner:
             )
 
         actions = []
-        for _score, target, path in sorted(scored)[:limit]:
+        paths = self._parking_path_cache.setdefault(cache_key, {})
+        for _score, target in sorted(scored):
+            if target not in paths:
+                paths[target] = find_empty_path(source, target, occupied)
+            path = paths[target]
+            if path is None or len(path) < 2:
+                continue
             actual_purpose = purpose or self._purpose(problem, state, piece_index, target)
             actions.append(
                 self._make_action(problem, state, piece_index, path, actual_purpose)
             )
+            if len(actions) >= limit:
+                break
         return tuple(actions)
 
     @staticmethod

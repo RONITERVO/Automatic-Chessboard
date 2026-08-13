@@ -88,6 +88,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var devPageLabel: TextView? = null
     private var monitorUpdater: (() -> Unit)? = null
     private var playUpdater: (() -> Unit)? = null
+    private var lastRouteFailureDialog = ""
     private var manualUpdater: (() -> Unit)? = null
     private var manualSelection = ManualSelection()
     private var manualStatus = "Calibrate from this page before moving the head."
@@ -686,6 +687,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun onGameChanged(snapshot: GameSnapshot) {
         gameState = snapshot
         repository.setExpectedSquares(snapshot.expectedSquares)
+        if (snapshot.status.startsWith("Collision-safe route stopped:") &&
+            snapshot.status != lastRouteFailureDialog
+        ) {
+            lastRouteFailureDialog = snapshot.status
+            alert("Collision-safe route stopped", snapshot.status.removePrefix("Collision-safe route stopped: "))
+        } else if (!snapshot.status.startsWith("Collision-safe route stopped:")) {
+            lastRouteFailureDialog = ""
+        }
         if (currentTab == TAB_PLAY) playUpdater?.invoke()
         else if (currentTab == TAB_BOARD) monitorUpdater?.invoke()
         else if (currentTab == TAB_MOVE) manualUpdater?.invoke()

@@ -37,12 +37,13 @@ class ManualControlTest {
         assertTrue(ManualVerification.positionIsTrusted(trusted))
         assertEquals(4 to 5, ManualVerification.trustedPosition(trusted))
 
-        val halted = trusted.copy(sequence = 10, homed = false, motionFault = true)
-        assertFalse(ManualVerification.positionIsTrusted(halted))
-        assertNull(ManualVerification.trustedPosition(halted))
-
-        val invalidCoordinate = trusted.copy(trolleyX = 0)
-        assertFalse(ManualVerification.positionIsTrusted(invalidCoordinate))
-        assertNull(ManualVerification.trustedPosition(invalidCoordinate))
+        listOf(
+            trusted.copy(homed = false),
+            trusted.copy(motionFault = true),
+            trusted.copy(trolleyX = 0),
+        ).forEach { untrusted ->
+            assertFalse(ManualVerification.positionIsTrusted(untrusted))
+            assertNull(ManualVerification.trustedPosition(untrusted))
+        }
     }
 }

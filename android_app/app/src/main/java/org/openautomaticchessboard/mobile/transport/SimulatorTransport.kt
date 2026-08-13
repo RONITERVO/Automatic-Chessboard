@@ -32,6 +32,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             "!" -> {
                 fault = true
                 homed = false
+                clearPlan()
                 trolleyX = 0
                 trolleyY = 0
                 sequence = 10
@@ -124,9 +125,9 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     }, delay)
 
     private fun beginPlan(command: String) {
+        if (fault) { emit("ERR FAULT", 30); return }
+        if (!homed || sequence != 17 || plan != null) { emit("ERR NOT READY", 30); return }
         runCatching {
-            check(!fault) { "FAULT" }
-            check(homed && sequence == 17 && plan == null) { "NOT READY" }
             val request = Protocol.parsePlanCommand(command)
             val from = Protocol.squareIndex(request.uci.take(2))
             val to = Protocol.squareIndex(request.uci.substring(2, 4))
@@ -151,12 +152,14 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             request.captureSquare?.let(occupied::remove)
             sequence = 22
             emit("PLAN READY", if (request.captureSquare == null) 30 else 180)
-        }.onFailure { emit("ERR ${it.message ?: "BAD PLAN"}", 30) }
+        }.onFailure { emit("ERR BAD PLAN", 30) }
     }
 
     private fun runDrag(command: String) {
+        if (fault) { emit("ERR FAULT", 30); return }
+        if (!homed) { emit("ERR CALIBRATE", 30); return }
+        if (plan == null) { emit("ERR NO PLAN", 30); return }
         runCatching {
-            check(plan != null) { "NO PLAN" }
             val route = Protocol.parseDragCommand(command)
             check(route.source in occupied) { "SOURCE EMPTY" }
             check(route.target !in occupied) { "TARGET FULL" }
@@ -168,12 +171,15 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             trolleyX = route.target % 8 + 1
             trolleyY = route.target / 8 + 1
             emit("MOVED PIECE $label", 180)
-        }.onFailure { emit("ERR ${it.message ?: "BAD ROUTE"}", 30) }
+        }.onFailure { emit("ERR BAD ROUTE", 30) }
     }
 
     private fun commitPlan() {
+        if (fault) { emit("ERR FAULT", 30); return }
+        if (!homed) { emit("ERR CALIBRATE", 30); return }
+        if (plan == null) { emit("ERR NO PLAN", 30); return }
         runCatching {
-            val request = checkNotNull(plan) { "NO PLAN" }
+            val request = checkNotNull(plan)
             when (occupied.toSet()) {
                 planInitial -> {
                     clearPlan()

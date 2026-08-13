@@ -169,8 +169,6 @@ class MotionlessRouteExecutor:
     def drag(self, command: str, observed_after: Iterable[int] | None = None) -> str:
         if not self.active:
             raise RouteProtocolError("NO PLAN")
-        if self.fault:
-            raise RouteProtocolError("FAULT")
         if self.observed != self.expected:
             raise RouteProtocolError("PLAN STATE")
 

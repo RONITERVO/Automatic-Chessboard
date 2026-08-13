@@ -50,9 +50,11 @@ other occupies `2A/2B`. Never unplug a motor while its driver is powered.
 ## Driver installation and full-step jumpers
 
 1. Remove USB and 24 V. Confirm the X and Y driver sockets are unpowered.
-2. Install only X and Y StepStick-compatible carriers, matching `EN`, `STEP`,
-   `DIR`, `GND`, and motor-supply orientation to the board labels. A reversed
-   carrier can be destroyed immediately.
+2. Install only tested A4988 or DRV8825 carriers in X and Y, matching `EN`,
+   `STEP`, `DIR`, `GND`, and motor-supply orientation to the board labels. A
+   reversed carrier can be destroyed immediately. Other carrier families are
+   unsupported until their pinout, full-step configuration, and geometry are
+   validated with this profile.
 3. For the release geometry and speed, leave all three X and Y microstep jumper
    positions **open** for full-step operation. If jumper caps are currently
    fitted beneath the sockets, remove them before inserting the drivers.

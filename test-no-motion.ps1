@@ -9,12 +9,22 @@ $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 
 Write-Host "Firmware contract, digital-twin, compile, and memory tests"
-& (Join-Path $repo "firmware/test.ps1") -InstallDependencies:$InstallDependencies
-if (-not $?) { throw "Firmware validation failed." }
+try {
+  & (Join-Path $repo "firmware/test.ps1") -InstallDependencies:$InstallDependencies
+  if ($LASTEXITCODE -ne 0) { throw "Native firmware validation command failed with exit code $LASTEXITCODE." }
+}
+catch {
+  throw "Firmware validation failed. $($_.Exception.Message)"
+}
 
 Write-Host "Windows tests, lint, compile, and release package"
-& (Join-Path $repo "windows_app/build.ps1")
-if (-not $?) { throw "Windows validation failed." }
+try {
+  & (Join-Path $repo "windows_app/build.ps1")
+  if ($LASTEXITCODE -ne 0) { throw "Native Windows validation command failed with exit code $LASTEXITCODE." }
+}
+catch {
+  throw "Windows validation failed. $($_.Exception.Message)"
+}
 
 Write-Host "Android unit tests, lint, and debug APK"
 Push-Location (Join-Path $repo "android_app")

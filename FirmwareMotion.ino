@@ -25,8 +25,13 @@ boolean drainForEmergencyStop(Stream &input, HostInputBuffer &buffer) {
   while (input.available()) {
     char value = input.read();
     if (value == '!') requested = true;
-    if (value == '\r' || value == '\n') buffer.overflowed = false;
-    else if (value >= 32 && value <= 126 && value != '!') buffer.overflowed = true;
+    if (value == '\r' || value == '\n') {
+      buffer.overflowed = false;
+    }
+    else if (value >= 32 && value <= 126 && value != '!' && !buffer.overflowed) {
+      buffer.overflowed = true;
+      sendHostError(F("BUSY"));
+    }
     buffer.length = 0;
   }
   return requested;

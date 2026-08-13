@@ -191,6 +191,6 @@ failure can prevent it. Physical power isolation remains authoritative.
 
 Use at most one outstanding request. Alternate `TELEM` and `BOARD` every 1-10
 seconds while idle. Pause normal polling during any route transaction or after
-`MOVING`, and resume only after its terminal `DONE`, `PLAN CANCELLED`, `ERR`,
-`STOPPED`, or `ESTOP`. Precise motor loops intentionally delay ordinary
-responses.
+`MOVING`, and resume only after its terminal `MOVED HEAD`, `MOVED PIECE`,
+`MOVED PATH`, `MOVED JOG`, `DONE`, `PLAN CANCELLED`, `ERR`, `STOPPED`, or
+`ESTOP`. Precise motor loops intentionally delay ordinary responses.

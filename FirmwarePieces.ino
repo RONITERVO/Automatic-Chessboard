@@ -113,7 +113,7 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
     return false;
   boolean castling = move_flags == 'C' ||
                      (departure_x == 5 && departure_y == arrival_y &&
-                      displacement_x == 2);
+                      (departure_y == 1 || departure_y == 8) && displacement_x == 2);
   if (castling) {
     if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
       return false;

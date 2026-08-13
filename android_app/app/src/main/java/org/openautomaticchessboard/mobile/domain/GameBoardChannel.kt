@@ -4,6 +4,7 @@ package org.openautomaticchessboard.mobile.domain
 interface GameBoardChannel {
     val firmwareCapabilities: Set<String>
     val physicalOccupancy: Set<Int>?
+    val sensorUpdatedMs: Long?
     val connected: Boolean
 
     fun sendCommand(command: String): Result<Unit>

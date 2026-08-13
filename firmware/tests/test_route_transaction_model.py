@@ -194,6 +194,17 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertTrue(model.fault)
         assert_error(self, "NOT READY", lambda: model.begin("PLAN a1a2---"))
 
+    def test_no_plan_and_final_sensor_branches(self):
+        idle = MotionlessRouteExecutor({square_index("a1")})
+        assert_error(self, "NO PLAN", lambda: idle.drag("DRAG a1a2"))
+        assert_error(self, "NO PLAN", idle.commit)
+
+        final = MotionlessRouteExecutor({square_index("a1")})
+        final.begin("PLAN a1a2---")
+        final.drag("DRAG a1a2")
+        final.set_observed(set())
+        assert_error(self, "FINAL SENSORS", final.commit)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -63,7 +63,7 @@ class NonMotionSerialTestTests(unittest.TestCase):
             "TELEM": ["TELEM ACB2 1 0 0 0 0 5 6 1 1 1023 900 10"],
             "BOARD": ["BOARD FFFF00000000FFFF"],
         })
-        result = ReadOnlyNanoProbe(fake, timeout_seconds=0.01).run(samples=3)
+        result = ReadOnlyNanoProbe(fake, timeout_seconds=0.1).run(samples=3)
         self.assertEqual(3, result.samples)
         self.assertEqual(900, result.minimum_free_ram)
         self.assertEqual(
@@ -73,7 +73,7 @@ class NonMotionSerialTestTests(unittest.TestCase):
         self.assertTrue(set(fake.commands) <= {"PING", "INFO", "STATUS", "TELEM", "BOARD"})
 
     def test_probe_refuses_motion_or_control_commands(self):
-        probe = ReadOnlyNanoProbe(FakeSerial({}), timeout_seconds=0.01)
+        probe = ReadOnlyNanoProbe(FakeSerial({}), timeout_seconds=0.1)
         for command in ("CALIBRATE", "HEAD e4", "PLAN e2e4---", "DRAG e2e4", "COMMIT", "STOP", "!"):
             with self.assertRaisesRegex(ValueError, "unsafe command refused"):
                 probe.command(command, "")
@@ -87,8 +87,8 @@ class NonMotionSerialTestTests(unittest.TestCase):
             "BOARD": ["BOARD FFFF00000000FFFF"],
         }
         with self.assertRaisesRegex(RuntimeError, "PLANROUTE"):
-            ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.01).run(samples=1)
-        result = ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.01).run(
+            ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.1).run(samples=1)
+        result = ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.1).run(
             samples=2,
             require_planroute=False,
         )
@@ -103,6 +103,18 @@ class NonMotionSerialTestTests(unittest.TestCase):
             parse_telemetry("TELEM ACB2 bad")
         with self.assertRaises(ValueError):
             parse_status("STATUS ACB1 bad")
+        with self.assertRaises(ValueError):
+            parse_info("INFO ACB2 bad")
+
+        responses = {
+            "PING": ["PONG ACB1"],
+            "INFO": ["INFO ACB2 4.3.0 BOARD,TELEM,REMOTE,SENSORFRAME,PLANROUTE"],
+            "STATUS": ["STATUS ACB1 1 0 0"],
+            "TELEM": ["TELEM ACB2 1 0 0 0 1 5 6 1 1 1023 900 10"],
+            "BOARD": ["BOARD FFFF00000000FFFF"],
+        }
+        with self.assertRaisesRegex(RuntimeError, "magnet ON"):
+            ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.1).run(samples=1)
 
 
 if __name__ == "__main__":

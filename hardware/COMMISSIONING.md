@@ -81,15 +81,17 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 
 1. Remove all pieces and expose the mechanism.
 2. Connect driver 1 VMOT and its motor with power off.
-3. Apply power and run `JOG W+` then `JOG W-` for the white driver, or
+3. Keep the untested driver's VMOT and the protected magnet 24 V branch
+   physically disconnected before and throughout the JOG test.
+4. Apply power and run `JOG W+` then `JOG W-` for the white driver, or
    `JOG B+` then `JOG B-` for the black driver, from a guarded developer
    console. Each command moves only 20 full steps.
-4. Verify smooth motion. Grinding or vibration usually indicates mixed coil
+5. Verify smooth motion. Grinding or vibration usually indicates mixed coil
    pairs; stop power before changing wires.
-5. Verify direction against the expected switch. Reverse one complete coil
+6. Verify direction against the expected switch. Reverse one complete coil
    pair only if necessary.
-6. Repeat for driver 2.
-7. Record both VREF values and temperatures after 15 minutes of unloaded test.
+7. Repeat for driver 2.
+8. Record both VREF values and temperatures after 15 minutes of unloaded test.
 
 ## Stage F: calibration and endurance
 

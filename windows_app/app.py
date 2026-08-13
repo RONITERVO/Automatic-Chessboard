@@ -487,7 +487,7 @@ class AutomaticChessboardApp:
         ttk.Label(
             engine_frame,
             text=("Stockfish and collision-safe rearrangement planning run on Windows. "
-                  "Firmware 4.1 executes one sensor-verified drag transaction at a time."),
+                  "Firmware 4.3 executes one sensor-verified drag transaction at a time."),
             wraplength=470, style="Quiet.TLabel",
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
@@ -1046,6 +1046,11 @@ class AutomaticChessboardApp:
             if self.active_route_plan is not None:
                 if self.route_waiting_for != "DONE" or self.route_current_command != "COMMIT":
                     self._route_plan_failed(PlanningError("Unexpected DONE acknowledgement"))
+                elif (self.pending_engine_move is None or
+                      self.pending_engine_move.uci()[:4] != event.args[0].lower()):
+                    self._route_plan_failed(
+                        PlanningError(f"DONE acknowledgement mismatch: {event.args[0]}")
+                    )
                 else:
                     self.route_deadline = 0.0
                     self.motion_expected = False
@@ -1506,6 +1511,8 @@ class AutomaticChessboardApp:
         self.pending_engine_move = move
         capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
         if "PLANROUTE" in capabilities:
+            self.safe_request_queue.clear()
+            self.safe_request_pending = None
             self.route_snapshot_pending = True
             self.route_planning = False
             self.motion_expected = True
@@ -1975,15 +1982,15 @@ class AutomaticChessboardApp:
                 parent=self.root,
             )
             return
+        risk = classify_command(command)
         if (self.route_snapshot_pending or self.route_planning or
-                self.active_route_plan is not None):
+                self.active_route_plan is not None) and risk != CommandRisk.EMERGENCY:
             messagebox.showwarning(
                 "Route transaction active",
                 "Wait for the verified route to finish, or use the persistent emergency halt.",
                 parent=self.root,
             )
             return
-        risk = classify_command(command)
         if risk == CommandRisk.UNKNOWN and not command.upper().startswith("SIMMOVE "):
             messagebox.showwarning("Unknown command", "This command is not in the documented protocol.",
                                    parent=self.root)

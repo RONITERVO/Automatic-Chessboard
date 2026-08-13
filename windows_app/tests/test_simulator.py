@@ -1,26 +1,34 @@
-import threading
+import time
 import unittest
 
 from transports import SimulatorTransport
 
 
 class SimulatorTests(unittest.TestCase):
+    def wait_for(self, lines, predicate, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            snapshot = list(lines)
+            if predicate(snapshot):
+                return
+            time.sleep(0.01)
+        self.fail(f"Timed out waiting for simulator output: {lines}")
+
     def test_safe_monitor_commands(self):
         lines = []
-        received = threading.Event()
 
         def on_line(line):
             lines.append(line)
-            if all(any(value.startswith(prefix) for value in lines)
-                   for prefix in ("INFO ACB2", "TELEM ACB2", "BOARD ")):
-                received.set()
 
         transport = SimulatorTransport(on_line, lambda _status: None)
         transport.start()
         transport.send("INFO")
         transport.send("TELEM")
         transport.send("BOARD")
-        self.assertTrue(received.wait(1.0))
+        self.wait_for(lines, lambda values: all(
+            any(value.startswith(prefix) for value in values)
+            for prefix in ("INFO ACB2", "TELEM ACB2", "BOARD ")
+        ))
         info = next(value for value in lines if value.startswith("INFO ACB2"))
         self.assertIn("SENSORFRAME", info)
         self.assertIn("PLANROUTE", info)
@@ -28,23 +36,21 @@ class SimulatorTests(unittest.TestCase):
 
     def test_emergency_halt(self):
         lines = []
-        received = threading.Event()
 
         def on_line(line):
             lines.append(line)
-            if line == "ESTOP REMOTE":
-                received.set()
 
         transport = SimulatorTransport(on_line, lambda _status: None)
         transport.start()
         transport.send("!")
-        self.assertTrue(received.wait(1.0))
+        self.wait_for(lines, lambda values: "ESTOP REMOTE" in values)
         self.assertIn("ESTOP REMOTE", lines)
         transport.send("CALIBRATE")
         transport.send("HEAD e4")
         transport.send("PIECE e2e4")
         transport.send("TELEM")
-        threading.Event().wait(0.2)
+        self.wait_for(lines, lambda values: values.count("ERR FAULT") >= 3 and
+                      any(value.startswith("TELEM ACB2") for value in values))
         self.assertGreaterEqual(lines.count("ERR FAULT"), 3)
         telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
         fields = telemetry.split()
@@ -58,21 +64,21 @@ class SimulatorTests(unittest.TestCase):
         transport = SimulatorTransport(lines.append, lambda _status: None)
         transport.start()
         transport.send("START B")
-        threading.Event().wait(0.8)
+        self.wait_for(lines, lambda values: "SESSION B" in values and "TURN COMPUTER" in values)
         transport.send(plan_command("e2e4"))
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "PLAN READY" in values)
         self.assertIn("PLAN READY", lines)
         transport.send(drag_command((12, 20, 28)))
-        threading.Event().wait(0.2)
+        self.wait_for(lines, lambda values: "MOVED PIECE e2e4" in values)
         self.assertIn("MOVED PIECE e2e4", lines)
         transport.send("BOARD")
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: any(value.startswith("BOARD ") for value in values))
         board_line = next(value for value in reversed(lines) if value.startswith("BOARD "))
         occupied = parse_board_hex(board_line.split()[1])
         self.assertNotIn(12, occupied)
         self.assertIn(28, occupied)
         transport.send(commit_plan_command())
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "DONE e2e4" in values)
         self.assertIn("DONE e2e4", lines)
         transport.close()
 
@@ -83,11 +89,11 @@ class SimulatorTests(unittest.TestCase):
         transport = SimulatorTransport(lines.append, lambda _status: None)
         transport.start()
         transport.send("START B")
-        threading.Event().wait(0.8)
+        self.wait_for(lines, lambda values: "SESSION B" in values and "TURN COMPUTER" in values)
         transport.send(plan_command("e2e4"))
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "PLAN READY" in values)
         transport.send(commit_plan_command())
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "PLAN CANCELLED" in values)
         self.assertIn("PLAN CANCELLED", lines)
         transport.close()
 
@@ -98,16 +104,16 @@ class SimulatorTests(unittest.TestCase):
         transport = SimulatorTransport(lines.append, lambda _status: None)
         transport.start()
         transport.send("START B")
-        threading.Event().wait(0.8)
+        self.wait_for(lines, lambda values: "SESSION B" in values and "TURN COMPUTER" in values)
         transport.send(plan_command("e2e4"))
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "PLAN READY" in values)
         transport.send(drag_command((12, 20)))
-        threading.Event().wait(0.2)
+        self.wait_for(lines, lambda values: "MOVED PIECE e2e3" in values)
         transport.send(commit_plan_command())
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "ERR PLAN INCOMPLETE" in values)
         self.assertIn("ERR PLAN INCOMPLETE", lines)
         transport.send("STOP")
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "STOPPED" in values)
         self.assertIn("STOPPED", lines)
         transport.close()
 
@@ -127,10 +133,10 @@ class SimulatorTests(unittest.TestCase):
         move = chess.Move.from_uci("e4d5")
         self.assertIn(move, transport._board.legal_moves)
         transport.send(plan_command("e4d5", chess.D5))
-        threading.Event().wait(0.2)
+        self.wait_for(lines, lambda values: "PLAN READY" in values)
         self.assertIn("PLAN READY", lines)
         transport.send(commit_plan_command())
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "ERR PLAN INCOMPLETE" in values)
         self.assertIn("ERR PLAN INCOMPLETE", lines)
         transport.close()
 
@@ -141,7 +147,9 @@ class SimulatorTests(unittest.TestCase):
         transport.send("CALIBRATE")
         transport.send("HEAD e4")
         transport.send("PIECE e2e4")
-        threading.Event().wait(0.5)
+        self.wait_for(lines, lambda values: all(expected in values for expected in (
+            "CALIBRATED e6", "MOVED HEAD e4", "MOVED PIECE e2e4",
+        )))
         self.assertIn("CALIBRATED e6", lines)
         self.assertIn("MOVED HEAD e4", lines)
         self.assertIn("MOVED PIECE e2e4", lines)
@@ -155,7 +163,7 @@ class SimulatorTests(unittest.TestCase):
         transport.start()
         transport._sequence = 17
         transport.send(plan_command("e2e4"))
-        threading.Event().wait(0.1)
+        self.wait_for(lines, lambda values: "ERR NOT READY" in values)
         self.assertIn("ERR NOT READY", lines)
         transport.close()
 
@@ -183,11 +191,25 @@ class SimulatorTests(unittest.TestCase):
                 transport._sequence = 17
                 transport._homed = True
                 for command in plan.protocol_commands():
+                    baseline = len(lines)
                     transport.send(command)
-                    threading.Event().wait(0.25)
+                    expected = (
+                        "PLAN READY" if command.startswith("PLAN ") else
+                        f"MOVED PIECE {command.split()[1]}" if command.startswith("DRAG ") else
+                        acknowledgement if command == "COMMIT" else
+                        "BOARD "
+                    )
+                    self.wait_for(
+                        lines,
+                        lambda values, expected=expected: any(
+                            value == expected or value.startswith(expected)
+                            for value in values[baseline:]
+                        ),
+                    )
                 self.assertFalse(any(line.startswith("ERR ") for line in lines), lines)
                 self.assertIn(acknowledgement, lines)
                 if move.promotion:
+                    self.wait_for(lines, lambda values: "PROMOTE q" in values)
                     self.assertIn("PROMOTE q", lines)
                 self.assertEqual(set(transport._board.piece_map()), transport._physical_squares)
                 transport.close()

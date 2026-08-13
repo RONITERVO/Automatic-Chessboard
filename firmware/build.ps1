@@ -16,16 +16,17 @@ $mainSketch = Join-Path $repo "Automatic_Chessboard_V3_27_i2c_value.ino"
 
 if ($HardwareProfile -eq "mks-gen-l-v1") {
   if (-not $Fqbn) { $Fqbn = "arduino:avr:mega:cpu=atmega2560" }
-  if ($Fqbn -notmatch '^arduino:avr:mega:') {
+  if ($Fqbn -notmatch '^arduino:avr:mega:cpu=atmega2560$') {
     throw "mks-gen-l-v1 requires an ATmega2560 Mega FQBN."
   }
-  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 253952 }
-  if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 8192 }
+  # Preserve room for future features and runtime stack/heap before device limits.
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 60000 }
+  if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 4096 }
   $profileBuildFlags = "-DACB_PROFILE_MKS_GEN_L_V1"
 }
 else {
   if (-not $Fqbn) { $Fqbn = "arduino:avr:nano:cpu=atmega328old" }
-  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 28562 }
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 28586 }
   if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 1118 }
   $profileBuildFlags = ""
 }
@@ -44,7 +45,15 @@ function Find-ArduinoCli {
 
 $cli = Find-ArduinoCli
 if ($InstallDependencies) {
-  $cores = & $cli core list 2>&1 | Out-String
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $cores = & $cli core list 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "Could not list installed Arduino cores." }
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
   if ($cores -notmatch "arduino:avr\s+1\.8\.6") {
     & $cli core update-index
     if ($LASTEXITCODE -ne 0) { throw "Could not update the Arduino core index." }
@@ -90,9 +99,16 @@ try {
     $compileArguments += @("--build-property", "build.extra_flags=$profileBuildFlags")
   }
   $compileArguments += $stagedSketch
-  $result = & $cli @compileArguments 2>&1 | Out-String
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $result = & $cli @compileArguments 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile compilation failed." }
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
   Write-Host $result.TrimEnd()
-  if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile compilation failed." }
 
   $flashMatch = [regex]::Match($result, "Sketch uses (\d+) bytes")
   $ramMatch = [regex]::Match($result, "Global variables use (\d+) bytes")

@@ -13,7 +13,7 @@ ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains its exact 28562-byte flash / 1118-byte SRAM budgets.
+the default and retains tight 28586-byte flash / 1118-byte SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
