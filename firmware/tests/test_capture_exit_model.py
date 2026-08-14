@@ -132,6 +132,16 @@ class CaptureExitModelTests(unittest.TestCase):
         self.assertIsNotNone(path)
         self.assertEqual(path[-1], square_index("d4"))
 
+    def test_manual_capture_removal_allows_automatic_knight_retry(self):
+        before = indexes("f3", "e3", "d4")
+        after_removal = before - indexes("d4")
+        path = empty_orthogonal_path(
+            after_removal, square_index("f3"), square_index("d4")
+        )
+        self.assertEqual(
+            path, tuple(map(square_index, ("f3", "f4", "e4", "d4")))
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

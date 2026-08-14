@@ -6,6 +6,8 @@
   or any AI piece whose direct line is blocked, now follows a shortest empty
   orthogonal square-centre route. Manual placement remains the fallback only
   when no such route connects the source and destination.
+- After a user-confirmed manual capture removal, standalone play now reruns the
+  same route search and moves the AI piece automatically whenever reachable.
 - Released the coordinated 5.0 protocol: exact `HELLO 5.0.0` gating, fixed
   current feature contract, and no `PLAY`, `PING`, `STATUS`, or old-firmware
   fallback paths. Apps and Nano must be updated together.

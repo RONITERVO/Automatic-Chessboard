@@ -115,7 +115,9 @@ the same release before any control or motion command is accepted.
 For local Micro-Max play, firmware 5.0.1 automatically carries knights and
 blocked direct moves through the shortest available sequence of empty,
 orthogonally adjacent square centres. It retains manual placement only when no
-empty route connects the move endpoints.
+empty route connects the move endpoints. If a capture itself cannot reach the
+bin, the player may remove it when prompted; after confirmation, the Nano
+reruns the route search and completes the AI move automatically when possible.
 
 Boards with missing, intermittent, or deliberately unused reed switches can use
 the explicit **Move by tapping app** mode in either companion. Both human and

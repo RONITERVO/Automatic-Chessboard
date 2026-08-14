@@ -103,10 +103,12 @@ standalone graph search described above. It never restores a continuous
 knight/S-curve or an unequal-ratio motor command.
 
 When no automatic capture route exists, the manual fallback still uses two
-sensor-verified phases: remove the captured piece and press A, then place the AI
-piece and press A again. The empty intermediate target closes the ordinary-
-capture identity ambiguity that cannot be detected when a destination is
-occupied both before and after.
+sensor-verified phases only when necessary. Remove the captured piece and press
+A; the Nano refreshes all sensors and retries both its direct and shortest-route
+carried paths. It moves the AI piece automatically when now reachable. Only a
+still-disconnected destination requires manual placement and a second A press.
+The empty intermediate target closes the ordinary-capture identity ambiguity
+that cannot be detected when a destination is occupied both before and after.
 
 Firmware 4.3 added an explicit `mks-gen-l-v1` build profile for the integrated
 ATmega2560 board. It preserves the same deterministic runtime, standalone play,
