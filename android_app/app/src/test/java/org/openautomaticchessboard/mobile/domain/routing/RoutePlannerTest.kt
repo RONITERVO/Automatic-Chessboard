@@ -1,6 +1,7 @@
 package org.openautomaticchessboard.mobile.domain.routing
 
 import com.github.bhlangonijr.chesslib.Board
+import com.github.bhlangonijr.chesslib.Piece
 import com.github.bhlangonijr.chesslib.Side
 import com.github.bhlangonijr.chesslib.Square
 import com.github.bhlangonijr.chesslib.move.Move
@@ -98,6 +99,29 @@ class RoutePlannerTest {
             initialPhysicalOccupancy = setOf(parseSquare("h8")),
         )
         assertThrows(PlanningException::class.java) { planner().plan(problem) }
+    }
+
+    @Test fun deferredCaptureClearsBinLaneBeforeRemoval() {
+        val board = Board()
+        listOf("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4").forEach { uci ->
+            board.doMove(Move(uci, board.sideToMove), true)
+        }
+        val move = Move("c6e5", Side.BLACK)
+        val problem = planningProblemFromChess(
+            board,
+            move,
+            (0 until 64).filter { board.getPiece(Square.values()[it]) != Piece.NONE }.toSet(),
+            deferredCapture = true,
+        )
+
+        val plan = planner(4).plan(problem)
+
+        plan.validate()
+        val commands = plan.protocolCommands()
+        val removeIndex = commands.indexOf("REMOVE")
+        assertTrue(commands.subList(2, removeIndex).any { it.startsWith("DRAG ") })
+        assertEquals("BOARD", commands[removeIndex + 1])
+        assertEquals(1, plan.captureRemovalIndex)
     }
 
     @Test fun chessAdapterHandlesCaptureEnPassantPromotionAndCastling() {

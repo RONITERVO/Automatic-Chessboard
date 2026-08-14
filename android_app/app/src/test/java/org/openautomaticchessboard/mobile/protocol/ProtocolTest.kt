@@ -52,6 +52,7 @@ class ProtocolTest {
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("JOG W+"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAN e2e4---"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("DRAG e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("REMOVE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("COMMIT"))
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("GEOMETRY"))
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("ALIGN STATUS"))
@@ -97,6 +98,7 @@ class ProtocolTest {
         assertEquals("PLAN a7a8q--", Protocol.planCommand("a7a8q"))
         assertEquals("PLAN e1g1k--", Protocol.planCommand("e1g1", castlingSide = "kingside"))
         assertEquals("PLAN e5d6-d5", Protocol.planCommand("e5d6", Protocol.squareIndex("d5")))
+        assertEquals("REMOVE", Protocol.removeCommand(Protocol.squareIndex("d5")))
 
         val request = Protocol.parsePlanCommand("PLAN e5d6-d5")
         assertEquals("e5d6", request.uci)

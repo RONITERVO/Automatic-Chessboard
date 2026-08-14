@@ -33,6 +33,29 @@ def square_name(square: int) -> str:
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
 
 
+def capture_exit_clear(occupied: Iterable[int], capture: int, exit_rank: int) -> bool:
+    squares = frozenset(occupied)
+    file = capture % 8 + 1
+    source_rank = capture // 8 + 1
+    for rank in range(min(source_rank, exit_rank), max(source_rank, exit_rank) + 1):
+        if rank != source_rank and (rank - 1) * 8 + file - 1 in squares:
+            return False
+    for column in range(1, file + 1):
+        if column < file and (exit_rank - 1) * 8 + column - 1 in squares:
+            return False
+        below = (exit_rank - 2) * 8 + column - 1
+        if (exit_rank > 1 and (column, exit_rank - 1) != (file, source_rank)
+                and below in squares):
+            return False
+    return True
+
+
+def capture_has_exit(occupied: Iterable[int], capture: int) -> bool:
+    source_rank = capture // 8 + 1
+    ranks = (*range(source_rank, 0, -1), *range(source_rank + 1, 9))
+    return any(capture_exit_clear(occupied, capture, rank) for rank in ranks)
+
+
 @dataclass(frozen=True)
 class PlanRequest:
     source: int
@@ -131,6 +154,7 @@ class MotionlessRouteExecutor:
         self.turn_start: frozenset[int] | None = None
         self.final_expected: frozenset[int] | None = None
         self.plan: PlanRequest | None = None
+        self.capture_pending = False
         self.fault = False
 
     @property
@@ -140,7 +164,7 @@ class MotionlessRouteExecutor:
     def set_observed(self, occupied: Iterable[int]) -> None:
         self.observed = frozenset(occupied)
 
-    def begin(self, command: str, observed_after_capture: Iterable[int] | None = None) -> str:
+    def begin(self, command: str) -> str:
         if self.active or self.fault:
             raise RouteProtocolError("NOT READY")
         if self.observed != self.expected:
@@ -152,19 +176,24 @@ class MotionlessRouteExecutor:
         self.plan = request
         self.turn_start = self.observed
         self.final_expected = request.final_occupancy(self.turn_start)
-        if request.capture is not None:
-            next_expected = set(self.expected)
-            next_expected.remove(request.capture)
-            self.expected = frozenset(next_expected)
-            self.observed = (
-                self.expected
-                if observed_after_capture is None
-                else frozenset(observed_after_capture)
-            )
-            if self.observed != self.expected:
-                self._latch_sensor_fault()
-                raise RouteProtocolError("SENSORS")
+        self.capture_pending = request.capture is not None
         return "PLAN READY"
+
+    def remove_capture(self, observed_after: Iterable[int] | None = None) -> str:
+        capture = self.plan.capture if self.plan is not None else None
+        if not self.capture_pending or capture is None:
+            raise RouteProtocolError("CAPTURE")
+        if self.observed != self.expected or not capture_has_exit(self.observed, capture):
+            raise RouteProtocolError("CAPTURE")
+        next_expected = set(self.expected)
+        next_expected.remove(capture)
+        self.expected = frozenset(next_expected)
+        self.observed = self.expected if observed_after is None else frozenset(observed_after)
+        if self.observed != self.expected:
+            self._latch_sensor_fault()
+            raise RouteProtocolError("SENSORS")
+        self.capture_pending = False
+        return "REMOVED"
 
     def drag(self, command: str, observed_after: Iterable[int] | None = None) -> str:
         if not self.active:
@@ -198,7 +227,7 @@ class MotionlessRouteExecutor:
         if self.observed == self.turn_start:
             self._clear_plan()
             return "PLAN CANCELLED"
-        if self.observed != self.final_expected:
+        if self.capture_pending or self.observed != self.final_expected:
             raise RouteProtocolError("PLAN INCOMPLETE")
         uci = self.plan.uci
         self._clear_plan()
@@ -217,6 +246,7 @@ class MotionlessRouteExecutor:
         self.plan = None
         self.turn_start = None
         self.final_expected = None
+        self.capture_pending = False
 
     def _latch_sensor_fault(self) -> None:
         self.fault = True

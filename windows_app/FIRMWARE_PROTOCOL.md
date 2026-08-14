@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.6.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.7.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.6.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,DEVPATH,DEVJOG,ALIGN
+< INFO ACB2 4.7.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -104,23 +104,29 @@ PLAN <from><to><mode><capture-square-or-->
 
 - `mode` is `-` for an ordinary move, `q`, `r`, `b`, or `n` for promotion,
   and `k` or `c` for standard king-side or queen-side castling.
-- Captures name the occupied square removed before `PLAN READY`. For en passant
-  this is the captured pawn's square, not the move destination.
+- Captures name the occupied square. For en passant this is the captured pawn's
+  square, not the move destination. Firmware 4.7 advertises `REMOVE`: `PLAN`
+  then reserves the transaction without moving, allowing the host to park any
+  pieces blocking every exit lane. `REMOVE` removes the named captured piece
+  and replies `REMOVED`; a `BOARD` proof must follow before more drags.
+- Firmware 4.1-4.6 does not advertise `REMOVE` and retains its original behavior
+  of removing a capture during `PLAN`. New clients keep that compatibility path,
+  but blocked capture exits require firmware 4.7 or newer.
 - `DRAG` endpoints must share a file or rank. Every intermediate square must be
   empty. A turning host route is split at square centres, where the magnet is
   released and reacquired for the next straight run.
 - In normal mode the Nano checks its complete 64-square frame before accepting `PLAN`, before
   each `DRAG`, after every physical move, and before `COMMIT`.
-- Windows independently requests and checks `BOARD` after `PLAN` and every
-  `DRAG`. It sends only one transaction command at a time and waits for the
-  exact acknowledgement.
+- Windows independently requests and checks `BOARD` after `PLAN`, `REMOVE`, and
+  every `DRAG`. It sends only one transaction command at a time and waits for
+  the exact acknowledgement.
 - `COMMIT` succeeds only when occupancy matches the final chess move, including
   capture and standard castling. If no physical change occurred and the start
   frame is intact, it returns `PLAN CANCELLED` instead.
 
 Possible transaction errors include `ERR NOT READY`, `ERR BAD PLAN`,
 `ERR PLAN STATE`, `ERR NO PLAN`, `ERR SOURCE EMPTY`, `ERR TARGET FULL`,
-`ERR BAD ROUTE`, `ERR ROUTE BLOCKED`, `ERR FINAL SENSORS`, and
+`ERR BAD ROUTE`, `ERR ROUTE BLOCKED`, `ERR CAPTURE`, `ERR FINAL SENSORS`, and
 `ERR PLAN INCOMPLETE`. A sensor or motion failure after movement latches a
 fault. Do not retry from an assumed position: inspect all squares, stop the
 session, and recalibrate where required.

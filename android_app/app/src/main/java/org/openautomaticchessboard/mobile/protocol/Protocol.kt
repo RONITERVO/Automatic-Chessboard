@@ -63,7 +63,7 @@ object Protocol {
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
     private val motion = setOf(
         "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-        "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
+        "PLAN", "DRAG", "REMOVE", "COMMIT", "ALIGN", "NUDGE",
     )
 
     fun parseEvent(line: String): BoardEvent {
@@ -230,6 +230,12 @@ object Protocol {
         require(runs.size == 1) { "One DRAG command must be a single straight run" }
         val run = runs.single()
         return "DRAG ${squareName(run.first())}${squareName(run.last())}"
+    }
+
+    fun removeCommand(captureSquare: Int?): String {
+        require(captureSquare != null) { "REMOVE requires a captured square" }
+        squareName(captureSquare)
+        return "REMOVE"
     }
 
     fun parseDragCommand(line: String): DragRoute {

@@ -52,6 +52,12 @@ The bounded best-first search can:
 - handle capture removal, en passant, promotion occupancy, and both standard
   castling sides.
 
+On firmware 4.7, capture removal is itself a bounded search transition. The
+captured square remains occupied while the same dependency/parking search clears
+one firmware-valid left-bin lane; only then does Windows send `REMOVE`, verify a
+fresh `BOARD`, and continue. Firmware 4.1-4.6 retains its pre-removal planning
+path through capability detection.
+
 Candidate corridors and parking squares are ranked before full configuration
 search. Disturbance count dominates the cost, followed by the physical number of
 magnet pickups, carried distance, turns, and clearance risk. Time, node,
@@ -73,14 +79,15 @@ stale by disconnect, stop, or a newer move.
 Execution is one command at a time:
 
 ```text
-PLAN -> BOARD -> (DRAG -> BOARD)* -> COMMIT
+PLAN -> BOARD -> (DRAG -> BOARD)* -> [REMOVE -> BOARD] ->
+        (DRAG -> BOARD)* -> COMMIT
 ```
 
 Windows waits for the exact acknowledgement, maintains its own expected
 occupancy frame, and applies separate control and motion timeouts. The Nano also
-checks the authoritative occupancy frame locally. After any capture or drag, a
-lost or mismatched acknowledgement makes physical state uncertain and ends the
-session instead of retrying.
+checks the authoritative occupancy frame locally. `PLAN` is motionless on 4.7;
+after any `REMOVE` or drag, a lost or mismatched acknowledgement makes physical
+state uncertain and ends the session instead of retrying.
 
 Firmware 4.6 adds an explicit second authority mode rather than weakening that
 proof opportunistically. In `APPBOARD` play, both human and AI moves originate

@@ -41,6 +41,7 @@ data class PlanningProblem(
     val capturedSquare: Int? = null,
     val castlingSide: String? = null,
     val initialPhysicalOccupancy: Set<Int>? = null,
+    val deferredCapture: Boolean = false,
 ) {
     init {
         require(pieces.map(PieceTask::start).distinct().size == pieces.size) {
@@ -118,6 +119,7 @@ data class MotionPlan(
     val problem: PlanningProblem,
     val relocations: List<Relocation>,
     val statistics: PlanStatistics,
+    val captureRemovalIndex: Int? = null,
 ) {
     val temporaryPieceCount: Int get() = relocations
         .filter { it.purpose in setOf("evacuate", "repark", "restore") }
@@ -129,7 +131,27 @@ data class MotionPlan(
     fun validate() {
         val positions = problem.pieces.associate { it.key to it.start }.toMutableMap()
         val occupancy = problem.pieces.associate { it.start to it.key }.toMutableMap()
-        relocations.forEach { move ->
+        val capture = problem.capturedSquare
+        var capturePending = capture != null && problem.deferredCapture
+        if (capturePending) {
+            occupancy[checkNotNull(capture)] = "<captured>"
+            if (captureRemovalIndex == null) throw PlanningException("Deferred capture has no removal step")
+        } else if (captureRemovalIndex != null) {
+            throw PlanningException("Unexpected capture-removal step")
+        }
+        fun removeCapture() {
+            val square = capture
+            if (!capturePending || square == null || occupancy[square] != "<captured>") {
+                throw PlanningException("Capture-removal state is inconsistent")
+            }
+            if (findCaptureExitRank(square, occupancy.keys) == null) {
+                throw PlanningException("Captured piece has no collision-safe exit lane")
+            }
+            occupancy.remove(square)
+            capturePending = false
+        }
+        relocations.forEachIndexed { index, move ->
+            if (index == captureRemovalIndex) removeCapture()
             if (positions[move.pieceKey] != move.source || occupancy[move.source] != move.pieceKey) {
                 throw PlanningException("Source identity mismatch for ${move.pieceKey}")
             }
@@ -142,6 +164,8 @@ data class MotionPlan(
             occupancy[move.target] = move.pieceKey
             positions[move.pieceKey] = move.target
         }
+        if (captureRemovalIndex == relocations.size) removeCapture()
+        if (capturePending) throw PlanningException("Captured piece was never removed")
         val expected = problem.pieces.associate { it.key to it.goal }
         if (positions != expected) throw PlanningException("Plan does not restore the exact labeled goal")
     }
@@ -149,11 +173,19 @@ data class MotionPlan(
     fun protocolCommands(): List<String> = buildList {
         add(Protocol.planCommand(problem.moveUci, problem.capturedSquare, problem.castlingSide))
         add("BOARD")
-        relocations.forEach { relocation ->
+        relocations.forEachIndexed { index, relocation ->
+            if (index == captureRemovalIndex) {
+                add(Protocol.removeCommand(problem.capturedSquare))
+                add("BOARD")
+            }
             Protocol.splitRouteRuns(relocation.path).forEach { run ->
                 add(Protocol.dragCommand(run))
                 add("BOARD")
             }
+        }
+        if (captureRemovalIndex == relocations.size) {
+            add(Protocol.removeCommand(problem.capturedSquare))
+            add("BOARD")
         }
         add("COMMIT")
     }
@@ -181,7 +213,11 @@ private class PositionVector private constructor(
     override fun hashCode(): Int = hash
 }
 
-private data class SearchState(val positions: PositionVector, val disturbedMask: Long)
+private data class SearchState(
+    val positions: PositionVector,
+    val disturbedMask: Long,
+    val captureRemoved: Boolean,
+)
 private data class SearchAction(
     val pieceIndex: Int,
     val target: Int,
@@ -222,9 +258,13 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         problem.pieces.forEachIndexed { index, piece ->
             if (!piece.primary && piece.start != piece.goal) initialDisturbed = initialDisturbed or (1L shl index)
         }
-        val initial = SearchState(PositionVector(problem.initialPositions), initialDisturbed)
+        val initial = SearchState(
+            PositionVector(problem.initialPositions),
+            initialDisturbed,
+            problem.capturedSquare == null || !problem.deferredCapture,
+        )
         val goal = PositionVector(problem.goalPositions)
-        if (initial.positions == goal) {
+        if (initial.positions == goal && initial.captureRemoved) {
             return MotionPlan(problem, emptyList(), PlanStatistics(0, 0, 0, 0, "direct"))
         }
 
@@ -233,9 +273,10 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         for (budget in minimumBudget..maximumBudget) {
             for (mode in SearchMode.entries) {
                 val result = search(problem, initial, goal, budget, mode) ?: continue
+                val reconstructed = reconstruct(problem, result)
                 val plan = MotionPlan(
                     problem,
-                    reconstruct(problem, result),
+                    reconstructed.first,
                     PlanStatistics(
                         expandedTotal,
                         generatedTotal,
@@ -243,6 +284,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                         (System.nanoTime() - started) / 1_000_000L,
                         mode.name.lowercase(),
                     ),
+                    reconstructed.second,
                 )
                 plan.validate()
                 return plan
@@ -271,13 +313,30 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
             if (System.nanoTime() >= deadlineNanos || expandedTotal >= config.maxNodes) return null
             val entry = queue.remove()
             if (best[entry.state] != entry.cost) continue
-            if (entry.state.positions == goal) return SearchResult(entry.state, parents)
+            if (entry.state.positions == goal && entry.state.captureRemoved) {
+                return SearchResult(entry.state, parents)
+            }
             expandedTotal++
             successors(problem, entry.state, budget, mode).forEach { action ->
+                if (action.pieceIndex == -1) {
+                    val next = SearchState(entry.state.positions, entry.state.disturbedMask, true)
+                    val cost = entry.cost + action.cost
+                    if (cost >= (best[next] ?: Long.MAX_VALUE)) return@forEach
+                    best[next] = cost
+                    parents[next] = ParentStep(entry.state, action)
+                    val priority = cost + (config.heuristicWeight * heuristic(problem, next)).toLong()
+                    queue += SearchEntry(priority, serial.getAndIncrement(), cost, next)
+                    generatedTotal++
+                    return@forEach
+                }
                 var disturbed = entry.state.disturbedMask
                 if (!problem.pieces[action.pieceIndex].primary) disturbed = disturbed or (1L shl action.pieceIndex)
                 if (java.lang.Long.bitCount(disturbed) > budget) return@forEach
-                val next = SearchState(entry.state.positions.moved(action.pieceIndex, action.target), disturbed)
+                val next = SearchState(
+                    entry.state.positions.moved(action.pieceIndex, action.target),
+                    disturbed,
+                    entry.state.captureRemoved,
+                )
                 val cost = entry.cost + action.cost
                 if (cost >= (best[next] ?: Long.MAX_VALUE)) return@forEach
                 best[next] = cost
@@ -291,6 +350,14 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
     }
 
     private fun heuristic(problem: PlanningProblem, state: SearchState): Long {
+        if (!state.captureRemoved) {
+            val capture = problem.capturedSquare ?: return PICKUP_COST
+            val occupied = state.positions.values.toSet()
+            val blockers = captureExitRanks(capture).minOf { rank ->
+                captureClearanceSquares(capture, rank).count { it in occupied }
+            }
+            return PICKUP_COST + blockers * STEP_COST
+        }
         val mismatched = problem.pieces.indices.filter {
             state.positions.values[it] != problem.pieces[it].goal
         }
@@ -323,6 +390,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         budget: Int,
         mode: SearchMode,
     ): List<SearchAction> {
+        if (!state.captureRemoved) return captureSuccessors(problem, state, budget, mode)
         val occupant = state.positions.values.mapIndexed { index, square -> square to index }.toMap()
         val occupied = occupant.keys
         val mismatchedPrimary = problem.pieces.indices.filter {
@@ -420,6 +488,74 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         return actions.values.sortedWith(compareBy<SearchAction> { it.cost }.thenBy { it.pieceIndex }.thenBy { it.target })
     }
 
+    private fun captureSuccessors(
+        problem: PlanningProblem,
+        state: SearchState,
+        budget: Int,
+        mode: SearchMode,
+    ): List<SearchAction> {
+        val capture = problem.capturedSquare
+            ?: return listOf(SearchAction(-1, -1, emptyList(), "capture", PICKUP_COST))
+        val occupant = state.positions.values.mapIndexed { index, square -> square to index }
+            .toMap().toMutableMap()
+        occupant[capture] = -1
+        val occupied = occupant.keys
+        data class Lane(
+            val blockerCount: Int,
+            val preference: Int,
+            val forbidden: Set<Int>,
+            val blockers: List<Int>,
+        )
+        val lanes = captureExitRanks(capture).mapIndexed { preference, rank ->
+            val clearance = captureClearanceSquares(capture, rank)
+            val blockers = clearance.mapNotNull(occupant::get).filter { it >= 0 }.distinct().sorted()
+            if (blockers.isEmpty()) {
+                return listOf(SearchAction(-1, capture, emptyList(), "capture", PICKUP_COST))
+            }
+            Lane(blockers.size, preference, clearance + capture, blockers)
+        }
+        val actions = mutableMapOf<Pair<Int, Int>, SearchAction>()
+        lanes.sortedWith(compareBy<Lane> { it.blockerCount }.thenBy { it.preference })
+            .take(config.corridorCandidates)
+            .forEach { lane ->
+                addDependencyActions(
+                    problem, state, occupant, lane.blockers, lane.forbidden,
+                    actions, budget, mode,
+                )
+            }
+        fun add(action: SearchAction) {
+            val key = action.pieceIndex to action.target
+            if (action.cost < (actions[key]?.cost ?: Long.MAX_VALUE)) actions[key] = action
+        }
+        if (mode == SearchMode.BROAD || mode == SearchMode.EXHAUSTIVE) {
+            problem.pieces.indices.forEach { index ->
+                if (!problem.pieces[index].primary && state.disturbedMask and (1L shl index) == 0L &&
+                    java.lang.Long.bitCount(state.disturbedMask) >= budget
+                ) return@forEach
+                parkingActions(
+                    problem, state, occupant, index, setOf(capture),
+                    config.broadCandidatesPerPiece, true,
+                ).forEach(::add)
+            }
+        }
+        if (mode == SearchMode.EXHAUSTIVE || actions.isEmpty()) {
+            state.positions.values.forEachIndexed { index, source ->
+                if (!problem.pieces[index].primary && state.disturbedMask and (1L shl index) == 0L &&
+                    java.lang.Long.bitCount(state.disturbedMask) >= budget
+                ) return@forEachIndexed
+                neighbors(source).filter { it.square !in occupied }.forEach { neighbor ->
+                    add(makeAction(
+                        problem, state, index, listOf(source, neighbor.square),
+                        purpose(problem, state, index, neighbor.square),
+                    ))
+                }
+            }
+        }
+        return actions.values.sortedWith(
+            compareBy<SearchAction> { it.cost }.thenBy { it.pieceIndex }.thenBy { it.target },
+        )
+    }
+
     private fun addDependencyActions(
         problem: PlanningProblem,
         state: SearchState,
@@ -457,7 +593,8 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                 state.positions.values[blocker], targets, occupant, blocker,
             ) ?: continue
             val nextForbidden = dependency.reserved + escape
-            escape.drop(1).mapNotNull(occupant::get).filter { it != blocker && it !in seen }.forEach {
+            escape.drop(1).mapNotNull(occupant::get)
+                .filter { it >= 0 && it != blocker && it !in seen }.forEach {
                 queue.add(Dependency(it, nextForbidden, dependency.depth + 1))
             }
         }
@@ -552,21 +689,33 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         return SearchAction(pieceIndex, path.last(), path, purpose, cost)
     }
 
-    private fun reconstruct(problem: PlanningProblem, result: SearchResult): List<Relocation> {
-        val reverse = mutableListOf<Relocation>()
+    private fun reconstruct(
+        problem: PlanningProblem,
+        result: SearchResult,
+    ): Pair<List<Relocation>, Int?> {
+        val reverse = mutableListOf<SearchAction>()
         var state = result.state
         while (true) {
             val step = result.parents[state] ?: break
-            reverse += Relocation(
-                problem.pieces[step.action.pieceIndex].key,
-                step.action.path.first(),
-                step.action.path.last(),
-                step.action.path,
-                step.action.purpose,
-            )
+            reverse += step.action
             state = step.previous
         }
-        return reverse.asReversed()
+        val relocations = mutableListOf<Relocation>()
+        var captureIndex: Int? = null
+        reverse.asReversed().forEach { action ->
+            if (action.pieceIndex == -1) {
+                captureIndex = relocations.size
+            } else {
+                relocations += Relocation(
+                    problem.pieces[action.pieceIndex].key,
+                    action.path.first(),
+                    action.path.last(),
+                    action.path,
+                    action.purpose,
+                )
+            }
+        }
+        return relocations to captureIndex
     }
 }
 
@@ -574,6 +723,7 @@ fun planningProblemFromChess(
     board: Board,
     move: Move,
     physicalOccupancy: Set<Int>? = null,
+    deferredCapture: Boolean = false,
 ): PlanningProblem {
     if (!board.isMoveLegal(move, true)) throw PlanningException("Illegal chess move: $move")
     val from = move.from.ordinal
@@ -621,7 +771,40 @@ fun planningProblemFromChess(
         capturedSquare,
         castlingSide,
         physicalOccupancy,
+        deferredCapture,
     )
+}
+
+fun captureClearanceSquares(captureSquare: Int, exitRank: Int): Set<Int> {
+    validateSquare(captureSquare)
+    require(exitRank in 1..8) { "Capture exit rank must be 1..8" }
+    val file = captureSquare % 8
+    val sourceRank = captureSquare / 8 + 1
+    return buildSet {
+        for (rank in minOf(sourceRank, exitRank)..maxOf(sourceRank, exitRank)) {
+            if (rank != sourceRank) add(file + (rank - 1) * 8)
+        }
+        for (column in 0..file) {
+            if (column < file) add(column + (exitRank - 1) * 8)
+            if (exitRank > 1 && !(exitRank - 1 == sourceRank && column == file)) {
+                add(column + (exitRank - 2) * 8)
+            }
+        }
+        remove(captureSquare)
+    }
+}
+
+fun captureExitRanks(captureSquare: Int): List<Int> {
+    validateSquare(captureSquare)
+    val sourceRank = captureSquare / 8 + 1
+    return (sourceRank downTo 1).toList() + ((sourceRank + 1)..8).toList()
+}
+
+fun findCaptureExitRank(captureSquare: Int, occupied: Collection<Int>): Int? {
+    val withoutCapture = occupied.toSet() - captureSquare
+    return captureExitRanks(captureSquare).firstOrNull { rank ->
+        captureClearanceSquares(captureSquare, rank).none { it in withoutCapture }
+    }
 }
 
 fun validateSquare(square: Int) {

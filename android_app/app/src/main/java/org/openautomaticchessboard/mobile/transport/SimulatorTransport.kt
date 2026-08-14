@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import org.openautomaticchessboard.mobile.protocol.Protocol
 import org.openautomaticchessboard.mobile.protocol.PlanRouteRequest
+import org.openautomaticchessboard.mobile.domain.routing.findCaptureExitRank
 
 class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardTransport {
     override val label = "Simulator"
@@ -47,7 +48,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.6.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,ALIGN", 30)
+            "INFO" -> emit("INFO ACB2 4.7.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,ALIGN", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0}", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
@@ -106,6 +107,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 }
                 command.startsWith("PLAN ") -> beginPlan(command)
                 command.startsWith("DRAG ") -> runDrag(command)
+                command == "REMOVE" -> removeCapture()
                 command == "COMMIT" -> commitPlan()
                 command.matches(Regex("HEAD [a-h][1-8]")) -> {
                     if (fault) emit("ERR FAULT", 30) else if (!homed) emit("ERR CALIBRATE", 30) else {
@@ -214,10 +216,25 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             plan = request
             planInitial = initial
             planExpected = expected
-            request.captureSquare?.let(occupied::remove)
             sequence = 20
-            emit("PLAN READY", if (request.captureSquare == null) 30 else 180)
+            emit("PLAN READY", 30)
         }.onFailure { emit("ERR BAD PLAN", 30) }
+    }
+
+    private fun removeCapture() {
+        if (fault) { emit("ERR FAULT", 30); return }
+        val activePlan = plan
+        if (activePlan == null || activePlan.captureSquare == null) {
+            emit("ERR NO CAPTURE", 30)
+            return
+        }
+        runCatching {
+            val square = activePlan.captureSquare
+            check(square in occupied) { "PLAN STATE" }
+            check(findCaptureExitRank(square, occupied) != null) { "BAD ROUTE" }
+            occupied.remove(square)
+            emit("REMOVED", 180)
+        }.onFailure { emit("ERR ${it.message ?: "BAD ROUTE"}", 30) }
     }
 
     private fun runDrag(command: String) {
@@ -226,6 +243,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         if (plan == null) { emit("ERR NO PLAN", 30); return }
         runCatching {
             val route = Protocol.parseDragCommand(command)
+            check(route.source != plan?.captureSquare || route.source !in occupied) { "CAPTURE PENDING" }
             check(route.source in occupied) { "SOURCE EMPTY" }
             check(route.target !in occupied) { "TARGET FULL" }
             check(route.path.drop(1).none { it in occupied }) { "ROUTE BLOCKED" }

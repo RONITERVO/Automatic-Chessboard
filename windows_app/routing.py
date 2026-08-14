@@ -62,13 +62,14 @@ class PieceTask:
 
 @dataclass(frozen=True)
 class PlanningProblem:
-    """A complete rearrangement problem after any captured piece is removed."""
+    """A complete physical rearrangement problem for one legal chess move."""
 
     pieces: tuple[PieceTask, ...]
     move_uci: str = ""
     captured_square: int | None = None
     castling_side: str | None = None
     initial_physical_occupancy: frozenset[int] | None = None
+    deferred_capture: bool = False
 
     def __post_init__(self) -> None:
         starts = [piece.start for piece in self.pieces]
@@ -181,6 +182,7 @@ class MotionPlan:
     problem: PlanningProblem
     relocations: tuple[Relocation, ...]
     statistics: PlanStatistics
+    capture_removal_index: int | None = None
 
     @property
     def temporary_piece_count(self) -> int:
@@ -209,7 +211,27 @@ class MotionPlan:
 
         positions = {piece.key: piece.start for piece in self.problem.pieces}
         occupancy = {piece.start: piece.key for piece in self.problem.pieces}
-        for relocation in self.relocations:
+        capture = self.problem.captured_square
+        capture_pending = capture is not None and self.problem.deferred_capture
+        if capture_pending:
+            occupancy[capture] = "<captured>"
+            if self.capture_removal_index is None:
+                raise PlanningError("Deferred capture plan has no removal step")
+        elif self.capture_removal_index is not None:
+            raise PlanningError("Unexpected capture-removal step")
+
+        def remove_capture() -> None:
+            nonlocal capture_pending
+            if not capture_pending or capture is None or occupancy.get(capture) != "<captured>":
+                raise PlanningError("Capture-removal state is inconsistent")
+            if find_capture_exit_rank(capture, occupancy) is None:
+                raise PlanningError("Captured piece has no collision-safe exit lane")
+            del occupancy[capture]
+            capture_pending = False
+
+        for index, relocation in enumerate(self.relocations):
+            if index == self.capture_removal_index:
+                remove_capture()
             if positions.get(relocation.piece_key) != relocation.source:
                 raise PlanningError(
                     f"{relocation.piece_key} is not at {square_name(relocation.source)}"
@@ -229,6 +251,11 @@ class MotionPlan:
             occupancy[relocation.target] = relocation.piece_key
             positions[relocation.piece_key] = relocation.target
 
+        if self.capture_removal_index == len(self.relocations):
+            remove_capture()
+        if capture_pending:
+            raise PlanningError("Captured piece was never removed")
+
         expected = {piece.key: piece.goal for piece in self.problem.pieces}
         if positions != expected:
             mismatches = [
@@ -242,7 +269,8 @@ class MotionPlan:
         """Build the transactional ACB command sequence lazily to avoid cycles."""
 
         from protocol import (
-            commit_plan_command, drag_command, plan_command, split_route_runs,
+            commit_plan_command, drag_command, plan_command, remove_command,
+            split_route_runs,
         )
 
         # A BOARD proof follows transaction opening and every physical drag.
@@ -256,9 +284,13 @@ class MotionPlan:
             ),
             "BOARD",
         ]
-        for move in self.relocations:
+        for index, move in enumerate(self.relocations):
+            if index == self.capture_removal_index:
+                commands.extend((remove_command(self.problem.captured_square), "BOARD"))
             for run in split_route_runs(move.path):
                 commands.extend((drag_command(run), "BOARD"))
+        if self.capture_removal_index == len(self.relocations):
+            commands.extend((remove_command(self.problem.captured_square), "BOARD"))
         commands.append(commit_plan_command())
         return tuple(commands)
 
@@ -275,6 +307,7 @@ class MotionPlan:
 class _SearchState:
     positions: tuple[int, ...]
     disturbed_mask: int
+    capture_removed: bool
 
 
 @dataclass(frozen=True)
@@ -309,6 +342,55 @@ def parse_square(name: str) -> int:
     if len(text) != 2 or text[0] not in "abcdefgh" or text[1] not in "12345678":
         raise ValueError(f"Invalid square {name!r}")
     return (ord(text[0]) - ord("a")) + (int(text[1]) - 1) * 8
+
+
+def capture_clearance_squares(capture_square: int, exit_rank: int) -> frozenset[int]:
+    """Squares that must be empty for the Nano's left-bin capture corridor."""
+
+    validate_square(capture_square)
+    if exit_rank not in range(1, 9):
+        raise ValueError("Capture exit rank must be 1..8")
+    file_index = capture_square % 8
+    source_rank = capture_square // 8 + 1
+    required: set[int] = set()
+
+    for rank in range(min(source_rank, exit_rank), max(source_rank, exit_rank) + 1):
+        if rank != source_rank:
+            required.add(file_index + (rank - 1) * 8)
+
+    # Match FirmwarePieces.ino exactly: the exit row to the left and, except
+    # at rank 1, the row immediately below the boundary lane must be clear.
+    for column in range(file_index + 1):
+        if column < file_index:
+            required.add(column + (exit_rank - 1) * 8)
+        if exit_rank > 1 and not (
+            exit_rank - 1 == source_rank and column == file_index
+        ):
+            required.add(column + (exit_rank - 2) * 8)
+    required.discard(capture_square)
+    return frozenset(required)
+
+
+def capture_exit_ranks(capture_square: int) -> tuple[int, ...]:
+    """Firmware-compatible preference order for capture exit lanes."""
+
+    validate_square(capture_square)
+    source_rank = capture_square // 8 + 1
+    return tuple(range(source_rank, 0, -1)) + tuple(range(source_rank + 1, 9))
+
+
+def find_capture_exit_rank(
+    capture_square: int, occupied: Iterable[int]
+) -> int | None:
+    occupied_without_capture = frozenset(occupied) - {capture_square}
+    return next(
+        (
+            rank
+            for rank in capture_exit_ranks(capture_square)
+            if not (capture_clearance_squares(capture_square, rank) & occupied_without_capture)
+        ),
+        None,
+    )
 
 
 def manhattan(first: int, second: int) -> int:
@@ -615,8 +697,12 @@ class RearrangementPlanner:
             for index, piece in enumerate(problem.pieces)
             if not piece.primary and piece.start != piece.goal
         )
-        initial = _SearchState(problem.initial_positions, initial_disturbed)
-        if initial.positions == problem.goal_positions:
+        initial = _SearchState(
+            problem.initial_positions,
+            initial_disturbed,
+            problem.captured_square is None or not problem.deferred_capture,
+        )
+        if initial.positions == problem.goal_positions and initial.capture_removed:
             statistics = PlanStatistics(0, 0, 0, monotonic() - started, "direct")
             return MotionPlan(problem, (), statistics)
 
@@ -635,7 +721,7 @@ class RearrangementPlanner:
                 result = self._search(problem, initial, budget, mode)
                 if result is None:
                     continue
-                relocations = self._reconstruct(problem, result[0], result[1])
+                relocations, capture_index = self._reconstruct(problem, result[0], result[1])
                 statistics = PlanStatistics(
                     expanded_nodes=self._expanded_total,
                     generated_nodes=self._generated_total,
@@ -643,7 +729,7 @@ class RearrangementPlanner:
                     elapsed_s=monotonic() - started,
                     search_mode=mode,
                 )
-                plan = MotionPlan(problem, relocations, statistics)
+                plan = MotionPlan(problem, relocations, statistics, capture_index)
                 plan.validate()
                 return plan
 
@@ -684,12 +770,29 @@ class RearrangementPlanner:
             entry = heappop(queue)
             if entry.cost != best_cost.get(entry.state):
                 continue
-            if entry.state.positions == problem.goal_positions:
+            if entry.state.positions == problem.goal_positions and entry.state.capture_removed:
                 return entry.state, parent
 
             self._expanded_total += 1
             actions = self._successors(problem, entry.state, disturbance_budget, mode)
             for action in actions:
+                if action.piece_index == NO_SQUARE:
+                    next_state = _SearchState(
+                        entry.state.positions, entry.state.disturbed_mask, True
+                    )
+                    candidate_cost = entry.cost + action.cost
+                    if candidate_cost >= best_cost.get(next_state, 1 << 120):
+                        continue
+                    best_cost[next_state] = candidate_cost
+                    parent[next_state] = (entry.state, action)
+                    heuristic = self._heuristic(problem, next_state)
+                    priority = candidate_cost + int(self.config.heuristic_weight * heuristic)
+                    heappush(
+                        queue,
+                        _QueueEntry(priority, next(serial), candidate_cost, next_state),
+                    )
+                    self._generated_total += 1
+                    continue
                 positions = list(entry.state.positions)
                 positions[action.piece_index] = action.target
                 piece_bit = 1 << action.piece_index
@@ -698,7 +801,9 @@ class RearrangementPlanner:
                     disturbed |= piece_bit
                 if disturbed.bit_count() > disturbance_budget:
                     continue
-                next_state = _SearchState(tuple(positions), disturbed)
+                next_state = _SearchState(
+                    tuple(positions), disturbed, entry.state.capture_removed
+                )
                 candidate_cost = entry.cost + action.cost
                 if candidate_cost >= best_cost.get(next_state, 1 << 120):
                     continue
@@ -714,6 +819,16 @@ class RearrangementPlanner:
         return None
 
     def _heuristic(self, problem: PlanningProblem, state: _SearchState) -> int:
+        if not state.capture_removed:
+            capture = problem.captured_square
+            if capture is None:
+                return PICKUP_COST
+            occupied = frozenset(state.positions)
+            blockers = min(
+                len(capture_clearance_squares(capture, rank) & occupied)
+                for rank in capture_exit_ranks(capture)
+            )
+            return PICKUP_COST + blockers * STEP_COST
         mismatched = [
             index
             for index, (current, goal) in enumerate(zip(state.positions, problem.goal_positions))
@@ -760,6 +875,10 @@ class RearrangementPlanner:
         disturbance_budget: int,
         mode: str,
     ) -> tuple[_SearchAction, ...]:
+        if not state.capture_removed:
+            return self._capture_successors(
+                problem, state, disturbance_budget, mode
+            )
         occupant = {square: index for index, square in enumerate(state.positions)}
         occupied = frozenset(occupant)
         mismatched_primary = [
@@ -908,6 +1027,93 @@ class RearrangementPlanner:
 
         return tuple(sorted(actions.values(), key=lambda action: (action.cost, action.piece_index, action.target)))
 
+    def _capture_successors(
+        self,
+        problem: PlanningProblem,
+        state: _SearchState,
+        disturbance_budget: int,
+        mode: str,
+    ) -> tuple[_SearchAction, ...]:
+        """Clear a firmware-valid exit lane before removing a captured piece."""
+
+        capture = problem.captured_square
+        if capture is None:
+            return (_SearchAction(NO_SQUARE, NO_SQUARE, (), "capture", PICKUP_COST),)
+        occupant = {square: index for index, square in enumerate(state.positions)}
+        occupant[capture] = NO_SQUARE
+        occupied = frozenset(occupant)
+        lane_options: list[tuple[int, int, frozenset[int], list[int]]] = []
+        for preference, rank in enumerate(capture_exit_ranks(capture)):
+            clearance = capture_clearance_squares(capture, rank)
+            blockers = sorted({
+                occupant[square]
+                for square in clearance
+                if square in occupant and occupant[square] != NO_SQUARE
+            })
+            if not blockers:
+                return (
+                    _SearchAction(NO_SQUARE, capture, (), "capture", PICKUP_COST),
+                )
+            lane_options.append((len(blockers), preference, clearance | {capture}, blockers))
+
+        actions: dict[tuple[int, int], _SearchAction] = {}
+        for _count, _preference, forbidden, blockers in sorted(lane_options)[
+            : self.config.corridor_candidates
+        ]:
+            self._add_dependency_actions(
+                problem,
+                state,
+                occupant,
+                blockers,
+                forbidden,
+                actions,
+                disturbance_budget,
+                mode,
+            )
+
+        def add(action: _SearchAction) -> None:
+            key = (action.piece_index, action.target)
+            previous = actions.get(key)
+            if previous is None or action.cost < previous.cost:
+                actions[key] = action
+
+        if mode in ("broad", "exhaustive"):
+            for index in range(len(problem.pieces)):
+                if (
+                    not problem.pieces[index].primary
+                    and not (state.disturbed_mask & (1 << index))
+                    and state.disturbed_mask.bit_count() >= disturbance_budget
+                ):
+                    continue
+                for action in self._parking_actions(
+                    problem,
+                    state,
+                    occupant,
+                    index,
+                    frozenset({capture}),
+                    self.config.broad_candidates_per_piece,
+                    allow_reserved=True,
+                ):
+                    add(action)
+
+        if mode == "exhaustive" or not actions:
+            for index, source in enumerate(state.positions):
+                if (
+                    not problem.pieces[index].primary
+                    and not (state.disturbed_mask & (1 << index))
+                    and state.disturbed_mask.bit_count() >= disturbance_budget
+                ):
+                    continue
+                for target, _ in orthogonal_neighbors(source):
+                    if target in occupied:
+                        continue
+                    purpose = self._purpose(problem, state, index, target)
+                    add(self._make_action(problem, state, index, (source, target), purpose))
+
+        return tuple(
+            sorted(actions.values(), key=lambda action: (action.cost, action.piece_index, action.target))
+        )
+
     def _add_dependency_actions(
         self,
         problem: PlanningProblem,
@@ -971,7 +1177,12 @@ class RearrangementPlanner:
             next_forbidden = reserved | frozenset(escape)
             for square in escape[1:]:
                 dependent = occupant.get(square)
-                if dependent is None or dependent == blocker or dependent in seen:
+                if (
+                    dependent is None
+                    or dependent == NO_SQUARE
+                    or dependent == blocker
+                    or dependent in seen
+                ):
                     continue
                 queue.append((dependent, next_forbidden, depth + 1))
 
@@ -1101,12 +1312,21 @@ class RearrangementPlanner:
         problem: PlanningProblem,
         final_state: _SearchState,
         parent: dict[_SearchState, tuple[_SearchState, _SearchAction] | None],
-    ) -> tuple[Relocation, ...]:
-        reverse: list[Relocation] = []
+    ) -> tuple[tuple[Relocation, ...], int | None]:
+        reverse: list[_SearchAction] = []
         state = final_state
         while parent[state] is not None:
             previous, action = parent[state]  # type: ignore[misc]
-            reverse.append(
+            reverse.append(action)
+            state = previous
+        reverse.reverse()
+        relocations: list[Relocation] = []
+        capture_index: int | None = None
+        for action in reverse:
+            if action.piece_index == NO_SQUARE:
+                capture_index = len(relocations)
+                continue
+            relocations.append(
                 Relocation(
                     piece_key=problem.pieces[action.piece_index].key,
                     source=action.path[0],
@@ -1115,9 +1335,7 @@ class RearrangementPlanner:
                     purpose=action.purpose,
                 )
             )
-            state = previous
-        reverse.reverse()
-        return tuple(reverse)
+        return tuple(relocations), capture_index
 
 
 def planning_problem_from_chess(
@@ -1125,6 +1343,7 @@ def planning_problem_from_chess(
     move,
     *,
     physical_occupancy: frozenset[int] | None = None,
+    deferred_capture: bool = False,
 ) -> PlanningProblem:
     """Adapt a legal python-chess move to the physical rearrangement model.
 
@@ -1188,6 +1407,7 @@ def planning_problem_from_chess(
         captured_square=capture_square,
         castling_side=castling_side,
         initial_physical_occupancy=physical_occupancy,
+        deferred_capture=deferred_capture,
     )
 
 
@@ -1196,9 +1416,13 @@ def plan_chess_move(
     move,
     *,
     physical_occupancy: frozenset[int] | None = None,
+    deferred_capture: bool = False,
     config: PlannerConfig | None = None,
 ) -> MotionPlan:
     problem = planning_problem_from_chess(
-        board, move, physical_occupancy=physical_occupancy
+        board,
+        move,
+        physical_occupancy=physical_occupancy,
+        deferred_capture=deferred_capture,
     )
     return RearrangementPlanner(config).plan(problem)

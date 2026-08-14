@@ -340,8 +340,8 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.6.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE,APPBOARD,ALIGN"
+                "INFO ACB2 4.7.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,ALIGN"
             )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._remote_mode)}")
@@ -446,11 +446,25 @@ class SimulatorTransport:
                 self._plan_initial = initial
                 self._plan_expected = frozenset(after.piece_map())
                 self._plan_capture = capture
-                self._plan_dirty = capture is not None
+                self._plan_dirty = False
                 self._sequence = 20
-                if capture is not None:
-                    self._physical_squares.remove(capture)
-                self._emit("PLAN READY", 0.12 if capture is not None else 0.04)
+                self._emit("PLAN READY")
+            except Exception as error:
+                self._emit(f"ERR {error}")
+        elif upper == "REMOVE":
+            try:
+                from routing import find_capture_exit_rank
+
+                if self._plan_move is None or self._plan_capture is None:
+                    raise RuntimeError("NO CAPTURE")
+                capture = self._plan_capture
+                if capture not in self._physical_squares:
+                    raise RuntimeError("PLAN STATE")
+                if find_capture_exit_rank(capture, self._physical_squares) is None:
+                    raise RuntimeError("BAD ROUTE")
+                self._physical_squares.remove(capture)
+                self._plan_dirty = True
+                self._emit("REMOVED", 0.12)
             except Exception as error:
                 self._emit(f"ERR {error}")
         elif upper.startswith("DRAG "):
@@ -458,6 +472,8 @@ class SimulatorTransport:
                 if self._plan_move is None:
                     raise RuntimeError("NO PLAN")
                 route = parse_drag_command(text)
+                if route.source == self._plan_capture and route.source in self._physical_squares:
+                    raise ValueError("CAPTURE PENDING")
                 if route.source not in self._physical_squares:
                     raise ValueError("SOURCE EMPTY")
                 if route.target in self._physical_squares:

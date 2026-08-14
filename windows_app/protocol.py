@@ -72,7 +72,7 @@ CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # guarded with commands that move directly rather than treated as harmless state.
 MOTION_COMMANDS = frozenset({
     "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-    "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
+    "PLAN", "DRAG", "REMOVE", "COMMIT", "ALIGN", "NUDGE",
 })
 
 
@@ -331,6 +331,13 @@ def drag_command(path: tuple[int, ...] | list[int]) -> str:
         raise ValueError("One DRAG command must be a single straight run")
     run = runs[0]
     return f"DRAG {_square_text(run[0])}{_square_text(run[-1])}"
+
+
+def remove_command(capture_square: int | None) -> str:
+    if capture_square is None:
+        raise ValueError("REMOVE requires a captured square")
+    _square_text(capture_square)
+    return "REMOVE"
 
 
 def parse_drag_command(line: str) -> DragRoute:

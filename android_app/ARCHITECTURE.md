@@ -66,7 +66,10 @@ and deterministic square order. The physical cost prioritizes:
 Search duration, node count, temporary pieces, corridor/parking branch width,
 and dependency depth are bounded. A limit failure is explicit and never falls
 back to an unverified move. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search.
+standard castling sides are adapted before search. With firmware 4.7's `REMOVE`
+capability, capture removal is a search transition: the captured square remains
+occupied until an exact firmware-compatible exit lane is clear, so ordinary
+recursive parking can clear blocked lanes without a separate capture script.
 
 ## Route transaction
 
@@ -77,14 +80,16 @@ counter discards results after stop, disconnect, or position change.
 Execution is strictly:
 
 ```text
-PLAN -> BOARD -> (straight DRAG -> BOARD)* -> COMMIT
+PLAN -> BOARD -> (straight DRAG -> BOARD)* -> [REMOVE -> BOARD] ->
+        (straight DRAG -> BOARD)* -> COMMIT
 ```
 
 Each exact acknowledgement advances one state. The phone maintains the expected
 occupancy independently from the Nano and uses separate control and physical-
-motion timeouts. Capture removal happens during `PLAN`; after that or any
-`DRAG`, loss of proof makes state uncertain. The app sends one `STOP`, releases
-the connection owner, ends the game, and requires inspection instead of retry.
+motion timeouts. A 4.7 `PLAN` never moves hardware; `REMOVE` is sent only after
+the planner has cleared an exit lane. After `REMOVE` or any `DRAG`, loss of
+proof makes state uncertain. The app sends one `STOP`, releases the connection
+owner, ends the game, and requires inspection instead of retry.
 
 Reed switches prove occupancy, not identity, gantry position, magnet current, or
 piece centring. The host owns chess legality and labels; the Nano owns

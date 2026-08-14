@@ -353,6 +353,7 @@ class GameController(
             "BOARD" -> handleRouteBoard()
             "PLAN" -> handleRoutePlan(event)
             "MOVED" -> handleRouteMoved(event)
+            "REMOVED" -> handleRouteRemoved(event)
             "DONE" -> handleRouteDone(event)
             "ERR" -> {
                 failRoute(event.args.joinToString(" ").ifBlank { "unknown route error" })
@@ -408,7 +409,7 @@ class GameController(
             return true
         }
         val captured = activeRoutePlan?.problem?.capturedSquare
-        if (captured != null) {
+        if (captured != null && activeRoutePlan?.problem?.deferredCapture != true) {
             if (captured !in routeExpectedOccupancy) {
                 failRoute("Capture square was absent from the planned start frame")
                 return true
@@ -417,6 +418,22 @@ class GameController(
         }
         cancelRouteTimeout()
         advanceRoute()
+        return true
+    }
+
+    private fun handleRouteRemoved(event: BoardEvent): Boolean {
+        if (routePhase != RoutePhase.REMOVED) {
+            failRoute("Unexpected REMOVED acknowledgement")
+            return true
+        }
+        val captured = activeRoutePlan?.problem?.capturedSquare
+        if (captured == null || captured !in routeExpectedOccupancy) {
+            failRoute("Capture square was absent before removal")
+        } else {
+            routeExpectedOccupancy = routeExpectedOccupancy - captured
+            cancelRouteTimeout()
+            advanceRoute()
+        }
         return true
     }
 
@@ -484,7 +501,12 @@ class GameController(
         val problem = try {
             val position = Board().apply { loadFromFen(board.fen) }
             val immutableMove = Move(move.toString(), position.sideToMove)
-            planningProblemFromChess(position, immutableMove, sensors.toSet())
+            planningProblemFromChess(
+                position,
+                immutableMove,
+                sensors.toSet(),
+                deferredCapture = "REMOVE" in channel.firmwareCapabilities,
+            )
         } catch (error: Exception) {
             failRoute(error.message ?: "Could not construct a route problem")
             return
@@ -556,15 +578,19 @@ class GameController(
             "PLAN" -> RoutePhase.PLAN
             "BOARD" -> RoutePhase.BOARD
             "DRAG" -> RoutePhase.MOVED
+            "REMOVE" -> RoutePhase.REMOVED
             "COMMIT" -> RoutePhase.DONE
             else -> {
                 failRoute("Unknown route command $verb")
                 return
             }
         }
-        val planHasCapture = verb == "PLAN" && activeRoutePlan?.problem?.capturedSquare != null
-        if (verb == "DRAG" || planHasCapture) routeMotionSent = true
-        val timeout = if (verb == "DRAG" || planHasCapture) ROUTE_MOTION_TIMEOUT_MS else ROUTE_CONTROL_TIMEOUT_MS
+        val planHasCapture = verb == "PLAN" && activeRoutePlan?.problem?.capturedSquare != null &&
+            activeRoutePlan?.problem?.deferredCapture != true
+        if (verb == "DRAG" || verb == "REMOVE" || planHasCapture) routeMotionSent = true
+        val timeout = if (verb == "DRAG" || verb == "REMOVE" || planHasCapture) {
+            ROUTE_MOTION_TIMEOUT_MS
+        } else ROUTE_CONTROL_TIMEOUT_MS
         armRouteTimeout(timeout, verb)
         channel.sendRouteCommand(command).onFailure {
             failRoute(it.message ?: "Could not send route command $verb")
@@ -783,7 +809,7 @@ $moves $result
         engine.close()
     }
 
-    private enum class RoutePhase { NONE, SNAPSHOT, PLANNING, PLAN, BOARD, MOVED, DONE }
+    private enum class RoutePhase { NONE, SNAPSHOT, PLANNING, PLAN, BOARD, MOVED, REMOVED, DONE }
 
     companion object {
         private const val ROUTE_PLANNING_TIMEOUT_MS = 8_000L

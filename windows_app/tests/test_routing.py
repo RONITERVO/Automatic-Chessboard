@@ -159,6 +159,27 @@ class RearrangementPlannerTests(unittest.TestCase):
         with self.assertRaises(PlanningError):
             self.planner().plan(problem)
 
+    def test_deferred_capture_clears_bin_lane_before_removal(self):
+        board = chess.Board()
+        for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
+            board.push_uci(uci)
+        move = chess.Move.from_uci("c6e5")
+        problem = planning_problem_from_chess(
+            board,
+            move,
+            physical_occupancy=frozenset(board.piece_map()),
+            deferred_capture=True,
+        )
+
+        plan = self.planner(max_nodes=500_000).plan(problem)
+
+        self.assert_valid(plan)
+        commands = plan.protocol_commands()
+        remove_index = commands.index("REMOVE")
+        self.assertTrue(any(command.startswith("DRAG ") for command in commands[2:remove_index]))
+        self.assertEqual(commands[remove_index + 1], "BOARD")
+        self.assertEqual(plan.capture_removal_index, 1)
+
 
 class ChessAdapterTests(unittest.TestCase):
     def test_capture_square_is_removed_from_the_rearrangement_problem(self):

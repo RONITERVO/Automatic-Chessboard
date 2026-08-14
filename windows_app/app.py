@@ -55,7 +55,7 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
@@ -1173,7 +1173,8 @@ class AutomaticChessboardApp:
                     self.route_deadline = 0.0
                     self.route_firmware_open = True
                     captured = self.active_route_plan.problem.captured_square
-                    if captured is not None:
+                    if (captured is not None and
+                            not self.active_route_plan.problem.deferred_capture):
                         if captured not in self.route_expected_occupancy:
                             self._route_plan_failed(
                                 PlanningError("Capture square was absent from the planned start frame")
@@ -1186,6 +1187,18 @@ class AutomaticChessboardApp:
                     self._advance_route_execution()
                 else:
                     self._route_plan_failed(PlanningError("PLAN acknowledgement mismatch"))
+        elif event.kind == "REMOVED":
+            if self.active_route_plan is not None and self.route_waiting_for == "REMOVED":
+                captured = self.active_route_plan.problem.captured_square
+                if captured not in self.route_expected_occupancy:
+                    self._route_plan_failed(PlanningError("Capture square was absent before removal"))
+                else:
+                    self.route_expected_occupancy = frozenset(
+                        square for square in self.route_expected_occupancy
+                        if square != captured
+                    )
+                    self.route_deadline = 0.0
+                    self._advance_route_execution()
         elif event.kind == "MOVING":
             self.motion_expected = True
             if event.args and event.args[0] in ("HEAD", "PIECE"):
@@ -2153,6 +2166,9 @@ class AutomaticChessboardApp:
                     position,
                     move,
                     physical_occupancy=occupancy,
+                    deferred_capture="REMOVE" in (
+                        self.model.firmware.capabilities if self.model.firmware else frozenset()
+                    ),
                     config=config,
                 )
                 self.events.put(("route_plan_ready", (generation, plan)))
@@ -2225,22 +2241,24 @@ class AutomaticChessboardApp:
         self.route_waiting_for = (
             "PLAN" if verb == "PLAN" else
             "MOVED" if verb == "DRAG" else
+            "REMOVED" if verb == "REMOVE" else
             "BOARD" if verb == "BOARD" else
             "DONE" if verb == "COMMIT" else ""
         )
         self.route_current_command = command
         plan_has_capture = (
-            verb == "PLAN" and self.active_route_plan.problem.captured_square is not None
+            verb == "PLAN" and self.active_route_plan.problem.captured_square is not None and
+            not self.active_route_plan.problem.deferred_capture
         )
         timeout = (
             ROUTE_MOTION_TIMEOUT_S
-            if verb == "DRAG" or plan_has_capture
+            if verb in {"DRAG", "REMOVE"} or plan_has_capture
             else ROUTE_CONTROL_TIMEOUT_S
         )
         self.route_deadline = time.monotonic() + timeout
-        if verb == "DRAG" or plan_has_capture:
-            # A capture is removed during PLAN. Once any physical command is
-            # issued, a missing reply cannot prove the starting arrangement.
+        if verb in {"DRAG", "REMOVE"} or plan_has_capture:
+            # Once any physical command is issued, a missing reply cannot prove
+            # the starting arrangement.
             self.route_motion_command_sent = True
         if not self.route_waiting_for or not self._send(command, quiet=True):
             self._route_plan_failed(PlanningError(f"Could not send route command {verb}"))
@@ -2256,8 +2274,8 @@ class AutomaticChessboardApp:
             error = actual_error
         detail = str(error) or error.__class__.__name__
         self.recorder.record("route", "plan_failed", error=detail)
-        # A non-capture PLAN is reversible because no magnet motion was issued.
-        # Never attempt automatic cancellation after capture/DRAG motion: a
+        # A 4.7 PLAN is reversible because no magnet motion was issued. Never
+        # attempt automatic cancellation after REMOVE/DRAG motion: a
         # lost acknowledgement leaves the physical arrangement uncertain.
         connected = self.transport is not None and self.transport.is_connected
         can_cancel = (
@@ -2641,10 +2659,10 @@ class AutomaticChessboardApp:
     def _send_developer_command(self) -> None:
         command = self.developer_command.get().strip()
         verb = command.split(maxsplit=1)[0].upper() if command else ""
-        if verb in {"PLAN", "DRAG", "COMMIT"}:
+        if verb in {"PLAN", "DRAG", "REMOVE", "COMMIT"}:
             messagebox.showwarning(
                 "Verified route command reserved",
-                "PLAN, DRAG, and COMMIT are owned by automatic route orchestration.",
+                "PLAN, DRAG, REMOVE, and COMMIT are owned by automatic route orchestration.",
                 parent=self.root,
             )
             return

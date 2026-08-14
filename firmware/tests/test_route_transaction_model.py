@@ -82,6 +82,7 @@ class RouteTransactionModelTests(unittest.TestCase):
     def test_capture_en_passant_promotion_and_standard_castling(self):
         capture = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
         capture.begin("PLAN e4d5-d5")
+        capture.remove_capture()
         self.assertNotIn(square_index("d5"), capture.observed)
         capture.drag("DRAG e4e5")
         capture.drag("DRAG e5d5")
@@ -89,6 +90,7 @@ class RouteTransactionModelTests(unittest.TestCase):
 
         en_passant = MotionlessRouteExecutor({square_index("e5"), square_index("d5")})
         en_passant.begin("PLAN e5d6-d5")
+        en_passant.remove_capture()
         en_passant.drag("DRAG e5e6")
         en_passant.drag("DRAG e6d6")
         self.assertEqual("DONE e5d6", en_passant.commit())
@@ -115,6 +117,17 @@ class RouteTransactionModelTests(unittest.TestCase):
             queen_side.drag(f"DRAG a{other_rank}d{other_rank}")
             queen_side.drag(f"DRAG d{other_rank}d{rank}")
             self.assertEqual(f"DONE e{rank}c{rank}", queen_side.commit())
+
+    def test_capture_removal_waits_for_a_clear_exit_lane(self):
+        model = MotionlessRouteExecutor({
+            square_index("c6"), square_index("e5"), square_index("a5"),
+            square_index("e4"), square_index("e6"),
+        })
+        self.assertEqual("PLAN READY", model.begin("PLAN c6e5-e5"))
+        assert_error(self, "CAPTURE", model.remove_capture)
+        model.drag("DRAG e4f4")
+        self.assertEqual("REMOVED", model.remove_capture())
+        self.assertNotIn(square_index("e5"), model.observed)
 
     def test_exact_commit_cancellation_and_incomplete_plan(self):
         source, target = square_index("a1"), square_index("a2")
@@ -154,12 +167,12 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertFalse(post_drag.active)
 
         capture_fault = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
+        capture_fault.begin("PLAN e4d5-d5")
         assert_error(
             self,
             "SENSORS",
-            lambda: capture_fault.begin(
-                "PLAN e4d5-d5",
-                observed_after_capture={square_index("e4"), square_index("d5")},
+            lambda: capture_fault.remove_capture(
+                observed_after={square_index("e4"), square_index("d5")},
             ),
         )
         self.assertTrue(capture_fault.fault)

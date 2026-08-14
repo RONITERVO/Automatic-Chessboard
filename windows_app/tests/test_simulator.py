@@ -32,6 +32,7 @@ class SimulatorTests(unittest.TestCase):
         info = next(value for value in lines if value.startswith("INFO ACB2"))
         self.assertIn("SENSORFRAME", info)
         self.assertIn("PLANROUTE", info)
+        self.assertIn("REMOVE", info)
         self.assertIn("APPBOARD", info)
         transport.close()
 
@@ -147,7 +148,7 @@ class SimulatorTests(unittest.TestCase):
 
     def test_capture_cannot_be_committed_before_main_piece_arrives(self):
         import chess
-        from protocol import commit_plan_command, plan_command
+        from protocol import commit_plan_command, plan_command, remove_command
 
         lines = []
         transport = SimulatorTransport(lines.append, lambda _status: None)
@@ -164,6 +165,8 @@ class SimulatorTests(unittest.TestCase):
         transport.send(plan_command("e4d5", chess.D5))
         self.wait_for(lines, lambda values: "PLAN READY" in values)
         self.assertIn("PLAN READY", lines)
+        transport.send(remove_command(chess.D5))
+        self.wait_for(lines, lambda values: "REMOVED" in values)
         transport.send(commit_plan_command())
         self.wait_for(lines, lambda values: "ERR PLAN INCOMPLETE" in values)
         self.assertIn("ERR PLAN INCOMPLETE", lines)
@@ -269,7 +272,9 @@ class SimulatorTests(unittest.TestCase):
                 board = chess.Board(fen)
                 move = chess.Move.from_uci(uci)
                 self.assertIn(move, board.legal_moves)
-                plan = planner.plan(planning_problem_from_chess(board, move))
+                plan = planner.plan(planning_problem_from_chess(
+                    board, move, deferred_capture=True,
+                ))
                 lines = []
                 transport = SimulatorTransport(lines.append, lambda _status: None)
                 transport.start()
@@ -284,6 +289,7 @@ class SimulatorTests(unittest.TestCase):
                     expected = (
                         "PLAN READY" if command.startswith("PLAN ") else
                         f"MOVED PIECE {command.split()[1]}" if command.startswith("DRAG ") else
+                        "REMOVED" if command == "REMOVE" else
                         acknowledgement if command == "COMMIT" else
                         "BOARD "
                     )
@@ -301,6 +307,43 @@ class SimulatorTests(unittest.TestCase):
                     self.assertIn("PROMOTE q", lines)
                 self.assertEqual(set(transport._board.piece_map()), transport._physical_squares)
                 transport.close()
+
+    def test_blocked_knight_capture_is_cleared_removed_and_completed(self):
+        import chess
+        from routing import PlannerConfig, RearrangementPlanner, planning_problem_from_chess
+
+        board = chess.Board()
+        for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
+            board.push_uci(uci)
+        move = chess.Move.from_uci("c6e5")
+        plan = RearrangementPlanner(
+            PlannerConfig(time_limit_s=5.0, max_nodes=500_000)
+        ).plan(planning_problem_from_chess(board, move, deferred_capture=True))
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport._board = board.copy(stack=False)
+        transport._physical_squares = set(board.piece_map())
+        transport._sequence = 15
+        transport._remote_mode = True
+        transport._homed = True
+        for command in plan.protocol_commands():
+            baseline = len(lines)
+            transport.send(command)
+            expected = (
+                "PLAN READY" if command.startswith("PLAN ") else
+                f"MOVED PIECE {command.split()[1]}" if command.startswith("DRAG ") else
+                "REMOVED" if command == "REMOVE" else
+                "DONE c6e5" if command == "COMMIT" else "BOARD "
+            )
+            self.wait_for(lines, lambda values, expected=expected, baseline=baseline: any(
+                value == expected or value.startswith(expected) for value in values[baseline:]
+            ))
+
+        self.assertFalse(any(line.startswith("ERR ") for line in lines), lines)
+        self.assertEqual(set(transport._board.piece_map()), transport._physical_squares)
+        transport.close()
 
 
 if __name__ == "__main__":

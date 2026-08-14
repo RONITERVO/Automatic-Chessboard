@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added firmware-4.7 deferred capture removal. The route search can now park
+  blockers before `REMOVE`, prove the capture frame, complete the main move,
+  and restore every temporary piece in one transaction.
 - Added firmware-4.6 app-controlled play for absent or unreliable reed switches.
   Human and Stockfish moves share the collision-safe route planner, and every
   completed move requires whole-board visual confirmation before play continues.

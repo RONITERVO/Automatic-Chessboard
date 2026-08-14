@@ -32,11 +32,11 @@ void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
-  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
+  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
   Serial.print(',');
   Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
 #else
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
 #endif
 }
 
@@ -636,20 +636,28 @@ void beginRemoteRoutePlan(char *arguments) {
       sendHostError(F("PLAN STATE"));
       return;
     }
-    if (!findCaptureExitRank(file, rank)) {
-      sequence = remote_wait_host;
-      sendHostError(F("BAD ROUTE"));
-      return;
-    }
     move_from = (rank - 1) * 8 + file - 1;  // Capture square for final-frame proof.
-    setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
-    if (!removeCapturedPiece(file, rank) || motion_fault ||
-        !remoteBoardMatchesExpected()) {
-      hostMotionFault(F("SENSORS"));
+    move_to = move_from;  // Reuse the move tracker as the pending-removal marker.
+  }
+  Serial.println(F("PLAN READY"));
+}
+
+void __attribute__((noinline)) runRemoteCaptureRemoval() {
+  if (sequence == remote_route_plan && move_to != NO_SQUARE) {
+    byte file = (move_to & 7) + 1;
+    byte rank = (move_to >> 3) + 1;
+    if (remoteBoardMatchesExpected() && findCaptureExitRank(file, rank)) {
+      setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
+      if (!removeCapturedPiece(file, rank) || !remoteBoardMatchesExpected()) {
+        hostMotionFault(F("SENSORS"));
+        return;
+      }
+      move_to = NO_SQUARE;
+      Serial.println(F("REMOVED"));
       return;
     }
   }
-  Serial.println(F("PLAN READY"));
+  sendHostError(F("CAPTURE"));
 }
 
 void commitRemoteRoutePlan() {
@@ -667,7 +675,7 @@ void commitRemoteRoutePlan() {
     Serial.println(F("PLAN CANCELLED"));
     return;
   }
-  if (!routedFinalStateMatches()) {
+  if (move_to != NO_SQUARE || !routedFinalStateMatches()) {
     sendHostError(F("PLAN INCOMPLETE"));
     return;
   }
@@ -801,6 +809,10 @@ void processHostCommand(char *line) {
   if (strncmp(line, "DRAG ", 5) == 0 && line[9] == 0 &&
       validMoveText(line + 5)) {
     runHostPieceMove(line + 5, true);
+    return;
+  }
+  if (strcmp_P(line, PSTR("REMOVE")) == 0) {
+    runRemoteCaptureRemoval();
     return;
   }
   if (strcmp(line, "COMMIT") == 0) {

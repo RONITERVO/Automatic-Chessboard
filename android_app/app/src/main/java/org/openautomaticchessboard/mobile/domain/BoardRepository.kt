@@ -367,7 +367,7 @@ class BoardRepository(private val recorder: EventRecorder) :
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")
-                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "ALIGN", "ESTOP", "ERR", "STOPPED" -> {
+                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "REMOVED", "CALIBRATED", "ALIGN", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
                         }
@@ -423,8 +423,8 @@ class BoardRepository(private val recorder: EventRecorder) :
         const val SAFE_REFRESH_TIMEOUT_MS = 18_000L
         const val MAX_MOTION_DURATION_MS = 10 * 60_000L
         private val SAFE_REFRESH_COMMANDS = arrayOf("PING", "INFO", "TELEM", "BOARD")
-        private val ROUTE_COMMANDS = setOf("PLAN", "DRAG", "COMMIT", "BOARD")
-        private val PRIVATE_ROUTE_COMMANDS = setOf("PLAN", "DRAG", "COMMIT")
+        private val ROUTE_COMMANDS = setOf("PLAN", "DRAG", "REMOVE", "COMMIT", "BOARD")
+        private val PRIVATE_ROUTE_COMMANDS = setOf("PLAN", "DRAG", "REMOVE", "COMMIT")
     }
 
     private enum class MotionPollState { READY, WAITING, TIMED_OUT }

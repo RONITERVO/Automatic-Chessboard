@@ -1,10 +1,21 @@
 # Nano firmware development
 
-Firmware 4.6 keeps the controller responsible for deterministic motion, sensor
+Firmware 4.7 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
+
+## Release 4.7.0 behavior
+
+Firmware 4.7 makes capture removal an explicit `REMOVE` step inside a verified
+route transaction. `PLAN` no longer moves a captured piece on new companions.
+The phone or computer can first use the existing bounded rearrangement search
+to park pieces blocking all left-bin lanes, request `REMOVE`, prove the complete
+board frame, finish the main move, and restore every parked piece. This closes
+positions where a legal capture previously failed with `ERR BAD ROUTE` before
+the planner could clear an exit. Firmware 4.1-4.6 remains supported through
+capability detection; only 4.7 advertises `REMOVE`.
 
 ## Release 4.6.0 behavior
 
@@ -73,7 +84,7 @@ ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains tight 29800-byte flash / 1115-byte global-SRAM budgets.
+the default and retains tight 29900-byte flash / 1115-byte global-SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
@@ -224,9 +235,9 @@ a certified safety function.
 
 ## Resource policy
 
-The 4.6 Nano build uses 29746 bytes of flash and 1115 bytes of global SRAM.
-`build.ps1` rejects growth beyond 29800/1115 bytes, leaving 974 bytes of
+The 4.7 Nano build uses 29866 bytes of flash and 1115 bytes of global SRAM.
+`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 854 bytes of
 physical flash and 933 bytes for stack/local runtime state. App-authoritative
-play adds 302 flash bytes over 4.5 while adding no global SRAM. The packed
+Firmware 4.7 adds 422 flash bytes over 4.5 while adding no global SRAM. The packed
 three-snapshot board representation uses 24 bytes instead of 192 bytes and is
 reused as either reed-derived or command-derived occupancy.

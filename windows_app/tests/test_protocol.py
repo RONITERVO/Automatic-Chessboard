@@ -21,6 +21,7 @@ from protocol import (
     plan_command,
     play_command,
     queen_aligned,
+    remove_command,
     nudge_command,
     split_route_runs,
     start_game_command,
@@ -101,6 +102,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(king_castle, "PLAN e1g1k--")
         self.assertEqual(queen_castle, "PLAN e8c8c--")
         self.assertEqual(parse_plan_command(king_castle).castling_side, "kingside")
+        self.assertEqual(remove_command(35), "REMOVE")
         self.assertEqual(commit_plan_command(), "COMMIT")
 
     def test_planroute_rejects_wrap_bad_endpoint_and_malformed_header(self):
@@ -135,6 +137,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("JOG W+"), CommandRisk.MOTION)
         self.assertEqual(classify_command("PLAN e2e4---"), CommandRisk.MOTION)
         self.assertEqual(classify_command("DRAG e2e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("REMOVE"), CommandRisk.MOTION)
         self.assertEqual(classify_command("COMMIT"), CommandRisk.MOTION)
         self.assertEqual(classify_command("GEOMETRY"), CommandRisk.READ_ONLY)
         self.assertEqual(classify_command("ALIGN STATUS"), CommandRisk.READ_ONLY)
