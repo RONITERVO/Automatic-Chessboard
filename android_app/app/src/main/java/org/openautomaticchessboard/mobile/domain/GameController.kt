@@ -324,7 +324,11 @@ class GameController(
             routePhase = RoutePhase.SNAPSHOT
             routeGeneration++
             routeSnapshotRequestedMs = System.currentTimeMillis()
-            status = "Reading board for collision-safe routing…"
+            status = if (appControlled) {
+                "Checking a fresh virtual board snapshot for collision-safe routing…"
+            } else {
+                "Reading all 64 sensors for collision-safe routing…"
+            }
             channel.sendCommand("BOARD")
                 .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
                 .onFailure { failRoute(it.message ?: "Could not request the board snapshot") }
@@ -364,6 +368,20 @@ class GameController(
 
     private fun handleRouteBoard(): Boolean {
         if (routePhase == RoutePhase.SNAPSHOT) {
+            val updatedMs = channel.sensorUpdatedMs
+            if (updatedMs == null || updatedMs < routeSnapshotRequestedMs) {
+                cancelRouteTimeout()
+                routeSnapshotRequestedMs = System.currentTimeMillis()
+                status = if (appControlled) {
+                    "Refreshing the virtual board snapshot for collision-safe routing…"
+                } else {
+                    "Refreshing all 64 sensors for collision-safe routing…"
+                }
+                channel.sendCommand("BOARD")
+                    .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "fresh BOARD snapshot") }
+                    .onFailure { failRoute(it.message ?: "Could not refresh the board snapshot") }
+                return true
+            }
             cancelRouteTimeout()
             startRoutePlanning()
             return true
@@ -450,7 +468,7 @@ class GameController(
         val sensorUpdatedMs = channel.sensorUpdatedMs
         val expected = logicalOccupancy()
         if (sensorUpdatedMs == null || sensorUpdatedMs < routeSnapshotRequestedMs) {
-            failRoute("The board snapshot was stale; request a fresh sensor frame")
+            failRoute("The requested fresh board snapshot was not received")
             return
         }
         if (sensors == null || sensors != expected) {

@@ -88,9 +88,12 @@ in the UI. The Nano seeds and independently updates a virtual standard-position
 occupancy frame; `BOARD` exposes that command-derived frame so the existing
 transaction comparison remains intact without sampling reed inputs. After
 `DONE`, Windows previews the intended result and blocks all further moves until
-the user visually confirms the whole physical board. Mismatch or connection
-loss sends `STOP`, invalidates the logical session, and requires inspection and
-recalibration. Code must never auto-switch authority based on sensor quality.
+the user visually confirms the whole physical board. A mismatch sends `STOP` on
+a best-effort basis while transport remains available. After connection loss,
+Windows invalidates the logical session without claiming that `STOP` was
+delivered. Both cases require physical inspection and recalibration through the
+established recovery procedure. Code must never auto-switch authority based on
+sensor quality.
 
 ## Threading
 

@@ -134,7 +134,8 @@ centres and issuing separate straight `DRAG` operations.
 Choose **Verified reed switches** for the existing sensor-backed game. Choose
 **Move by tapping app** for a board with missing or unreliable switches. The
 latter requires the standard physical starting position, firmware 4.6, and no
-manual board moves: tap the source and destination on the Play board and the
+manual board movement except when the app explicitly prompts you to replace a
+piece after promotion. Tap the source and destination on the Play board and the
 mechanism performs the human move as well as the Stockfish reply. Both sides use
 the full collision-safe planner. After every chess move the app previews the
 result and asks the person at the board to confirm the complete physical
