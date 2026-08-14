@@ -267,6 +267,10 @@ prefers the current or a lower rank and uses only the previously validated
 white-edge outside lane; it never tries the unvalidated outer black-side lane.
 If no route is clear, standalone play uses the same `MANUAL` instruction and
 sensor-verified continuation instead of risking a collision.
+Manual captures are deliberately two-stage: remove the displayed captured
+square and press A, then perform the displayed AI move and press A again. This
+lets occupancy-only reed switches prove that the destination was actually
+emptied before the AI piece replaced it.
 
 For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the

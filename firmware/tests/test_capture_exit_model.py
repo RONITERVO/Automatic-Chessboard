@@ -29,6 +29,12 @@ def find_exit_rank(occupied, file, source_rank):
     return 0
 
 
+def manual_capture_states(occupied, source, target, captured):
+    after_removal = occupied - {captured}
+    after_placement = (after_removal - {source}) | {target}
+    return after_removal, after_placement
+
+
 class CaptureExitModelTests(unittest.TestCase):
     def test_uses_current_lane_when_clear(self):
         self.assertEqual(find_exit_rank({(4, 4)}, 4, 4), 4)
@@ -56,6 +62,20 @@ class CaptureExitModelTests(unittest.TestCase):
     def test_rank_one_uses_only_the_validated_outer_white_lane(self):
         occupied = {(5, 1), (1, 2), (2, 2), (3, 2), (4, 2)}
         self.assertEqual(find_exit_rank(occupied, 5, 1), 1)
+
+    def test_manual_ordinary_capture_has_an_empty_intermediate_target(self):
+        removal, placement = manual_capture_states(
+            {("b", 6), ("c", 4)}, ("b", 6), ("c", 4), ("c", 4)
+        )
+        self.assertEqual(removal, {("b", 6)})
+        self.assertEqual(placement, {("c", 4)})
+
+    def test_manual_en_passant_verifies_all_three_changed_squares(self):
+        removal, placement = manual_capture_states(
+            {("b", 4), ("c", 4)}, ("b", 4), ("c", 3), ("c", 4)
+        )
+        self.assertEqual(removal, {("b", 4)})
+        self.assertEqual(placement, {("c", 3)})
 
 
 if __name__ == "__main__":

@@ -157,6 +157,14 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
     if (move_flags != 'L') return false;
     manual_move = true;
   }
+  if (manual_move && capture_rank) {
+    // Verify a manual capture in two observable phases. The target must first
+    // become empty; only then may the player place the AI piece there.
+    move_from = (8 - capture_rank) * 8 + arrival_column;
+    setBoardSquare(reed_sensor_status, 8 - capture_rank,
+                   arrival_column, false);
+    return true;
+  }
 
   if (!manual_move) {
     if (destination_occupied) {
@@ -209,5 +217,6 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
 }
 
 boolean blackPlayerMovement() {
+  move_from = NO_SQUARE;
   return computerPlayerMovement(lastM, 'L');
 }

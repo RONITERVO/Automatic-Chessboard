@@ -86,10 +86,27 @@ void showCalibrationReferenceFault() {
 void showAiSensorMismatch() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("MANUAL "));
-  printMove(lastM);
+  if (move_from == NO_SQUARE) {
+    lcd.print(F("MANUAL "));
+    printMove(lastM);
+  }
+  else {
+    lcd.print(F("REMOVE "));
+    printSquare(move_from);
+  }
   lcd.setCursor(0, 1);
   lcd.print(F("A=CHECK B=MENU"));
+}
+
+void prepareManualAiPlacement() {
+  byte from_file = lastM[0] - 'a';
+  byte from_row = 8 - (lastM[1] - '0');
+  byte to_file = lastM[2] - 'a';
+  byte to_row = 8 - (lastM[3] - '0');
+  setBoardSquare(reed_sensor_status, from_row, from_file, false);
+  setBoardSquare(reed_sensor_status, to_row, to_file, true);
+  move_from = NO_SQUARE;
+  showAiSensorMismatch();
 }
 
 void showPendingMove() {

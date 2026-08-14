@@ -27,13 +27,17 @@ every square touching that lane to the left is empty. Current/lower ranks are
 preferred, the known white-edge outside lane is allowed, and the unvalidated
 outer black-side lane is never used. If no verified exit exists, local play
 requests the complete move manually and verifies the resulting occupancy.
+Manual captures use two sensor-verified phases: `REMOVE` the captured square
+and press A, then make the displayed `MANUAL` AI move and press A again. The
+empty intermediate target closes the ordinary-capture identity ambiguity that
+cannot be detected when a destination is occupied both before and after.
 
 Firmware 4.3 added an explicit `mks-gen-l-v1` build profile for the integrated
 ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains tight 29064-byte flash / 1118-byte SRAM budgets.
+the default and retains tight 29280-byte flash / 1118-byte SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,

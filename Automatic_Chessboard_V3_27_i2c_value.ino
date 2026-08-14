@@ -299,8 +299,11 @@ void loop() {
     case ai_sensor_check:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
         if (physicalSensorsMatchExpected()) {
-          syncSensorState();
-          beginHumanTurn();
+          if (move_from != NO_SQUARE) prepareManualAiPlacement();
+          else {
+            syncSensorState();
+            beginHumanTurn();
+          }
         }
         else showAiSensorMismatch();
       }
