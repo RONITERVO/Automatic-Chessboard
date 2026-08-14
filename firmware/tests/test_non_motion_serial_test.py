@@ -80,6 +80,13 @@ class NonMotionSerialTestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "do not match"):
             ReadOnlyNanoProbe(FakeSerial(responses), timeout_seconds=0.1).run(samples=1)
 
+    def test_mismatched_hello_echo_stops_before_info(self):
+        fake = FakeSerial({HELLO_COMMAND: ["HELLO 4.8.0"]})
+        with self.assertRaisesRegex(RuntimeError, "HELLO 4.8.0"):
+            ReadOnlyNanoProbe(fake, timeout_seconds=0.1).run(samples=1)
+        self.assertEqual([HELLO_COMMAND], fake.commands)
+        self.assertNotIn("INFO", fake.commands)
+
     def test_malformed_or_unsafe_responses_fail(self):
         for value in ("BOARD 123", "BOARD GGGG000000000000", "BOARD 00000000000000000"):
             with self.assertRaises(ValueError):

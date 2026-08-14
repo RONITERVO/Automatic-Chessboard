@@ -78,6 +78,25 @@ class GameSessionGenerationTests(unittest.TestCase):
         self.assertTrue(app.route_snapshot_request_sent)
         self.assertGreater(app.route_deadline, 0.0)
 
+    def test_emergency_halt_reports_a_failed_write(self):
+        app = AutomaticChessboardApp.__new__(AutomaticChessboardApp)
+        app.transport = SimpleNamespace(is_connected=True)
+        app._send = lambda command, quiet=False: False
+        app._invalidate_game_session = lambda: None
+        app._reset_route_orchestration = lambda clear_pending: None
+        app.motion_expected = True
+        app.session_active = True
+        app.game_status = _Value()
+        recorded = []
+        app.recorder = SimpleNamespace(record=lambda *args: recorded.append(args))
+
+        app._emergency_halt()
+
+        self.assertIn("NOT DELIVERED", app.game_status.value)
+        self.assertEqual([("safety", "remote_halt_failed")], recorded)
+        self.assertFalse(app.motion_expected)
+        self.assertFalse(app.session_active)
+
 
 if __name__ == "__main__":
     unittest.main()

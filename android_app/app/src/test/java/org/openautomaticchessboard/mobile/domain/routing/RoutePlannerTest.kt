@@ -125,6 +125,7 @@ class RoutePlannerTest {
 
         plan.validate()
         val commands = plan.protocolCommands()
+        assertTrue("REMOVE must be present in a deferred capture plan", "REMOVE" in commands)
         val removeIndex = commands.indexOf("REMOVE")
         assertTrue(commands.subList(2, removeIndex).any { it.startsWith("DRAG ") })
         assertEquals("BOARD", commands[removeIndex + 1])
@@ -154,6 +155,8 @@ class RoutePlannerTest {
         assertEquals(parseSquare("a3"), plan.capturePath.last())
         val commands = plan.protocolCommands()
         assertFalse("DRAG a4a5" in commands)
+        assertTrue("The edge-lane drag must be present", "DRAG e3a3" in commands)
+        assertTrue("REMOVE must be present in a deferred capture plan", "REMOVE" in commands)
         assertTrue(commands.indexOf("DRAG e3a3") < commands.indexOf("REMOVE"))
     }
 

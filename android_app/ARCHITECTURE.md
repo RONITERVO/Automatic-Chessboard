@@ -70,7 +70,7 @@ standard castling sides are adapted before search. Capture removal is a search
 transition containing a tracked carried
 path to any available `a1`-`a8` exit. A winding empty route requires no temporary
 piece movement; only a genuinely disconnected edge invokes ordinary recursive
-parking. Version 5.0 has no legacy routing branch.
+parking. Version 5.0.1 has no legacy routing branch.
 
 ## Route transaction
 

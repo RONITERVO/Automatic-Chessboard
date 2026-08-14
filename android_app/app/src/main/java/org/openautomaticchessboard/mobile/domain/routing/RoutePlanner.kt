@@ -262,6 +262,16 @@ private data class ReconstructedPlan(
     val capturePath: List<Int>,
 )
 private data class SearchEntry(val priority: Long, val tie: Long, val cost: Long, val state: SearchState)
+private data class CaptureLane(
+    val blockerCount: Int,
+    val preference: Int,
+    val forbidden: Set<Int>,
+    val blockers: List<Int>,
+)
+private data class CaptureLaneSelection(
+    val immediate: SearchAction? = null,
+    val lanes: List<CaptureLane> = emptyList(),
+)
 private enum class SearchMode { FOCUSED, BROAD, EXHAUSTIVE }
 
 class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) {
@@ -540,41 +550,15 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         val occupant = state.positions.values.mapIndexed { index, square -> square to index }
             .toMap().toMutableMap()
         occupant[capture] = -1
-        val occupied = occupant.keys
-        data class Lane(
-            val blockerCount: Int,
-            val preference: Int,
-            val forbidden: Set<Int>,
-            val blockers: List<Int>,
-        )
-        val lanes = if (problem.edgeCaptureExit) {
-            relaxedCorridors(
-                capture, CAPTURE_EDGE_EXITS, occupant, -1, config.corridorCandidates,
-            ).mapIndexed { preference, corridor ->
-                val blockers = corridor.drop(1).mapNotNull(occupant::get)
-                    .filter { it >= 0 }.distinct().sorted()
-                if (blockers.isEmpty()) {
-                    val turns = routeTurns(corridor)
-                    val drags = if (corridor.size > 1) turns + 1 else 0
-                    val cost = (drags + 1) * PICKUP_COST +
-                        (corridor.size - 1) * STEP_COST + turns * TURN_COST +
-                        clearanceRisk(corridor, occupied - capture)
-                    return listOf(SearchAction(-1, corridor.last(), corridor, "capture", cost))
-                }
-                Lane(blockers.size, preference, corridor.toSet(), blockers)
-            }
+        val occupied = occupant.keys.toSet()
+        val selection = if (problem.edgeCaptureExit) {
+            edgeCaptureLanes(capture, occupant, occupied)
         } else {
-            captureExitRanks(capture).mapIndexed { preference, rank ->
-                val clearance = captureClearanceSquares(capture, rank)
-                val blockers = clearance.mapNotNull(occupant::get).filter { it >= 0 }.distinct().sorted()
-                if (blockers.isEmpty()) {
-                    return listOf(SearchAction(-1, capture, emptyList(), "capture", PICKUP_COST))
-                }
-                Lane(blockers.size, preference, clearance + capture, blockers)
-            }
+            legacyCaptureLanes(capture, occupant)
         }
+        selection.immediate?.let { return listOf(it) }
         val actions = mutableMapOf<Pair<Int, Int>, SearchAction>()
-        lanes.sortedWith(compareBy<Lane> { it.blockerCount }.thenBy { it.preference })
+        selection.lanes.sortedWith(compareBy<CaptureLane> { it.blockerCount }.thenBy { it.preference })
             .take(config.corridorCandidates)
             .forEach { lane ->
                 addDependencyActions(
@@ -613,6 +597,48 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         return actions.values.sortedWith(
             compareBy<SearchAction> { it.cost }.thenBy { it.pieceIndex }.thenBy { it.target },
         )
+    }
+
+    private fun edgeCaptureLanes(
+        capture: Int,
+        occupant: Map<Int, Int>,
+        occupied: Set<Int>,
+    ): CaptureLaneSelection {
+        val lanes = mutableListOf<CaptureLane>()
+        relaxedCorridors(
+            capture, CAPTURE_EDGE_EXITS, occupant, -1, config.corridorCandidates,
+        ).forEachIndexed { preference, corridor ->
+            val blockers = corridor.drop(1).mapNotNull(occupant::get)
+                .filter { it >= 0 }.distinct().sorted()
+            if (blockers.isEmpty()) {
+                val turns = routeTurns(corridor)
+                val drags = if (corridor.size > 1) turns + 1 else 0
+                val cost = (drags + 1) * PICKUP_COST +
+                    (corridor.size - 1) * STEP_COST + turns * TURN_COST +
+                    clearanceRisk(corridor, occupied - capture)
+                return CaptureLaneSelection(
+                    SearchAction(-1, corridor.last(), corridor, "capture", cost),
+                )
+            }
+            lanes += CaptureLane(blockers.size, preference, corridor.toSet(), blockers)
+        }
+        return CaptureLaneSelection(lanes = lanes)
+    }
+
+    private fun legacyCaptureLanes(
+        capture: Int,
+        occupant: Map<Int, Int>,
+    ): CaptureLaneSelection {
+        val lanes = mutableListOf<CaptureLane>()
+        captureExitRanks(capture).forEachIndexed { preference, rank ->
+            val clearance = captureClearanceSquares(capture, rank)
+            val blockers = clearance.mapNotNull(occupant::get).filter { it >= 0 }.distinct().sorted()
+            if (blockers.isEmpty()) {
+                return CaptureLaneSelection(SearchAction(-1, capture, emptyList(), "capture", PICKUP_COST))
+            }
+            lanes += CaptureLane(blockers.size, preference, clearance + capture, blockers)
+        }
+        return CaptureLaneSelection(lanes = lanes)
     }
 
     private fun addDependencyActions(

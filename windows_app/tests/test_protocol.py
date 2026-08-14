@@ -55,12 +55,17 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(info.firmware, "5.0.1")
         self.assertTrue(info.compatible)
         self.assertIn("ESTOP", info.capabilities)
-        self.assertEqual(
-            parse_info(parse_event("INFO ACB3 5.0.1 MKS_GEN_L_V1")).hardware,
-            "MKS_GEN_L_V1",
-        )
+        mks = parse_info(parse_event("INFO ACB3 5.0.1 MKS_GEN_L_V1"))
+        self.assertEqual(mks.protocol, "ACB3")
+        self.assertEqual(mks.firmware, "5.0.1")
+        self.assertEqual(mks.hardware, "MKS_GEN_L_V1")
+        self.assertTrue(mks.compatible)
+        legacy = parse_info(parse_event("INFO ACB2 4.8.0 NANO"))
+        self.assertEqual(legacy.protocol, "ACB2")
+        self.assertEqual(legacy.firmware, "4.8.0")
+        self.assertFalse(legacy.compatible)
         with self.assertRaises(ValueError):
-            parse_info(parse_event("INFO ACB2 4.8.0 BOARD,TELEM"))
+            parse_info(parse_event("INFO ACB3 5.0.1 UNKNOWN"))
         telemetry = parse_telemetry(
             parse_event("TELEM ACB3 17 1 1 0 0 5 6 1 1 1023 847 65")
         )

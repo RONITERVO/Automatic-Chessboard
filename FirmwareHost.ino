@@ -10,7 +10,13 @@ void sendHostError(const __FlashStringHelper *message) {
 int freeRam() {
   extern int __heap_start, *__brkval;
   int stack_top;
-  return (int)&stack_top - (__brkval ? (int)__brkval : (int)&__heap_start);
+  int available = (int)&stack_top -
+                  (__brkval ? (int)__brkval : (int)&__heap_start);
+  if (available < minimum_free_ram) {
+    minimum_free_ram = available;
+    return available;
+  }
+  return minimum_free_ram;
 }
 
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
@@ -57,6 +63,8 @@ void sendTelemetry() {
   Serial.print(' ');
   Serial.print(black_raw);
   Serial.print(' ');
+  // Report a boot-lifetime low-water mark so short-lived route/BFS stack peaks
+  // remain visible after the move has completed.
   Serial.print(freeRam());
   Serial.print(' ');
   Serial.println(millis() / 1000UL);

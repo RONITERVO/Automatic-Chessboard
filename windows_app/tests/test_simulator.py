@@ -39,6 +39,33 @@ class SimulatorTests(unittest.TestCase):
         self.assertNotIn("CALIBRATED e6", lines)
         transport.close()
 
+    def test_handshake_is_case_sensitive_like_firmware(self):
+        lines = []
+        transport = _SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("hello 5.0.1")
+        transport.send("CALIBRATE")
+        self.wait_for(lines, lambda values: values.count("ERR VERSION") >= 2)
+        self.assertNotIn("CALIBRATED e6", lines)
+        transport.close()
+
+    def test_remove_fails_closed_when_faulted_or_unhomed(self):
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport._plan_move = object()
+        transport._plan_capture = 35
+        transport._physical_squares.add(35)
+        transport._homed = False
+        transport.send("REMOVE")
+        self.wait_for(lines, lambda values: "ERR CALIBRATE" in values)
+        transport._homed = True
+        transport._fault = True
+        transport.send("REMOVE")
+        self.wait_for(lines, lambda values: "ERR FAULT" in values)
+        self.assertIn(35, transport._physical_squares)
+        transport.close()
+
     def test_safe_monitor_commands(self):
         lines = []
 

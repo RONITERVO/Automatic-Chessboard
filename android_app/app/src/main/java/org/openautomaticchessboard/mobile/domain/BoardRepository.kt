@@ -38,10 +38,11 @@ class BoardRepository(private val recorder: EventRecorder) :
     private var lastPeriodicPollMs = 0L
     private var motionStartedMs: Long? = null
     private var routeExclusive = false
+    @Volatile private var helloAgreed = false
     @Volatile var state = MonitorState()
         private set
 
-    override val softwareCompatible: Boolean get() = state.firmware?.compatible == true
+    override val softwareCompatible: Boolean get() = helloAgreed && state.firmware?.compatible == true
     override val physicalOccupancy: Set<Int>? get() = state.sensorSquares
     override val sensorUpdatedMs: Long? get() = state.sensorUpdatedMs
     override val connected: Boolean get() = state.connected
@@ -66,6 +67,7 @@ class BoardRepository(private val recorder: EventRecorder) :
             responseCounts.clear()
             motionStartedMs = null
             routeExclusive = false
+            helloAgreed = false
             state = state.copy(
                 connected = false, connectionText = "Connecting\u2026", firmware = null, lastError = "",
             )
@@ -86,6 +88,7 @@ class BoardRepository(private val recorder: EventRecorder) :
             requestQueue.clear()
             motionStartedMs = null
             routeExclusive = false
+            helloAgreed = false
             state = state.copy(
                 connected = false, connectionText = "Disconnected", firmware = null, motionExpected = false,
             )
@@ -150,7 +153,7 @@ class BoardRepository(private val recorder: EventRecorder) :
             "Route transaction commands are reserved for verified game orchestration"
         }
         if (risk !in setOf(CommandRisk.READ_ONLY, CommandRisk.EMERGENCY) && verb != "STOP") {
-            check(state.firmware?.compatible == true) {
+            check(softwareCompatible) {
                 "Install version ${Protocol.SOFTWARE_VERSION} on both the app and Nano, then reconnect"
             }
         }
@@ -180,7 +183,7 @@ class BoardRepository(private val recorder: EventRecorder) :
         synchronized(stateLock) {
             val active = transport ?: error("Connect to the board first")
             check(active.isConnected) { "Board connection is not ready" }
-            check(state.firmware?.compatible == true) {
+            check(softwareCompatible) {
                 "App and Nano must both run ${Protocol.SOFTWARE_VERSION}"
             }
             check(!routeExclusive) { "Another route transaction is active" }
@@ -338,6 +341,7 @@ class BoardRepository(private val recorder: EventRecorder) :
                     requestQueue.clear()
                     motionStartedMs = null
                     routeExclusive = false
+                    helloAgreed = false
                 }
                 state = state.copy(
                     connected = connected,
@@ -360,11 +364,15 @@ class BoardRepository(private val recorder: EventRecorder) :
             addTimeline("RX", event.kind, event.args.joinToString(" "))
             synchronized(stateLock) {
                 val now = System.currentTimeMillis()
-                val responseKind = if (
-                    event.kind == "ERR" && event.args.firstOrNull() == "VERSION" && pending?.expected == "HELLO"
-                ) "HELLO" else event.kind
-                responseCounts[responseKind] = (responseCounts[responseKind] ?: 0) + 1
-                val requestStartedMs = pending?.takeIf { it.expected == responseKind }?.startedMs
+                val validHello = event.kind == "HELLO" && event.args == listOf(Protocol.SOFTWARE_VERSION)
+                if (event.kind == "HELLO") helloAgreed = validHello
+                if (event.kind == "ERR" && event.args.firstOrNull() == "VERSION") helloAgreed = false
+                if (event.kind != "HELLO" || validHello) {
+                    responseCounts[event.kind] = (responseCounts[event.kind] ?: 0) + 1
+                }
+                val requestStartedMs = pending?.takeIf {
+                    it.expected == event.kind && (event.kind != "HELLO" || validHello)
+                }?.startedMs
                 if (requestStartedMs != null) pending = null
                 var next = state.copy(connected = true, lastSeenMs = now)
                 try {
@@ -373,23 +381,39 @@ class BoardRepository(private val recorder: EventRecorder) :
                             val info = Protocol.parseInfo(event)
                             next.copy(
                                 firmware = info,
-                                lastError = if (info.compatible) "" else
-                                    "App ${Protocol.SOFTWARE_VERSION} and firmware ${info.firmware} do not match",
+                                lastError = when {
+                                    !info.compatible ->
+                                        "App ${Protocol.SOFTWARE_VERSION} and firmware ${info.firmware} do not match"
+                                    helloAgreed -> ""
+                                    else -> next.lastError
+                                },
                             )
                         }
                         "TELEM" -> {
                             val telemetry = Protocol.parseTelemetry(event)
                             val moving = telemetry.sequence in setOf(3, 19, 20)
                             motionStartedMs = if (moving) motionStartedMs ?: now else null
-                            next.copy(telemetry = telemetry, motionExpected = moving, lastError = "")
+                            next.copy(
+                                telemetry = telemetry,
+                                motionExpected = moving,
+                                lastError = if (helloAgreed) "" else next.lastError,
+                            )
                         }
                         "BOARD" -> if (event.args.isNotEmpty()) next.copy(
                             sensorHex = event.args[0],
                             sensorSquares = Protocol.parseBoardHex(event.args[0]),
                             sensorUpdatedMs = requestStartedMs ?: now,
-                            lastError = "",
+                            lastError = if (helloAgreed) "" else next.lastError,
                         ) else next
-                        "READY", "HELLO" -> next.copy(connectionText = "Board connected and responding")
+                        "READY" -> next.copy(connectionText = "Board connected and responding")
+                        "HELLO" -> if (validHello) {
+                            next.copy(connectionText = "Board connected and responding", lastError = "")
+                        } else {
+                            next.copy(
+                                lastError = "App ${Protocol.SOFTWARE_VERSION} and board reply " +
+                                    "${event.raw.ifBlank { "HELLO" }} do not match",
+                            )
+                        }
                         "SETUP", "SESSION", "TURN", "DONE", "MOVED", "REMOVED", "CALIBRATED", "ALIGN", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
@@ -404,7 +428,11 @@ class BoardRepository(private val recorder: EventRecorder) :
                     next = next.copy(lastError = error.message ?: "Malformed board response")
                     recorder.record("protocol", "parse_error", mapOf("line" to line, "error" to error.toString()))
                 }
-                if (event.kind == "ERR") next = next.copy(lastError = event.args.joinToString(" "))
+                if (event.kind == "ERR") {
+                    next = next.copy(lastError = if (event.args.firstOrNull() == "VERSION") {
+                        "App ${Protocol.SOFTWARE_VERSION} and board handshake do not match"
+                    } else event.args.joinToString(" "))
+                }
                 state = next
                 stateLock.notifyAll()
             }

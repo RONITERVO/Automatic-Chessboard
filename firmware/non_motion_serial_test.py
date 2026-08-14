@@ -94,8 +94,11 @@ class ReadOnlyNanoProbe:
     def run(self, samples: int = 20) -> ProbeResult:
         if samples < 1:
             raise ValueError("samples must be positive")
-        if self.command(HELLO_COMMAND, "HELLO ") != HELLO_COMMAND:
-            raise ValueError("Unexpected HELLO response")
+        hello = self.command(HELLO_COMMAND, "HELLO ")
+        if hello != HELLO_COMMAND:
+            raise RuntimeError(
+                f"Unexpected HELLO response {hello!r}; expected {HELLO_COMMAND!r}"
+            )
         firmware, hardware = parse_info(self.command("INFO", "INFO "))
         if firmware != SOFTWARE_VERSION:
             raise RuntimeError(

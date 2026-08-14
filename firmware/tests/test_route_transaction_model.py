@@ -157,6 +157,15 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertEqual(frozenset({square_index('b1')}), incomplete.expected)
         self.assertNotEqual(frozenset({target}), incomplete.expected)
 
+    def test_capture_pending_cannot_be_silently_committed(self):
+        model = MotionlessRouteExecutor({square_index("c6"), square_index("e5")})
+        model.begin("PLAN c6e5-e5")
+        model.drag("DRAG e5e4")
+        assert_error(self, "PLAN INCOMPLETE", model.commit)
+        self.assertTrue(model.active)
+        self.assertIn(square_index("e4"), model.observed)
+        self.assertIn(square_index("e4"), model.expected)
+
     def test_pre_plan_pre_drag_and_post_drag_sensor_faults(self):
         stale = MotionlessRouteExecutor({square_index("a1")})
         stale.set_observed({square_index("a2")})

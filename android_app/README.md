@@ -38,9 +38,11 @@ The phone plans automatic moves as labeled board
 rearrangements. It can evacuate and restore blockers, stage the main piece while
 a return corridor is used, and recursively free trapped blockers. Carried paths
 are orthogonal and turning paths become separate straight drags at square
-centres. The phone and Nano both verify all 64 occupancy switches after capture
-removal and every drag. A timeout or disconnect after physical motion stops the
-session and requires inspection; it is never retried from an assumed state.
+centres. After capture removal and every drag, Reed mode verifies all 64 physical
+switches; App mode verifies the Nano's independently maintained virtual occupancy
+and then requires whole-board visual confirmation after the completed chess move.
+A timeout or disconnect after physical motion stops the session and requires
+inspection; it is never retried from an assumed state.
 
 For captures, a piece is routed through empty square
 centres to any available position beside `a1`-`a8`. A route around obstacles is
@@ -49,7 +51,7 @@ when every edge exit is disconnected.
 
 The **Route** button on the Play page adjusts the bounded search duration and
 maximum number of temporarily moved pieces without adding a scrolling settings
-page. Version 5.0 always uses the verified route transaction and refuses motion
+page. Version 5.0.1 always uses the verified route transaction and refuses motion
 until app and Nano report the same exact software version.
 
 No page contains a `ScrollView`, horizontally scrolling container, or vertically

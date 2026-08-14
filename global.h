@@ -37,6 +37,8 @@ extern byte trolley_coordinate_Y;
 extern boolean trolley_homed;
 extern boolean motion_fault;
 extern boolean magnet_state;
+extern int minimum_free_ram;
+int freeRam();
 
 extern char mov[5];
 

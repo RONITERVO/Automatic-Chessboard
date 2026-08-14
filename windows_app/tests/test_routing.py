@@ -171,7 +171,7 @@ class RearrangementPlannerTests(unittest.TestCase):
             deferred_capture=True,
         )
 
-        plan = self.planner(max_nodes=500_000).plan(problem)
+        plan = self.planner(time_limit_s=15.0, max_nodes=500_000).plan(problem)
 
         self.assert_valid(plan)
         commands = plan.protocol_commands()
@@ -193,7 +193,7 @@ class RearrangementPlannerTests(unittest.TestCase):
             edge_capture_exit=True,
         )
 
-        plan = self.planner(max_nodes=500_000).plan(problem)
+        plan = self.planner(time_limit_s=15.0, max_nodes=500_000).plan(problem)
 
         self.assert_valid(plan)
         self.assertEqual(plan.temporary_piece_count, 0)

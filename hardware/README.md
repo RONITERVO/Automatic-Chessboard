@@ -1,6 +1,6 @@
 # Hardware build guide
 
-This folder is the electrical build contract for firmware **4.6.0**. It is
+This folder is the electrical build contract for firmware **5.0.1**. It is
 intended to be detailed enough for a school lab or first-time builder without
 pretending that the prototype PCB is a manufacturing-ready product.
 

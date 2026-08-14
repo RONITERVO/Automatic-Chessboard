@@ -339,10 +339,10 @@ class SimulatorTransport:
             self._clear_plan()
             self._clear_alignment()
             self._emit("ESTOP REMOTE")
-        elif upper == f"HELLO {SOFTWARE_VERSION}":
+        elif text == f"HELLO {SOFTWARE_VERSION}":
             self._version_agreed = True
             self._emit(f"HELLO {SOFTWARE_VERSION}")
-        elif upper.startswith("HELLO"):
+        elif text.startswith("HELLO"):
             self._version_agreed = False
             self._emit("ERR VERSION")
         elif not self._version_agreed and upper not in {"INFO", "TELEM", "BOARD", "STOP"}:
@@ -459,6 +459,10 @@ class SimulatorTransport:
             try:
                 from routing import find_empty_path
 
+                if self._fault:
+                    raise RuntimeError("FAULT")
+                if not self._homed:
+                    raise RuntimeError("CALIBRATE")
                 if self._plan_move is None or self._plan_capture is None:
                     raise RuntimeError("NO CAPTURE")
                 capture = self._plan_capture

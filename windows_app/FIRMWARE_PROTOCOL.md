@@ -1,7 +1,7 @@
-# Firmware protocol 5.0
+# Firmware protocol 5.0.1
 
 The Nano uses newline-terminated printable ASCII at 9600 baud over USB and the
-HC-08 transparent BLE link. Version 5.0 is one coordinated firmware/companion
+HC-08 transparent BLE link. Version 5.0.1 is one coordinated firmware/companion
 contract; it does not negotiate old capability sets or fall back to old motion
 commands.
 
@@ -17,7 +17,7 @@ command:
 < INFO ACB3 5.0.1 NANO
 ```
 
-The MKS build reports `MKS`; simulators report `SIM`. A different `HELLO`
+The MKS build reports `MKS_GEN_L_V1`; simulators report `SIM`. A different `HELLO`
 version returns `ERR VERSION` and clears that transport's agreement. `INFO`,
 `TELEM`, and `BOARD` remain readable before agreement. `STOP` and the byte-level
 `!` emergency halt also remain available so a mismatched tool can make a
@@ -46,7 +46,8 @@ TELEM ACB3 sequence homed remote fault magnet x y a_released b_released b_raw fr
 
 `remote` is `0` for standalone/idle, `1` for reed-authoritative companion play,
 and `2` for app-authoritative play. A reported trolley square is a calculated
-coordinate, not encoder feedback.
+coordinate, not encoder feedback. `free_ram` is the minimum free SRAM observed
+since boot, so temporary route-search stack peaks remain visible afterward.
 
 All ordinary read-only requests must be serialized. BLE is slow enough that
 multiple outstanding polls otherwise become stale and ambiguous.

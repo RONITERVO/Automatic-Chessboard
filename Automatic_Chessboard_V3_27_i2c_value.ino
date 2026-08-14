@@ -49,6 +49,7 @@ byte trolley_coordinate_Y = CALIBRATION_PARK_RANK;
 boolean trolley_homed = false;
 boolean motion_fault = false;
 boolean magnet_state = false;
+int minimum_free_ram = 32767;
 unsigned long magnet_on_since = 0;
 char mov[5] = {0, 0, 0, 0, 0};
 byte sequence = start_up;

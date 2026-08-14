@@ -390,8 +390,9 @@ def capture_clearance_squares(capture_square: int, exit_rank: int) -> frozenset[
         if rank != source_rank:
             required.add(file_index + (rank - 1) * 8)
 
-    # Match FirmwarePieces.ino exactly: the exit row to the left and, except
-    # at rank 1, the row immediately below the boundary lane must be clear.
+    # Reproduce the legacy 4.x clearance contract used when
+    # edge_capture_exit=False: the exit row to the left and, except at rank 1,
+    # the row immediately below the boundary lane must be clear.
     for column in range(file_index + 1):
         if column < file_index:
             required.add(column + (exit_rank - 1) * 8)

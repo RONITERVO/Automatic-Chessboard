@@ -20,6 +20,19 @@ class MonitorStateTest {
         assertTrue(state.guidance().contains("differ"))
     }
 
+    @Test fun incompatibleFirmwareIsBadWhenOccupancyMatches() {
+        val now = 10_000L
+        val state = MonitorState(
+            connected = true,
+            lastSeenMs = now,
+            firmware = FirmwareInfo("ACB2", "3.29", "NANO", setOf("BOARD")),
+            sensorSquares = MonitorState.initialOccupancy,
+            sensorUpdatedMs = now,
+        )
+        assertEquals("App/firmware version mismatch", state.health(now).first)
+        assertEquals(HealthLevel.BAD, state.health(now).second)
+    }
+
     @Test fun faultOutranksMismatch() {
         val telemetry = Telemetry(
             protocol = "ACB2", sequence = 10, homed = false, remoteMode = true,
@@ -50,7 +63,7 @@ class MonitorStateTest {
             lastSeenMs = now,
             firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("TELEM", "BOARD")),
             telemetry = Telemetry(
-                protocol = "ACB2", sequence = 1, homed = false, remoteMode = false,
+                protocol = "ACB3", sequence = 1, homed = false, remoteMode = false,
                 motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
                 buttonAReleased = true, buttonBReleased = true, buttonBRaw = 1023,
                 freeRam = 728, uptimeSeconds = 42,

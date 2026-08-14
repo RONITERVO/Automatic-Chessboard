@@ -10,6 +10,9 @@
 byte findEmptyPath(byte source, byte goal, byte ignored, byte *path) {
   byte parent[64];
   memset(parent, NO_SQUARE, sizeof(parent));
+  // This is the deepest shared routing workspace: callers also hold a 64-byte
+  // path buffer. Preserve that transient SRAM low-water mark for TELEM.
+  freeRam();
   byte head = 0;
   byte tail = 1;
   path[0] = source;

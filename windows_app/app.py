@@ -1916,13 +1916,17 @@ class AutomaticChessboardApp:
                 parent=self.root,
             )
             return
-        self._send("!", quiet=True)
+        delivered = self._send("!", quiet=True)
         self._invalidate_game_session()
         self.motion_expected = False
         self.session_active = False
         self._reset_route_orchestration(clear_pending=True)
-        self.game_status.set("REMOTE HALT SENT — verify locally; use physical power if motion continues")
-        self.recorder.record("safety", "remote_halt_sent")
+        if delivered:
+            self.game_status.set("REMOTE HALT SENT — verify locally; use physical power if motion continues")
+            self.recorder.record("safety", "remote_halt_sent")
+        else:
+            self.game_status.set("REMOTE HALT NOT DELIVERED — use the physical cutoff and inspect locally")
+            self.recorder.record("safety", "remote_halt_failed")
 
     def _resolve_human_move(self, text: str) -> chess.Move | None:
         candidates = [move for move in self.board.legal_moves if move.uci().startswith(text)]

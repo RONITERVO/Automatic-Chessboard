@@ -37,16 +37,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     override fun send(line: String) {
         check(isConnected) { "Simulator is disconnected" }
         val normalized = line.trim()
-        if (normalized == Protocol.helloCommand()) {
-            versionAgreed = true
-            emit(Protocol.helloCommand(), 30)
-            return
-        }
-        if (normalized.startsWith("HELLO")) {
-            versionAgreed = false
-            emit("ERR VERSION", 30)
-            return
-        }
+        if (handleHandshake(normalized)) return
         if (!versionAgreed && normalized !in setOf("!", "INFO", "TELEM", "BOARD", "STOP")) {
             emit("ERR VERSION", 30)
             return
@@ -196,6 +187,20 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         if (isConnected) listener.onLine(line)
     }, delay)
 
+    private fun handleHandshake(command: String): Boolean {
+        if (command == Protocol.helloCommand()) {
+            versionAgreed = true
+            emit(Protocol.helloCommand(), 30)
+            return true
+        }
+        if (command.startsWith("HELLO")) {
+            versionAgreed = false
+            emit("ERR VERSION", 30)
+            return true
+        }
+        return false
+    }
+
     private fun beginPlan(command: String) {
         if (fault) { emit("ERR FAULT", 30); return }
         if (!homed || sequence != 15 || plan != null) { emit("ERR NOT READY", 30); return }
@@ -229,6 +234,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
 
     private fun removeCapture() {
         if (fault) { emit("ERR FAULT", 30); return }
+        if (!homed) { emit("ERR CALIBRATE", 30); return }
         val activePlan = plan
         if (activePlan == null || planCaptureSquare == null) {
             emit("ERR NO CAPTURE", 30)

@@ -108,9 +108,11 @@ each one. Capture removal is an explicit verified transaction step. An
 `EDGEEXIT` companion routes the captured piece through empty square centres to
 any available position beside `a1` through `a8`, moving another piece only when
 all eight exits are genuinely disconnected. En passant, promotion
-occupancy, and standard castling are included. Version 5.0 deliberately removes
+occupancy, and standard castling are included. Version 5.0.1 deliberately removes
 the legacy `PLAY`, `PING`, and `STATUS` paths: both companion and Nano must run
-the same release before any control or motion command is accepted.
+the same release and complete the exact `HELLO 5.0.1` exchange before any normal
+control or motion command is accepted. `STOP` and the single-byte `!` emergency
+halt remain available before agreement for best-effort recovery.
 
 For local Micro-Max play, firmware 5.0.1 automatically carries knights and
 blocked direct moves through the shortest available sequence of empty,
