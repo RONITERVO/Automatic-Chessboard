@@ -37,6 +37,21 @@ coil current, piece alignment within a square, magnetic attraction between
 pieces, or an obstruction that does not change a reed switch. Orthogonal paths
 are intentionally conservative, but physical supervision remains required.
 
+## App-controlled play without reeds
+
+`APPBOARD` mode is an explicit loss of sensor proof, not a degraded automatic
+fallback. The app and Nano cross-check only the occupancy implied by commands.
+They cannot detect a dropped piece, missed step, accidental manual change, or a
+piece that never followed the magnet. Every human move must be selected in the
+app and every completed move must be compared visually with the preview before
+continuing. Never confirm through an obstructed, stale, or uncertain view.
+
+Choose mismatch for any doubt. The app stops and invalidates the game; inspect
+the entire board and recalibrate before starting over. A disconnect invalidates
+the mode even when no movement was in progress. Do not move pieces manually
+except for a prompted promotion replacement, and never switch to or from reed
+authority inside a game.
+
 ## Uncertain transaction recovery
 
 Before the first physical action, an unchanged route transaction can be

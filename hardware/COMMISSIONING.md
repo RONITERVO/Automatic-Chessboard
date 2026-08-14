@@ -50,7 +50,7 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 4.5.0 and fresh telemetry.
+6. Verify the monitor reports firmware 4.6.0 and fresh telemetry.
 
 For a differently sized or positioned playing field, finish normal switch and
 motion commissioning first, then use **Board alignment** on Windows or **Move >

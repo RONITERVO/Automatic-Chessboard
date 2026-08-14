@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.5.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.6.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.5.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN
+< INFO ACB2 4.6.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,DEVPATH,DEVJOG,ALIGN
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -41,6 +41,11 @@ retains `PLAY` as a compatibility fallback for firmware 4.0 and earlier.
 1. Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a
 magnetic piece. It contains no piece-type or colour information. Firmware
 applies the fixed hardware row map before producing this snapshot.
+
+During an `APPBOARD` session, `BOARD` instead contains the Nano's command-derived
+virtual occupancy. Reed inputs are not sampled for game decisions. The client
+already knows it requested this mode and must label the frame as virtual rather
+than presenting it as sensor evidence.
 
 `TELEM` fields are positional to minimize Nano memory:
 
@@ -104,7 +109,7 @@ PLAN <from><to><mode><capture-square-or-->
 - `DRAG` endpoints must share a file or rank. Every intermediate square must be
   empty. A turning host route is split at square centres, where the magnet is
   released and reacquired for the next straight run.
-- The Nano checks its complete 64-square frame before accepting `PLAN`, before
+- In normal mode the Nano checks its complete 64-square frame before accepting `PLAN`, before
   each `DRAG`, after every physical move, and before `COMMIT`.
 - Windows independently requests and checks `BOARD` after `PLAN` and every
   `DRAG`. It sends only one transaction command at a time and waits for the
@@ -125,9 +130,23 @@ identity, polarity, precise centring, magnet current, or missed gantry steps.
 The trusted host owns chess legality and labeled-piece planning; the Nano owns
 deterministic motion and occupancy transition checks.
 
+With firmware 4.6 `START W APP` / `START B APP` selects app-authoritative play.
+After calibration the Nano seeds a standard starting-position virtual frame and
+enters the wait-host state without `SETUP PRESS A`. Every human and computer move
+must be a `PLANROUTE` transaction initiated by the companion. The Nano applies
+the same source, destination, corridor, capture, and exact-final-frame checks to
+its virtual frame; the apps compare `BOARD` after each command and require a
+visual whole-board confirmation after each committed chess move. The companion
+must send `STOP` on any mismatch and must invalidate the session on disconnect.
+Manual piece movement is forbidden except for an explicitly prompted promotion
+replacement, which preserves occupancy. A client must never silently enter or
+leave this mode because a reed frame looks unreliable.
+
 ## Legacy game and motion commands
 
 - `START W` or `START B` selects the human colour and requests calibration.
+- `START W APP` or `START B APP` selects app-authoritative play and requires the
+  `APPBOARD` and `PLANROUTE` capabilities.
 - `ACCEPT` or `REJECT` resolves a reported human move.
 - `PLAY e7e5` requests an ordinary automatic move.
 - `PLAY e1g1 C` marks castling.

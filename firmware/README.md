@@ -1,10 +1,26 @@
 # Nano firmware development
 
-Firmware 4.5 keeps the controller responsible for deterministic motion, sensor
+Firmware 4.6 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
+
+## Release 4.6.0 behavior
+
+Firmware 4.6 adds explicit app-authoritative play for boards with absent or
+unreliable reed switches. `START W APP` / `START B APP` calibrates, seeds the
+Nano's virtual occupancy to the standard position, and then accepts the same
+bounded `PLANROUTE` transactions for both human and computer moves. During that
+session `BOARD` reports the independently tracked virtual frame and no reed
+input is used for game decisions. The apps require every human move to be
+selected on screen and require visual confirmation after every completed chess
+move. A mismatch, route error, halt, or connection loss ends the session; it
+never silently changes between virtual and reed authority.
+
+This mode does not pretend to detect a dropped piece or missed step. The app and
+Nano cross-check command-derived occupancy, while the person watching the board
+is the only physical feedback. Reed-verified play remains the default.
 
 ## Release 4.5.0 behavior
 
@@ -57,7 +73,7 @@ ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains tight 29500-byte flash / 1115-byte global-SRAM budgets.
+the default and retains tight 29800-byte flash / 1115-byte global-SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
@@ -208,9 +224,9 @@ a certified safety function.
 
 ## Resource policy
 
-The 4.5 Nano build uses 29444 bytes of flash and 1115 bytes of global SRAM.
-`build.ps1` rejects growth beyond 29500/1115 bytes, leaving at least 1220 bytes
-of physical flash and 933 bytes for stack/local runtime state. Compared with
-4.4.0, simplifying the local UI while adding the safer connected alignment
-protocol saves 116 flash bytes and 3 global-SRAM bytes. The packed
-three-snapshot reed representation uses 24 bytes instead of 192 bytes.
+The 4.6 Nano build uses 29746 bytes of flash and 1115 bytes of global SRAM.
+`build.ps1` rejects growth beyond 29800/1115 bytes, leaving 974 bytes of
+physical flash and 933 bytes for stack/local runtime state. App-authoritative
+play adds 302 flash bytes over 4.5 while adding no global SRAM. The packed
+three-snapshot board representation uses 24 bytes instead of 192 bytes and is
+reused as either reed-derived or command-derived occupancy.

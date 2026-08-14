@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added firmware-4.6 app-controlled play for absent or unreliable reed switches.
+  Human and Stockfish moves share the collision-safe route planner, and every
+  completed move requires whole-board visual confirmation before play continues.
+- Added an interactive Play board, explicit sensor/app authority selection,
+  virtual-board simulator coverage, and stop-on-mismatch/disconnect recovery.
 - Added a recoverable firmware-4.5 board-alignment workflow with user-selected
   squares, one-step X/Y controls, optional magnetic-marker mode, reconnect
   recovery, two-point geometry calculation, and copyable `global.h` values.

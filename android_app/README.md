@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.5.0).
+This is the phone-first companion for firmware 3.31+ (current firmware 4.6.0).
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -13,7 +13,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
 | Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
 | Align board | Measure two user-chosen squares with precise X/Y nudges and copy exact `global.h` source values; head-only is the safe default and a magnetic marker is optional |
-| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
+| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, reed-verified or app-controlled play, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |
 | Developer | Structured and raw-equivalent protocol timeline, pagination, documented-command allowlist, motion lock plus confirmation, simulator `SIMMOVE` |
@@ -23,6 +23,16 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 Firmware 4.4 restricts direct manual carries to square centres on the same file,
 rank, or diagonal. The Play planner continues to handle knights and other
 turning moves as separate orthogonal square-centre `DRAG` operations.
+
+On the Play page, **Moves: Reeds** keeps the existing sensor-verified workflow.
+Tap it before starting to select **Moves: App** for absent or unreliable reed
+switches. Confirm the standard starting position, then select every human move
+by tapping its source and destination; the mechanism executes both human and AI
+moves. Reed input is ignored for the whole game. The phone previews and asks for
+visual confirmation after every completed chess move. A mismatch, connection
+loss, halt, or route error ends the session and requires inspection and a new
+calibration. Never move pieces by hand in this mode except when promotion
+replacement is explicitly requested.
 
 With firmware 4.1, the phone plans automatic moves as labeled board
 rearrangements. It can evacuate and restore blockers, stage the main piece while

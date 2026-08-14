@@ -229,6 +229,10 @@ def play_command(uci: str, *, castling: bool = False,
     return f"PLAY {normalized}{' ' + flag if flag else ''}"
 
 
+def start_game_command(human_white: bool, *, app_board: bool = False) -> str:
+    return f"START {'W' if human_white else 'B'}{' APP' if app_board else ''}"
+
+
 def head_command(square: str) -> str:
     if len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
         raise ValueError(f"Invalid square: {square!r}")

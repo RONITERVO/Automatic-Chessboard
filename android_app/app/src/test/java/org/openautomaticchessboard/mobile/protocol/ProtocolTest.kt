@@ -60,6 +60,8 @@ class ProtocolTest {
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
+        assertEquals("START W", Protocol.startGameCommand(humanWhite = true))
+        assertEquals("START B APP", Protocol.startGameCommand(humanWhite = false, appBoard = true))
         assertEquals("PLAY e1g1 C", Protocol.playCommand("e1g1", castling = true))
         assertEquals("PLAY e5d6 E", Protocol.playCommand("e5d6", enPassant = true))
         assertThrows(IllegalArgumentException::class.java) { Protocol.playCommand("z9z8") }

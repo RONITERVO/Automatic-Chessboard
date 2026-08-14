@@ -91,6 +91,16 @@ piece centring. The host owns chess legality and labels; the Nano owns
 deterministic motion, limits, magnet cutoff, corridor checks, and sensor-frame
 proof.
 
+Firmware 4.6 also supports explicit `APPBOARD` authority. The user selects every
+human move in `ChessboardView`; `GameController` sends both sides through the
+same route transaction. The Nano maintains a separate command-derived virtual
+frame and `BOARD` returns that frame during the session, so phone/Nano state is
+still cross-checked after each command without consulting unreliable reeds.
+After `DONE`, the snapshot previews the proposed logical result and a
+non-cancelable whole-board confirmation blocks progression. Mismatch or
+disconnect stops and invalidates the game. There is deliberately no automatic
+fallback between reed and virtual authority.
+
 ## Threading and lifecycle
 
 BLE callbacks are converted into repository events. UI observers always run on
@@ -109,7 +119,9 @@ Structured log writes use one daemon writer and bounded rollover files.
 ## State authority and safety invariants
 
 1. chesslib owns legal position and piece identity.
-2. BOARD owns physical occupancy after firmware rank normalization.
+2. In verified mode, BOARD owns physical occupancy after firmware rank
+   normalization. In explicitly selected APPBOARD mode it owns the Nano's
+   command-derived virtual occupancy and must never be presented as sensor proof.
 3. TELEM reports commanded/calculated mechanism state, not physical proof.
 4. A timestamp older than 12 seconds is stale, never ready, except while expected
    motion deliberately suppresses polling; that state is reported as a warning.

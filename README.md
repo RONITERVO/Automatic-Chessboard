@@ -99,13 +99,22 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.5.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.6.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
 straight orthogonal drags and proves the complete sensor frame before and after
 each one. Capture, en passant, promotion occupancy, and standard castling are
 included. Firmware 4.0 clients retain their original `PLAY` path.
+
+Boards with missing, intermittent, or deliberately unused reed switches can use
+the explicit **Move by tapping app** mode in either companion. Both human and
+Stockfish moves then originate in the app and use the same physical route
+planner. The app and Nano maintain matching virtual occupancy and ignore reed
+readings for that entire game. The user visually confirms every completed move;
+any mismatch or lost connection stops play and requires inspection and a new
+calibrated session. This is an explicit authority choice, never an automatic
+fallback from failed sensors.
 
 Reproducible resource-budgeted builds, measured calibration references, the
 configurable connected endurance tool, the 30-second continuous-magnet timeout,

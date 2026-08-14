@@ -32,6 +32,34 @@ class SimulatorTests(unittest.TestCase):
         info = next(value for value in lines if value.startswith("INFO ACB2"))
         self.assertIn("SENSORFRAME", info)
         self.assertIn("PLANROUTE", info)
+        self.assertIn("APPBOARD", info)
+        transport.close()
+
+    def test_app_board_mode_routes_both_sides_without_reed_events(self):
+        from protocol import commit_plan_command, drag_command, parse_board_hex, plan_command
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("START W APP")
+        self.wait_for(lines, lambda values: "SESSION W" in values and "TURN HUMAN" in values)
+        self.assertNotIn("SETUP PRESS A", lines)
+
+        for uci, path in (("e2e4", (12, 20, 28)), ("e7e5", (52, 44, 36))):
+            transport.send(plan_command(uci))
+            self.wait_for(lines, lambda values: values.count("PLAN READY") >= (1 if uci == "e2e4" else 2))
+            transport.send(drag_command(path))
+            self.wait_for(lines, lambda values: f"MOVED PIECE {uci}" in values)
+            transport.send(commit_plan_command())
+            self.wait_for(lines, lambda values: f"DONE {uci}" in values)
+
+        transport.send("BOARD")
+        self.wait_for(lines, lambda values: any(value.startswith("BOARD ") for value in values))
+        occupied = parse_board_hex(next(value for value in reversed(lines) if value.startswith("BOARD ")).split()[1])
+        self.assertNotIn(12, occupied)
+        self.assertIn(28, occupied)
+        self.assertNotIn(52, occupied)
+        self.assertIn(36, occupied)
         transport.close()
 
     def test_emergency_halt(self):

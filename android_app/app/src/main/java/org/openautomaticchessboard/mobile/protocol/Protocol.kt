@@ -162,6 +162,9 @@ object Protocol {
         return "PLAY $uci$flag"
     }
 
+    fun startGameCommand(humanWhite: Boolean, appBoard: Boolean = false): String =
+        "START ${if (humanWhite) "W" else "B"}${if (appBoard) " APP" else ""}"
+
     fun headCommand(square: String): String {
         require(square.matches(Regex("[a-h][1-8]"))) { "Invalid square: $square" }
         return "HEAD $square"

@@ -275,6 +275,7 @@ class SimulatorTransport:
         self._pending_human = None
         self._human_white = True
         self._remote_mode = False
+        self._app_board = False
         self._sequence = 1
         self._fault = False
         self._homed = False
@@ -339,8 +340,8 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.5.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE,ALIGN"
+                "INFO ACB2 4.6.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE,APPBOARD,ALIGN"
             )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._remote_mode)}")
@@ -371,16 +372,19 @@ class SimulatorTransport:
                 self._board.reset()
                 self._physical_squares = set(self._board.piece_map())
                 self._clear_plan()
-                self._human_white = upper.endswith("W")
+                fields = upper.split()
+                self._human_white = fields[1] == "W"
+                self._app_board = len(fields) == 3 and fields[2] == "APP"
                 self._remote_mode = True
                 self._homed = True
                 self._trolley_x, self._trolley_y = 5, 6
-                self._sequence = 13
+                self._sequence = 15 if self._app_board else 13
                 self._emit(f"OK START {'W' if self._human_white else 'B'}")
-                self._emit("SETUP PRESS A", 0.15)
-                self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.5)
-                self._sequence = 14 if self._human_white else 15
-                self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.65)
+                if not self._app_board:
+                    self._emit("SETUP PRESS A", 0.15)
+                self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.25 if self._app_board else 0.5)
+                self._sequence = 15 if self._app_board else (14 if self._human_white else 15)
+                self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.4 if self._app_board else 0.65)
         elif upper.startswith("SIMMOVE "):
             try:
                 move = chess.Move.from_uci(text.split(maxsplit=1)[1].lower())
@@ -487,11 +491,13 @@ class SimulatorTransport:
                     move = self._plan_move
                     self._board.push(move)
                     self._clear_plan()
-                    self._sequence = 14
+                    self._sequence = 15 if self._app_board else 14
                     label = move.uci()[:4]
                     self._emit(f"DONE {label}")
                     if move.promotion:
                         self._emit(f"PROMOTE {chess.piece_symbol(move.promotion)}", 0.08)
+                        if self._app_board:
+                            self._emit("PROMOTION OK", 0.16)
             except Exception as error:
                 self._emit(f"ERR {error}")
         elif upper.startswith("PLAY "):
@@ -596,6 +602,7 @@ class SimulatorTransport:
             self._clear_plan()
             self._clear_alignment()
             self._remote_mode = False
+            self._app_board = False
             self._sequence = 1
             self._emit("STOPPED")
         elif upper.startswith("GAMEOVER"):

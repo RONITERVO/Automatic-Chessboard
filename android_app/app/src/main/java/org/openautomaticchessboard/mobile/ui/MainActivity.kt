@@ -124,12 +124,29 @@ class MainActivity : Activity(), BoardRepository.Observer {
         recorder = EventRecorder(this)
         repository = BoardRepository(recorder)
         engine = StockfishEngine(this)
-        game = GameController(engine, repository, ::onGameChanged) { reported, choose ->
-            AlertDialog.Builder(this).setTitle("Promotion")
-                .setItems(arrayOf("Queen", "Rook", "Bishop", "Knight")) { _, index ->
-                    choose(charArrayOf('q', 'r', 'b', 'n')[index])
-                }.setCancelable(false).show()
-        }
+        game = GameController(
+            engine,
+            repository,
+            ::onGameChanged,
+            onPromotionChoice = { _, choose ->
+                AlertDialog.Builder(this).setTitle("Promotion")
+                    .setItems(arrayOf("Queen", "Rook", "Bishop", "Knight")) { _, index ->
+                        choose(charArrayOf('q', 'r', 'b', 'n')[index])
+                    }.setCancelable(false).show()
+            },
+            onBoardVerification = { move, confirm ->
+                AlertDialog.Builder(this).setTitle("Confirm the physical board")
+                    .setMessage(
+                        "The carriage reports $move complete. Compare the entire physical board with " +
+                            "the app. Did every piece finish on the shown square?\n\nChoose Mismatch for " +
+                            "any slip, collision, dropped piece, obstruction, or uncertainty."
+                    )
+                    .setPositiveButton("Board matches") { _, _ -> confirm(true) }
+                    .setNegativeButton("Mismatch — stop") { _, _ -> confirm(false) }
+                    .setCancelable(false)
+                    .show()
+            },
+        )
         game.elo = prefs.getInt("elo", 2000)
         game.thinkMillis = prefs.getLong("think_ms", 800)
         game.routeTimeMillis = prefs.getLong("route_ms", 8_000)
@@ -224,7 +241,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         fun update() {
             val state = monitorState
             board.pieces = gameState.pieces
-            board.sensors = state.sensorSquares
+            board.sensors = if (gameState.active && gameState.appControlled) null else state.sensorSquares
             board.flipped = !gameState.humanWhite
             board.trolley = trolleyPosition(state)
             val (label, level) = state.health()
@@ -247,7 +264,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun buildPlay(): View {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val board = ChessboardView(this).apply {
-            pieces = gameState.pieces; sensors = monitorState.sensorSquares; flipped = !gameState.humanWhite
+            pieces = gameState.pieces
+            sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            selectedSquares = gameState.selectedSquares
+            onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
+            flipped = !gameState.humanWhite
             trolley = trolleyPosition()
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -270,12 +291,17 @@ class MainActivity : Activity(), BoardRepository.Observer {
         ))
         playUpdater = {
             board.pieces = gameState.pieces
-            board.sensors = monitorState.sensorSquares
+            board.sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            board.selectedSquares = gameState.selectedSquares
+            board.onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
             board.flipped = !gameState.humanWhite
             board.trolley = trolleyPosition()
             status.text = gameState.status
             side.white.background = rounded(if (gameState.humanWhite) ACCENT_DARK else SURFACE)
             side.black.background = rounded(if (!gameState.humanWhite) ACCENT_DARK else SURFACE)
+            val appMoves = prefs.getBoolean("app_controlled_play", false)
+            side.mode.text = if (appMoves) "Moves: App" else "Moves: Reeds"
+            side.mode.background = rounded(if (appMoves) ACCENT_DARK else SURFACE)
             history.text = historyPageText()
         }
         playUpdater?.invoke()
@@ -296,9 +322,19 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 game.chooseHumanSide(false)
             }
         }
+        val mode = button(
+            if (prefs.getBoolean("app_controlled_play", false)) "Moves: App" else "Moves: Reeds"
+        ) {
+            if (!gameState.active) {
+                val enabled = !prefs.getBoolean("app_controlled_play", false)
+                prefs.edit().putBoolean("app_controlled_play", enabled).apply()
+                playUpdater?.invoke()
+            }
+        }
         row.addView(white, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         row.addView(black, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
-        return SideSelector(row, white, black)
+        row.addView(mode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .9f).apply { marginStart = dp(4) })
+        return SideSelector(row, white, black, mode)
     }
 
     private fun buildPlaySliders(landscape: Boolean): View {
@@ -921,12 +957,28 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun confirmStartGame() {
         if (!monitorState.connected) { toast("Connect to the board first"); return }
-        if (!sensorFrameReady()) return
+        val appControlled = prefs.getBoolean("app_controlled_play", false)
+        val capabilities = monitorState.firmware?.capabilities.orEmpty()
+        if (appControlled && !capabilities.containsAll(setOf("APPBOARD", "PLANROUTE"))) {
+            alert("Firmware update required", "App-controlled play requires firmware 4.6 or newer with APPBOARD and PLANROUTE.")
+            return
+        }
+        if (!appControlled && !sensorFrameReady()) return
+        val message = if (appControlled) {
+            "Confirm all pieces are in the standard starting position. Reed switches will be ignored: " +
+                "select every human move by tapping this app, never move pieces by hand except when prompted " +
+                "for promotion, and visually confirm every completed move. Any mismatch or lost connection " +
+                "ends the game.\n\nCalibration can move the carriage. Keep the mechanism clear and the " +
+                "physical power cutoff accessible."
+        } else {
+            "Confirm the complete board is clear, both limits were tested locally, live state is current, " +
+                "and physical power cutoff is accessible."
+        }
         AlertDialog.Builder(this).setTitle("Calibration can move the carriage")
-            .setMessage("Confirm the complete board is clear, both limits were tested locally, live state is current, and physical power cutoff is accessible.")
+            .setMessage(message)
             .setPositiveButton("Start calibration") { _, _ ->
                 val white = prefs.getBoolean("human_white", true)
-                game.start(white).onFailure { alert("Could not start", it.message ?: it.toString()) }
+                game.start(white, appControlled).onFailure { alert("Could not start", it.message ?: it.toString()) }
             }.setNegativeButton("Cancel", null).show()
     }
 
@@ -1426,5 +1478,5 @@ class MainActivity : Activity(), BoardRepository.Observer {
         private const val REQ_SNAPSHOT = 203
     }
 
-    private data class SideSelector(val view: View, val white: Button, val black: Button)
+    private data class SideSelector(val view: View, val white: Button, val black: Button, val mode: Button)
 }

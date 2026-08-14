@@ -16,6 +16,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var homed = false
     private var fault = false
     private var remoteMode = false
+    private var appBoard = false
     private var sequence = 1
     private var plan: PlanRouteRequest? = null
     private var planInitial: Set<Int>? = null
@@ -46,7 +47,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.5.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,ALIGN", 30)
+            "INFO" -> emit("INFO ACB2 4.6.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,APPBOARD,ALIGN", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0}", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
@@ -57,6 +58,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 clearPlan()
                 clearAlignment()
                 remoteMode = false
+                appBoard = false
                 sequence = 1
                 emit("STOPPED", 30)
             }
@@ -84,12 +86,13 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     occupied.addAll(MonitorStateDefaults.START_SQUARES)
                     clearPlan()
                     val humanSide = command.substringAfter(' ').take(1)
+                    appBoard = command.endsWith(" APP")
                     remoteMode = true
                     homed = true
                     trolleyX = 5
                     trolleyY = 6
-                    sequence = if (humanSide == "W") 14 else 15
-                    emit("SETUP PRESS A", 30)
+                    sequence = if (appBoard) 15 else if (humanSide == "W") 14 else 15
+                    if (!appBoard) emit("SETUP PRESS A", 30)
                     emit("SESSION $humanSide", 60)
                     emit(if (humanSide == "W") "TURN HUMAN" else "TURN COMPUTER", 120)
                 }
@@ -250,9 +253,12 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 }
                 planExpected -> {
                     clearPlan()
-                    sequence = 14
+                    sequence = if (appBoard) 15 else 14
                     emit("DONE ${request.uci.take(4)}", 30)
-                    if (request.mode in "qrbn") emit("PROMOTE ${request.mode}", 80)
+                    if (request.mode in "qrbn") {
+                        emit("PROMOTE ${request.mode}", 80)
+                        if (appBoard) emit("PROMOTION OK", 160)
+                    }
                 }
                 else -> error("PLAN INCOMPLETE")
             }

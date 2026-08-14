@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.5.0.
+ * Automatic Chessboard firmware 4.6.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.5.0"
+#define FIRMWARE_VERSION "4.6.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -73,7 +73,9 @@ struct HostInputBuffer {
 };
 HostInputBuffer usb_host_input = {{0}, 0, false};
 HostInputBuffer bluetooth_host_input = {{0}, 0, false};
-boolean remote_mode = false;
+// 0=standalone, 1=reed-verified companion, 2=app-authoritative companion.
+// A byte replaces the former boolean without increasing global SRAM.
+byte remote_mode = 0;
 boolean remote_human_white = true;
 boolean remote_human_move_pending = false;
 volatile boolean remote_stop_requested = false;
@@ -237,7 +239,10 @@ void loop() {
         delay(1000);
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
-        else if (sequence == remote_setup_check) showRemoteSetupCheck();
+        else if (sequence == remote_setup_check) {
+          if (remote_mode == 2) beginRemoteSession();
+          else showRemoteSetupCheck();
+        }
         else showMainMenu();
       }
       else {
@@ -378,7 +383,8 @@ void loop() {
     case remote_promotion_wait:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
         Serial.println(F("PROMOTION OK"));
-        beginRemoteHumanTurn();
+        if (remote_mode == 2) waitForRemoteApp();
+        else beginRemoteHumanTurn();
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
         stopRemoteSession();

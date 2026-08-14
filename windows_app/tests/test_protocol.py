@@ -23,6 +23,7 @@ from protocol import (
     queen_aligned,
     nudge_command,
     split_route_runs,
+    start_game_command,
 )
 
 
@@ -44,6 +45,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(event.args, ("ACB1", "17", "1", "1"))
 
     def test_special_move_commands(self):
+        self.assertEqual(start_game_command(True), "START W")
+        self.assertEqual(start_game_command(False, app_board=True), "START B APP")
         self.assertEqual(play_command("e1g1", castling=True), "PLAY e1g1 C")
         self.assertEqual(play_command("e5d6", en_passant=True), "PLAY e5d6 E")
         self.assertEqual(play_command("e7e8q"), "PLAY e7e8q")
