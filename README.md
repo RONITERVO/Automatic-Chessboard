@@ -254,6 +254,9 @@ continuous knight or S-shaped carry. Connected play represents those moves as
 separate verified square-centre drags. Capture removal and the rook part of
 legacy castling retain explicit horizontal/vertical clearance lanes to reach
 their necessary off-board or temporarily obstructed destinations.
+Standalone carries also preflight every traversed square; diagonal steps
+require both shared orthogonal corner squares to be empty. An unsafe direct
+carry becomes a manual, sensor-verified move before the magnet is energized.
 
 If the local Micro-Max opponent selects a knight move, the LCD shows the exact
 `MANUAL` instruction instead of attempting unsafe travel. Move that piece by
@@ -268,9 +271,12 @@ white-edge outside lane; it never tries the unvalidated outer black-side lane.
 If no route is clear, standalone play uses the same `MANUAL` instruction and
 sensor-verified continuation instead of risking a collision.
 Manual captures are deliberately two-stage: remove the displayed captured
-square and press A, then perform the displayed AI move and press A again. This
-lets occupancy-only reed switches prove that the destination was actually
-emptied before the AI piece replaced it.
+square and press A. If the remaining AI carry is queen-aligned and every
+traversed square and diagonal corner is clear, the Nano resumes that move
+automatically. Otherwise it displays the complete `MANUAL` move for the player
+to perform before pressing A again. This lets occupancy-only reed switches
+prove that the destination was actually emptied before the AI piece replaced
+it.
 
 For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the

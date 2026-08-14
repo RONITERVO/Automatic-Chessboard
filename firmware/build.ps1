@@ -26,7 +26,7 @@ if ($HardwareProfile -eq "mks-gen-l-v1") {
 }
 else {
   if (-not $Fqbn) { $Fqbn = "arduino:avr:nano:cpu=atmega328old" }
-  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 29280 }
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 29620 }
   if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 1118 }
   $profileBuildFlags = ""
 }

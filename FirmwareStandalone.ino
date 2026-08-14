@@ -99,13 +99,17 @@ void showAiSensorMismatch() {
 }
 
 void prepareManualAiPlacement() {
-  byte from_file = lastM[0] - 'a';
-  byte from_row = 8 - (lastM[1] - '0');
-  byte to_file = lastM[2] - 'a';
-  byte to_row = 8 - (lastM[3] - '0');
-  setBoardSquare(reed_sensor_status, from_row, from_file, false);
-  setBoardSquare(reed_sensor_status, to_row, to_file, true);
+  byte from_file = lastM[0] - 'a' + 1;
+  byte from_rank = lastM[1] - '0';
+  byte to_file = lastM[2] - 'a' + 1;
+  byte to_rank = lastM[3] - '0';
   move_from = NO_SQUARE;
+  if (carriedPathClear(from_file, from_rank, to_file, to_rank, 0, 0)) {
+    beginAiTurn();
+    return;
+  }
+  setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
+  setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
   showAiSensorMismatch();
 }
 
@@ -119,6 +123,16 @@ void showPendingMove() {
   printSquare(move_to);
   lcd.setCursor(0, 1);
   lcd.print(F("A=END TURN"));
+}
+
+void beginAiTurn() {
+  lcd.clear();
+  lcd.print(F("AI MOVE "));
+  printMove(lastM);
+  lcd.setCursor(0, 1);
+  lcd.print(F("KEEP HANDS CLEAR"));
+  delay(800);
+  sequence = player_black;
 }
 
 void beginHumanTurn() {
@@ -179,13 +193,7 @@ void finishHumanTurn() {
     return;
   }
 
-  lcd.clear();
-  lcd.print(F("AI MOVE "));
-  printMove(lastM);
-  lcd.setCursor(0, 1);
-  lcd.print(F("KEEP HANDS CLEAR"));
-  delay(800);
-  sequence = player_black;
+  beginAiTurn();
 }
 
 void printMove(const char *move_text) {

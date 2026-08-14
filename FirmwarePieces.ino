@@ -37,6 +37,38 @@ byte findCaptureExitRank(byte file, byte source_rank) {
   return 0;
 }
 
+// This preflight is used before ordinary motion and again after a manual
+// capture removal. Keep one out-of-line copy on the flash-constrained Nano.
+boolean __attribute__((noinline)) carriedPathClear(
+    byte from_file, byte from_rank, byte to_file, byte to_rank,
+    byte ignored_file, byte ignored_rank) {
+  if (!queenAlignedSquares(from_file, from_rank, to_file, to_rank)) return false;
+  signed char file_step = to_file == from_file ? 0 :
+                          (to_file > from_file ? 1 : -1);
+  signed char rank_step = to_rank == from_rank ? 0 :
+                          (to_rank > from_rank ? 1 : -1);
+  byte file = from_file;
+  byte rank = from_rank;
+  while (file != to_file || rank != to_rank) {
+    byte next_file = file + file_step;
+    byte next_rank = rank + rank_step;
+    if (!(next_file == ignored_file && next_rank == ignored_rank) &&
+        boardSquareOccupied(reed_sensor_record, 8 - next_rank,
+                            next_file - 1)) return false;
+    if (file_step && rank_step) {
+      if (!(next_file == ignored_file && rank == ignored_rank) &&
+          boardSquareOccupied(reed_sensor_record, 8 - rank,
+                              next_file - 1)) return false;
+      if (!(file == ignored_file && next_rank == ignored_rank) &&
+          boardSquareOccupied(reed_sensor_record, 8 - next_rank,
+                              file - 1)) return false;
+    }
+    file = next_file;
+    rank = next_rank;
+  }
+  return true;
+}
+
 boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   byte exit_rank = findCaptureExitRank(file, rank);
   if (!exit_rank) return false;
@@ -152,6 +184,12 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
 
   byte capture_rank = destination_occupied ? arrival_y :
                       (en_passant ? departure_y : 0);
+  if (!manual_move && !castling &&
+      !carriedPathClear(departure_x, departure_y, arrival_x, arrival_y,
+                        capture_rank ? arrival_x : 0, capture_rank)) {
+    if (move_flags != 'L') return false;
+    manual_move = true;
+  }
   if (!manual_move && capture_rank &&
       !findCaptureExitRank(arrival_x, capture_rank)) {
     if (move_flags != 'L') return false;

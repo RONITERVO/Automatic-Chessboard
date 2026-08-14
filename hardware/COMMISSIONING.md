@@ -119,6 +119,8 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 7. Test one piece on direct horizontal, vertical, and diagonal moves. Test a
    knight through connected Play and verify it becomes separate straight
    square-centre drags; no continuous knight or S-shaped carry is permitted.
+   Place a stationary piece on either shared corner of a diagonal and verify
+   standalone play requests a manual move without energizing the magnet.
 8. Test an automatic capture first with its direct lower-left boundary lane
    empty, then with that lane blocked but a vertically reachable lane clear.
    Verify a fully blocked exit requests the displayed move manually and causes
