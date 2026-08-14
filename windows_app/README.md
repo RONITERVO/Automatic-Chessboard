@@ -17,10 +17,10 @@ next steps. Raw protocol data remains available in the Developer tab.
 | --- | --- | --- |
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
-| App-controlled play | Tap every human source/target and let the mechanism execute both sides without reed input | Requires firmware 4.6; every completed move needs visual confirmation and any uncertainty ends the game |
-| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Direct carries must share a file, rank, or diagonal; requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
-| Board alignment | Measure any two chosen squares one Cartesian step at a time and copy exact `global.h` values | Requires firmware 4.5; changes take effect only after editing, rebuilding, uploading, and recalibrating |
-| Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Requires firmware 4.1; bounded search can report that no verified plan was found |
+| App-controlled play | Tap every human source/target and let the mechanism execute both sides without reed input | Requires matching 5.0 firmware; every completed move needs visual confirmation and any uncertainty ends the game |
+| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Direct carries must share a file, rank, or diagonal; requires matching 5.0 firmware, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Board alignment | Measure any two chosen squares one Cartesian step at a time and copy exact `global.h` values | Requires matching 5.0 firmware; changes take effect only after editing, rebuilding, uploading, and recalibrating |
+| Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Version 5.0 always uses the verified transaction; bounded search can report that no verified plan was found |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
 | Limits/buttons | Electrical input state and A6 analog value | A snapshot does not prove the switch is mechanically positioned correctly |
@@ -121,7 +121,7 @@ hardware. In the Developer tab, `SIMMOVE e2e4` simulates a human move.
 
 ### Play
 
-Stockfish supplies legal moves and strength. With firmware 4.1, Windows also
+Stockfish supplies legal moves and strength. Windows also
 plans the complete physical rearrangement before an automatic move. It can park
 blocking pieces temporarily, restore them, stage the main piece when it blocks a
 return path, and recursively free a trapped blocker. Carried paths are
@@ -133,7 +133,7 @@ centres and issuing separate straight `DRAG` operations.
 
 Choose **Verified reed switches** for the existing sensor-backed game. Choose
 **Move by tapping app** for a board with missing or unreliable switches. The
-latter requires the standard physical starting position, firmware 4.6, and no
+latter requires the standard physical starting position, matching 5.0 firmware, and no
 manual board movement except when the app explicitly prompts you to replace a
 piece after promotion. Tap the source and destination on the Play board and the
 mechanism performs the human move as well as the Stockfish reply. Both sides use
@@ -152,8 +152,9 @@ retried automatically. See [ARCHITECTURE.md](ARCHITECTURE.md) and
 
 The Nano still owns sensor scanning, motor timing, calibration, magnet control,
 physical limit checks, and either reed-derived or explicitly virtual per-drag
-occupancy checks. Thinking and route search use Windows resources. Firmware 4.0 and
-earlier retain the legacy direct/knight `PLAY` path as a compatibility fallback.
+occupancy checks. Thinking and route search use Windows resources. Version 5.0
+has no legacy direct-move fallback; mismatched app/firmware versions can inspect
+state and halt, but cannot start control or motion.
 
 ### Diagnostics
 

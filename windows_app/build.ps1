@@ -5,10 +5,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $appRoot = $PSScriptRoot
 $venvPython = Join-Path $appRoot '.venv\Scripts\python.exe'
-$appSource = Get-Content -LiteralPath (Join-Path $appRoot 'app.py') -Raw
-$versionMatch = [regex]::Match($appSource, 'APP_VERSION\s*=\s*"([^"]+)"')
+$protocolSource = Get-Content -LiteralPath (Join-Path $appRoot 'protocol.py') -Raw
+$versionMatch = [regex]::Match($protocolSource, 'SOFTWARE_VERSION\s*=\s*"([^"]+)"')
 if (-not $versionMatch.Success) {
-    throw 'Could not read APP_VERSION from app.py.'
+    throw 'Could not read SOFTWARE_VERSION from protocol.py.'
 }
 $appVersion = $versionMatch.Groups[1].Value
 $edition = if ($IncludeCamera) { '-camera' } else { '' }

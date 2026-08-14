@@ -1,7 +1,16 @@
 import time
 import unittest
 
-from transports import SimulatorTransport
+from protocol import hello_command
+from transports import SimulatorTransport as _SimulatorTransport
+
+
+class SimulatorTransport(_SimulatorTransport):
+    """Exercise the simulator as a matching current companion."""
+
+    def start(self):
+        super().start()
+        self.send(hello_command())
 
 
 class SimulatorTests(unittest.TestCase):
@@ -13,6 +22,22 @@ class SimulatorTests(unittest.TestCase):
                 return
             time.sleep(0.01)
         self.fail(f"Timed out waiting for simulator output: {lines}")
+
+    def test_version_mismatch_blocks_motion_but_not_inspection_or_stop(self):
+        lines = []
+        transport = _SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("HELLO 4.8.0")
+        transport.send("CALIBRATE")
+        transport.send("INFO")
+        transport.send("STOP")
+        self.wait_for(
+            lines,
+            lambda values: values.count("ERR VERSION") >= 2 and
+            "INFO ACB3 5.0.0 SIM" in values and "STOPPED" in values,
+        )
+        self.assertNotIn("CALIBRATED e6", lines)
+        transport.close()
 
     def test_safe_monitor_commands(self):
         lines = []
@@ -27,14 +52,10 @@ class SimulatorTests(unittest.TestCase):
         transport.send("BOARD")
         self.wait_for(lines, lambda values: all(
             any(value.startswith(prefix) for value in values)
-            for prefix in ("INFO ACB2", "TELEM ACB2", "BOARD ")
+            for prefix in ("INFO ACB3", "TELEM ACB3", "BOARD ")
         ))
-        info = next(value for value in lines if value.startswith("INFO ACB2"))
-        self.assertIn("SENSORFRAME", info)
-        self.assertIn("PLANROUTE", info)
-        self.assertIn("REMOVE", info)
-        self.assertIn("EDGEEXIT", info)
-        self.assertIn("APPBOARD", info)
+        info = next(value for value in lines if value.startswith("INFO ACB3"))
+        self.assertEqual(info, "INFO ACB3 5.0.0 SIM")
         transport.close()
 
     def test_app_board_mode_routes_both_sides_without_reed_events(self):
@@ -80,9 +101,9 @@ class SimulatorTests(unittest.TestCase):
         transport.send("PIECE e2e4")
         transport.send("TELEM")
         self.wait_for(lines, lambda values: values.count("ERR FAULT") >= 3 and
-                      any(value.startswith("TELEM ACB2") for value in values))
+                      any(value.startswith("TELEM ACB3") for value in values))
         self.assertGreaterEqual(lines.count("ERR FAULT"), 3)
-        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         fields = telemetry.split()
         self.assertEqual(fields[2:9], ["10", "0", "0", "1", "0", "0", "0"])
         transport.close()
@@ -200,18 +221,18 @@ class SimulatorTests(unittest.TestCase):
         transport.send("START B")
         self.wait_for(lines, lambda values: "TURN COMPUTER" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB3") for value in values))
         active = parse_telemetry(parse_event(
-            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         ))
         self.assertEqual(active.sequence, 15)
         self.assertTrue(active.remote_mode)
         transport.send("STOP")
         self.wait_for(lines, lambda values: "STOPPED" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: sum(value.startswith("TELEM ACB2") for value in values) >= 2)
+        self.wait_for(lines, lambda values: sum(value.startswith("TELEM ACB3") for value in values) >= 2)
         idle = parse_telemetry(parse_event(
-            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         ))
         self.assertEqual(idle.sequence, 1)
         self.assertFalse(idle.remote_mode)
@@ -240,8 +261,8 @@ class SimulatorTests(unittest.TestCase):
         transport.send("ALIGN END")
         self.wait_for(lines, lambda values: "ALIGN ENDED" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
-        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB3") for value in values))
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         self.assertEqual(telemetry.split()[3], "0")
         transport.close()
 

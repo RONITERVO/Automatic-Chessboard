@@ -118,14 +118,14 @@ class RouteTransactionModelTests(unittest.TestCase):
             queen_side.drag(f"DRAG d{other_rank}d{rank}")
             self.assertEqual(f"DONE e{rank}c{rank}", queen_side.commit())
 
-    def test_capture_removal_waits_for_a_clear_exit_lane(self):
+    def test_capture_removal_waits_until_an_orthogonal_exit_path_exists(self):
         model = MotionlessRouteExecutor({
-            square_index("c6"), square_index("e5"), square_index("a5"),
-            square_index("e4"), square_index("e6"),
+            square_index("c6"), square_index("e5"), square_index("d5"),
+            square_index("f5"), square_index("e4"), square_index("e6"),
         })
         self.assertEqual("PLAN READY", model.begin("PLAN c6e5-e5"))
         assert_error(self, "CAPTURE", model.remove_capture)
-        model.drag("DRAG e4f4")
+        model.drag("DRAG d5d4")
         self.assertEqual("REMOVED", model.remove_capture())
         self.assertNotIn(square_index("e5"), model.observed)
 

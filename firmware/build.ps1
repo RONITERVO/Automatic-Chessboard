@@ -103,7 +103,10 @@ try {
   try {
     $ErrorActionPreference = "Continue"
     $result = & $cli @compileArguments 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile compilation failed." }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host $result.TrimEnd()
+      throw "$HardwareProfile compilation failed."
+    }
   }
   finally {
     $ErrorActionPreference = $previousErrorActionPreference

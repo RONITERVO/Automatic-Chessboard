@@ -104,4 +104,5 @@ interfaces expected by the firmware. It does not define a certified product,
 mains-voltage wiring, a sellable PCB, or a production enclosure. Builders may
 change the frame, rails, belts, tiles, and capture bin if the electrical pin
 contract, 37.5 mm square pitch, homing behavior, and motion calibration remain
-consistent.
+consistent. Firmware 5.0 also assumes the bin and carriage have unobstructed
+release clearance along the complete left edge beside `a1` through `a8`.

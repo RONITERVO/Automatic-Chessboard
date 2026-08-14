@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.8.0.
+ * Automatic Chessboard firmware 5.0.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.8.0"
+#define FIRMWARE_VERSION "5.0.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -69,10 +69,12 @@ const byte HOST_INPUT_SIZE = 32;
 struct HostInputBuffer {
   char data[HOST_INPUT_SIZE];
   byte length;
-  boolean overflowed;
+  byte flags;
 };
-HostInputBuffer usb_host_input = {{0}, 0, false};
-HostInputBuffer bluetooth_host_input = {{0}, 0, false};
+const byte HOST_INPUT_OVERFLOWED = 1;
+const byte HOST_VERSION_AGREED = 2;
+HostInputBuffer usb_host_input = {{0}, 0, 0};
+HostInputBuffer bluetooth_host_input = {{0}, 0, 0};
 // 0=standalone, 1=reed-verified companion, 2=app-authoritative companion.
 // A byte replaces the former boolean without increasing global SRAM.
 byte remote_mode = 0;
@@ -197,7 +199,8 @@ void setup() {
 #endif
   sequence = main_menu;
   showMainMenu();
-  Serial.println(F("READY ACB1"));
+  Serial.print(F("READY "));
+  Serial.println(F(FIRMWARE_VERSION));
 }
 
 void loop() {

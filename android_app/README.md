@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.8.0).
+This is the phone-first companion for matching firmware 5.0.0.
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -20,7 +20,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Support | JSONL session logs, copied diagnostic summary, sanitized ZIP with no frames, PGNs, camera credentials, or Bluetooth address |
 | Safety | Persistent HALT button, separate single-byte `!` path, motion polling pause, stale-state warnings, no remote fault clearing |
 
-Firmware 4.4 restricts direct manual carries to square centres on the same file,
+The firmware restricts direct manual carries to square centres on the same file,
 rank, or diagonal. The Play planner continues to handle knights and other
 turning moves as separate orthogonal square-centre `DRAG` operations.
 
@@ -34,7 +34,7 @@ loss, halt, or route error ends the session and requires inspection and a new
 calibration. Never move pieces by hand in this mode except when promotion
 replacement is explicitly requested.
 
-With firmware 4.1, the phone plans automatic moves as labeled board
+The phone plans automatic moves as labeled board
 rearrangements. It can evacuate and restore blockers, stage the main piece while
 a return corridor is used, and recursively free trapped blockers. Carried paths
 are orthogonal and turning paths become separate straight drags at square
@@ -42,15 +42,15 @@ centres. The phone and Nano both verify all 64 occupancy switches after capture
 removal and every drag. A timeout or disconnect after physical motion stops the
 session and requires inspection; it is never retried from an assumed state.
 
-With firmware 4.8 `EDGEEXIT`, a captured piece is routed through empty square
+For captures, a piece is routed through empty square
 centres to any available position beside `a1`-`a8`. A route around obstacles is
 always preferred over moving another piece; the parking search is used only
-when every edge exit is disconnected. Firmware 4.7 retains its stricter lane
-model through capability negotiation.
+when every edge exit is disconnected.
 
 The **Route** button on the Play page adjusts the bounded search duration and
 maximum number of temporarily moved pieces without adding a scrolling settings
-page. Firmware 4.0 and earlier continue to use the legacy `PLAY` path.
+page. Version 5.0 always uses the verified route transaction and refuses motion
+until app and Nano report the same exact software version.
 
 No page contains a `ScrollView`, horizontally scrolling container, or vertically
 scrolling list. Dense histories and logs use explicit pages. Portrait and
@@ -93,7 +93,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 1. Keep motor/magnet power physically removable and the mechanism clear.
 2. Tap **Connect**, scan, and choose the HC-08. The strongest likely HC-08 is
    ranked first, but its address is still shown for confirmation.
-3. Open **Checks** and tap **Run checks**. This sends only PING, INFO, TELEM, and
+3. Open **Checks** and tap **Run checks**. This sends only HELLO, INFO, TELEM, and
    BOARD requests.
 4. Confirm firmware, sensor, and input results. Released A6 should normally be
    at least 700 and near 1023.
@@ -116,9 +116,9 @@ power if motion continues or the link is unavailable.
 
 Read [`ARCHITECTURE.md`](ARCHITECTURE.md), then run the unit tests. Use
 **Simulator** for UI and game-flow changes; `SIMMOVE e2e4` in **Dev** represents
-a physical human move. The simulator implements the complete `PLANROUTE`
-transaction without hardware. New firmware capabilities should be optional additions,
-parsed into typed state, simulated, and covered by tests before UI work.
+a physical human move. The simulator implements the complete route transaction
+without hardware. Protocol changes require one coordinated app/firmware version
+bump, typed parsing, simulator behavior, and tests before UI work.
 
 Never add a generic "send anything" bypass. Read-only, session-control, motion,
 emergency, and unknown commands are deliberately separate. Never make a stale

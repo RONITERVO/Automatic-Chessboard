@@ -9,7 +9,8 @@ import org.openautomaticchessboard.mobile.protocol.Telemetry
 class MonitorStateTest {
     @Test fun mismatchIsVisibleAndActionable() {
         val state = MonitorState(
-            connected = true, lastSeenMs = 10_000, firmware = FirmwareInfo("ACB2", "3.29", setOf("BOARD")),
+            connected = true, lastSeenMs = 10_000,
+            firmware = FirmwareInfo("ACB2", "3.29", "NANO", setOf("BOARD")),
             sensorSquares = (MonitorState.initialOccupancy - 12) + 28,
             expectedSquares = MonitorState.initialOccupancy,
         )
@@ -47,7 +48,7 @@ class MonitorStateTest {
         val state = MonitorState(
             connected = true,
             lastSeenMs = now,
-            firmware = FirmwareInfo("ACB2", "3.29", setOf("TELEM", "BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.0", "NANO", setOf("TELEM", "BOARD")),
             telemetry = Telemetry(
                 protocol = "ACB2", sequence = 1, homed = false, remoteMode = false,
                 motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
@@ -65,7 +66,7 @@ class MonitorStateTest {
         val now = 20_000L
         val base = MonitorState(
             connected = true, lastSeenMs = now,
-            firmware = FirmwareInfo("ACB2", "3.29", setOf("BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.0", "NANO", setOf("BOARD")),
             sensorSquares = MonitorState.initialOccupancy,
             sensorUpdatedMs = 1_000L,
         )

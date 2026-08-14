@@ -66,11 +66,11 @@ and deterministic square order. The physical cost prioritizes:
 Search duration, node count, temporary pieces, corridor/parking branch width,
 and dependency depth are bounded. A limit failure is explicit and never falls
 back to an unverified move. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search. With firmware 4.8's
-`EDGEEXIT`, capture removal is a search transition containing a tracked carried
+standard castling sides are adapted before search. Capture removal is a search
+transition containing a tracked carried
 path to any available `a1`-`a8` exit. A winding empty route requires no temporary
 piece movement; only a genuinely disconnected edge invokes ordinary recursive
-parking. Capability detection preserves the stricter firmware 4.7 lane model.
+parking. Version 5.0 has no legacy routing branch.
 
 ## Route transaction
 
@@ -87,7 +87,7 @@ PLAN -> BOARD -> (straight DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOV
 
 Each exact acknowledgement advances one state. The phone maintains the expected
 occupancy independently from the Nano and uses separate control and physical-
-motion timeouts. A 4.7+ `PLAN` never moves hardware; `REMOVE` is sent only after
+motion timeouts. `PLAN` never moves hardware; `REMOVE` is sent only after
 the planner has routed the capture to a valid exit. After `REMOVE` or any `DRAG`, loss of
 proof makes state uncertain. The app sends one `STOP`, releases the connection
 owner, ends the game, and requires inspection instead of retry.
@@ -97,7 +97,7 @@ piece centring. The host owns chess legality and labels; the Nano owns
 deterministic motion, limits, magnet cutoff, corridor checks, and sensor-frame
 proof.
 
-Firmware 4.6 also supports explicit `APPBOARD` authority. The user selects every
+The protocol also supports explicit `APPBOARD` authority. The user selects every
 human move in `ChessboardView`; `GameController` sends both sides through the
 same route transaction. The Nano maintains a separate command-derived virtual
 frame and `BOARD` returns that frame during the session, so phone/Nano state is
@@ -144,9 +144,9 @@ Structured log writes use one daemon writer and bounded rollover files.
 ## Extending the protocol
 
 Add a typed value and parser in `protocol`, simulator coverage, repository event
-reduction, parser/model tests, then display it. Gate new behaviour on the INFO
-capability set. Keep old positional responses compatible. Host-planned motion
-must retain exclusive ownership and exact acknowledgement checks.
+reduction, parser/model tests, then display it. Bump the coordinated software
+version and update Nano, Android, and Windows in the same release. Host-planned
+motion must retain exclusive ownership and exact acknowledgement checks.
 
 ## Fixed-layout rule
 

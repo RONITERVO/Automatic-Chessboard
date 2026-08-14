@@ -5,6 +5,8 @@ import time
 
 import serial
 
+from protocol import hello_command
+
 
 def read_for(connection: serial.Serial, seconds: float) -> str:
     deadline = time.monotonic() + seconds
@@ -20,7 +22,7 @@ def main() -> int:
     args = parser.parse_args()
     with serial.Serial(args.port, 9600, timeout=0.1) as connection:
         print("BOOT:", repr(read_for(connection, 5.0)))
-        for command in ("PING", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST"):
+        for command in (hello_command(), "INFO", "TELEM", "BOARD", "BTTEST"):
             connection.write((command + "\n").encode("ascii"))
             connection.flush()
             reply = read_for(connection, 1.0)

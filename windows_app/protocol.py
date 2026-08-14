@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+SOFTWARE_VERSION = "5.0.0"
+PROTOCOL_VERSION = "ACB3"
+CURRENT_CAPABILITIES = frozenset({
+    "BOARD", "TELEM", "REMOTE", "ESTOP", "BTTEST", "SWTEST", "CALIBRATE",
+    "MANUAL", "SENSORFRAME", "PLANROUTE", "REMOVE", "EDGEEXIT", "APPBOARD",
+    "DEVPATH", "DEVJOG", "ALIGN",
+})
+
 
 @dataclass(frozen=True)
 class BoardEvent:
@@ -17,7 +25,12 @@ class BoardEvent:
 class FirmwareInfo:
     protocol: str
     firmware: str
+    hardware: str
     capabilities: frozenset[str]
+
+    @property
+    def compatible(self) -> bool:
+        return self.protocol == PROTOCOL_VERSION and self.firmware == SOFTWARE_VERSION
 
 
 @dataclass(frozen=True)
@@ -65,13 +78,13 @@ class CommandRisk(Enum):
 
 
 READ_ONLY_COMMANDS = frozenset({
-    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY",
+    "HELLO", "INFO", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY",
 })
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
 MOTION_COMMANDS = frozenset({
-    "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
+    "START", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
     "PLAN", "DRAG", "REMOVE", "COMMIT", "ALIGN", "NUDGE",
 })
 
@@ -109,12 +122,17 @@ def parse_event(line: str) -> BoardEvent:
 
 
 def parse_info(event: BoardEvent) -> FirmwareInfo:
-    if event.kind != "INFO" or len(event.args) < 2:
+    if event.kind != "INFO" or len(event.args) != 3:
         raise ValueError(f"Not an INFO event: {event.raw!r}")
-    capabilities = frozenset(
-        item.strip().upper() for item in " ".join(event.args[2:]).split(",") if item.strip()
+    if event.args[2] not in {"NANO", "MKS_GEN_L_V1", "SIM"}:
+        raise ValueError(f"Unknown INFO hardware profile: {event.raw!r}")
+    return FirmwareInfo(
+        event.args[0], event.args[1], event.args[2], CURRENT_CAPABILITIES
     )
-    return FirmwareInfo(event.args[0], event.args[1], capabilities)
+
+
+def hello_command() -> str:
+    return f"HELLO {SOFTWARE_VERSION}"
 
 
 def parse_telemetry(event: BoardEvent) -> Telemetry:
@@ -220,13 +238,6 @@ def _normalize_uci(uci: str) -> str:
     if source == target or (len(text) == 5 and text[4] not in "qrbn"):
         raise ValueError(f"Invalid UCI move: {uci!r}")
     return text
-
-
-def play_command(uci: str, *, castling: bool = False,
-                 en_passant: bool = False) -> str:
-    normalized = _normalize_uci(uci)
-    flag = "C" if castling else "E" if en_passant else ""
-    return f"PLAY {normalized}{' ' + flag if flag else ''}"
 
 
 def start_game_command(human_white: bool, *, app_board: bool = False) -> str:

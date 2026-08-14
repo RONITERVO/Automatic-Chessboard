@@ -2,33 +2,68 @@
 
 // ---------------------------- AI physical movement -----------------------
 
-// Standalone capture removal uses a compact square-centre L route. Connected
-// companions with EDGEEXIT can first DRAG the captured piece through any safe
-// orthogonal route to an a-file square, where this same primitive removes it.
-boolean captureExitClear(byte file, byte source_rank, byte exit_rank) {
-  byte first_rank = min(source_rank, exit_rank);
-  byte last_rank = max(source_rank, exit_rank);
-  for (byte rank = first_rank; rank <= last_rank; rank++) {
-    if (rank != source_rank &&
-        boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1))
-      return false;
-  }
-  for (byte column = 0; column < file - 1; column++)
-    if (boardSquareOccupied(reed_sensor_record, 8 - exit_rank, column))
-      return false;
-  return true;
-}
+// Find a shortest empty orthogonal route from the captured piece to any a-file
+// square. The caller's path buffer doubles as the BFS queue; the only other
+// workspace is one 64-byte parent table on the stack, so no global SRAM or
+// EEPROM is consumed. West-first ordering makes equally short routes prefer
+// the bin while still routing around arbitrary occupied shapes.
+byte findCapturePath(byte source, byte *path) {
+  byte parent[64];
+  memset(parent, NO_SQUARE, sizeof(parent));
+  byte head = 0;
+  byte tail = 1;
+  path[0] = source;
+  parent[source] = source;
+  byte target = NO_SQUARE;
 
-byte findCaptureExitRank(byte file, byte source_rank) {
-  for (byte rank = source_rank; rank > 0; rank--)
-    if (captureExitClear(file, source_rank, rank)) return rank;
-  for (byte rank = source_rank + 1; rank <= 8; rank++)
-    if (captureExitClear(file, source_rank, rank)) return rank;
-  return 0;
+  while (head < tail) {
+    byte current = path[head++];
+    if (!(current & 7)) {
+      target = current;
+      break;
+    }
+    byte file = current & 7;
+    byte rank = current >> 3;
+    for (byte direction = 0; direction < 4; direction++) {
+      byte next;
+      if (direction == 0) next = current - 1;
+      else if (direction == 1) {
+        if (!rank) continue;
+        next = current - 8;
+      }
+      else if (direction == 2) {
+        if (rank == 7) continue;
+        next = current + 8;
+      }
+      else {
+        if (file == 7) continue;
+        next = current + 1;
+      }
+      if (parent[next] != NO_SQUARE ||
+          boardSquareOccupied(reed_sensor_record, 7 - (next >> 3), next & 7))
+        continue;
+      parent[next] = current;
+      path[tail++] = next;
+    }
+  }
+  if (target == NO_SQUARE) return 0;
+
+  byte length = 0;
+  do {
+    path[length++] = target;
+    target = parent[target];
+  } while (path[length - 1] != source);
+  for (byte left = 0, right = length - 1; left < right; left++, right--) {
+    byte swap = path[left];
+    path[left] = path[right];
+    path[right] = swap;
+  }
+  return length;
 }
 
 boolean captureRouteClear(byte file, byte rank) {
-  return findCaptureExitRank(file, rank) != 0;
+  byte path[64];
+  return findCapturePath((rank - 1) * 8 + file - 1, path) != 0;
 }
 
 // This preflight is used before ordinary motion and again after a manual
@@ -64,8 +99,9 @@ boolean __attribute__((noinline)) carriedPathClear(
 }
 
 boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
-  byte exit_rank = findCaptureExitRank(file, rank);
-  if (!exit_rank) return false;
+  byte path[64];
+  byte path_length = findCapturePath((rank - 1) * 8 + file - 1, path);
+  if (!path_length) return false;
   if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
   if (use_magnet) {
     lcd.clear();
@@ -74,10 +110,20 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     lcd.print(F("TO LEFT BIN"));
     setMagnet(true);
   }
-  if (exit_rank != rank &&
-      !moveHeldPieceSafely(file, rank, file, exit_rank)) return false;
-  if (file != 1 &&
-      !moveHeldPieceSafely(file, exit_rank, 1, exit_rank)) return false;
+  byte segment_start = 0;
+  while (segment_start + 1 < path_length) {
+    int direction = (int)path[segment_start + 1] - path[segment_start];
+    byte segment_end = segment_start + 1;
+    while (segment_end + 1 < path_length &&
+           (int)path[segment_end + 1] - path[segment_end] == direction)
+      segment_end++;
+    byte destination = path[segment_end];
+    if (!moveHeldPieceSafely(file, rank, (destination & 7) + 1,
+                             (destination >> 3) + 1)) return false;
+    file = (destination & 7) + 1;
+    rank = (destination >> 3) + 1;
+    segment_start = segment_end;
+  }
   int end_x = (int)CAPTURE_SIDE_X_STEPS - (int)FILE_PITCH_STEPS;
   if (!pulseCoreXYLine(end_x, 0, SPEED_SLOW, true)) return false;
   // The corridor completes before release. setMagnet(false) keeps the head
@@ -89,8 +135,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   // The off-board bin coordinate cannot be stored as a board square. If this
   // capture left above the calibration park, move down outside the board before
   // starting the first calibration approach.
-  if (exit_rank > CALIBRATION_PARK_RANK) {
-    int staging_steps = ((int)exit_rank - CALIBRATION_PARK_RANK) *
+  if (rank > CALIBRATION_PARK_RANK) {
+    int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
                         (int)RANK_PITCH_STEPS;
     if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
   }

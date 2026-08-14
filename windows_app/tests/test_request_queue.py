@@ -4,6 +4,7 @@ import time
 from types import SimpleNamespace
 
 from app import AutomaticChessboardApp
+from protocol import hello_command
 
 
 class _ConnectedTransport:
@@ -21,13 +22,13 @@ class SafeRequestQueueTests(unittest.TestCase):
         self.app._send = lambda command, quiet=False: self.sent.append(command) or True
 
     def test_only_one_request_is_in_flight(self):
-        self.app._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
-        self.assertEqual(self.sent, ["PING"])
-        self.assertEqual(self.app.safe_request_pending[:2], ("PONG", "PING"))
+        self.app._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
+        self.assertEqual(self.sent, [hello_command()])
+        self.assertEqual(self.app.safe_request_pending[:2], ("HELLO", hello_command()))
 
-        self.assertTrue(self.app._complete_safe_request("PONG"))
+        self.assertTrue(self.app._complete_safe_request("HELLO"))
         self.app._dispatch_safe_request()
-        self.assertEqual(self.sent, ["PING", "INFO"])
+        self.assertEqual(self.sent, [hello_command(), "INFO"])
 
     def test_duplicate_and_motion_blocking_are_safe(self):
         self.app.motion_expected = True
@@ -49,8 +50,8 @@ class SafeRequestQueueTests(unittest.TestCase):
         callbacks = []
         evaluated = []
         self.app.root = type("Root", (), {"after": lambda _self, _delay, callback: callbacks.append(callback)})()
-        self.app.response_counts = {"PONG": 1, "INFO": 0, "TELEM": 0, "BOARD": 0}
-        self.app.diagnostic_batch = ({"PONG": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}, time.monotonic() + 10)
+        self.app.response_counts = {"HELLO": 1, "INFO": 0, "TELEM": 0, "BOARD": 0}
+        self.app.diagnostic_batch = ({"HELLO": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}, time.monotonic() + 10)
         self.app.safe_request_pending = ("INFO", "INFO", time.monotonic())
         self.app.safe_request_queue = deque(("TELEM", "BOARD"))
         self.app._evaluate_diagnostics = lambda value: evaluated.append(value)
@@ -61,17 +62,17 @@ class SafeRequestQueueTests(unittest.TestCase):
 
         self.app.response_counts.update({"INFO": 1, "TELEM": 1, "BOARD": 1})
         callbacks.pop()()
-        self.assertEqual(evaluated, [{"PONG": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}])
+        self.assertEqual(evaluated, [{"HELLO": 0, "INFO": 0, "TELEM": 0, "BOARD": 0}])
 
     def test_diagnostics_reject_stale_cached_data_after_request_timeouts(self):
-        baseline = {"PONG": 4, "INFO": 4, "TELEM": 4, "BOARD": 4}
+        baseline = {"HELLO": 4, "INFO": 4, "TELEM": 4, "BOARD": 4}
         self.app.response_counts = baseline.copy()
         self.app.diagnostic_batch = (baseline, time.monotonic() - 1)
         self.app.safe_request_pending = None
         self.app.safe_request_queue = deque()
         self.app.model = SimpleNamespace(
             connection_text="Board connected and responding",
-            firmware=SimpleNamespace(firmware="3.29", protocol="ACB2"),
+            firmware=SimpleNamespace(firmware="4.8.0", protocol="ACB2", compatible=False),
             telemetry=SimpleNamespace(
                 button_a_released=True, button_b_released=True, button_b_raw=1023,
             ),

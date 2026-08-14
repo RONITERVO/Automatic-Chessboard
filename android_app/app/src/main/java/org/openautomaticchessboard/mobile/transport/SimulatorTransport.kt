@@ -4,7 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import org.openautomaticchessboard.mobile.protocol.Protocol
 import org.openautomaticchessboard.mobile.protocol.PlanRouteRequest
-import org.openautomaticchessboard.mobile.domain.routing.findCaptureExitRank
 
 class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardTransport {
     override val label = "Simulator"
@@ -27,15 +26,31 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var alignmentMarker = false
     private var alignmentX = 0
     private var alignmentY = 0
+    private var versionAgreed = false
 
     override fun start() {
         isConnected = true
         listener.onStatus("Simulator connected — hardware cannot move", true)
-        emit("READY ACB1", 100)
+        emit("READY ${Protocol.SOFTWARE_VERSION}", 100)
     }
 
     override fun send(line: String) {
         check(isConnected) { "Simulator is disconnected" }
+        val normalized = line.trim()
+        if (normalized == Protocol.helloCommand()) {
+            versionAgreed = true
+            emit(Protocol.helloCommand(), 30)
+            return
+        }
+        if (normalized.startsWith("HELLO")) {
+            versionAgreed = false
+            emit("ERR VERSION", 30)
+            return
+        }
+        if (!versionAgreed && normalized !in setOf("!", "INFO", "TELEM", "BOARD", "STOP")) {
+            emit("ERR VERSION", 30)
+            return
+        }
         when (val command = line.trim()) {
             "!" -> {
                 fault = true
@@ -48,12 +63,10 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 remoteMode = false
                 emit("ESTOP REMOTE", 30)
             }
-            "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.8.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,ALIGN", 30)
-            "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0}", 30)
-            "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
+            "INFO" -> emit("INFO ${Protocol.PROTOCOL_VERSION} ${Protocol.SOFTWARE_VERSION} SIM", 30)
+            "TELEM" -> emit("TELEM ${Protocol.PROTOCOL_VERSION} $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
-            "GEOMETRY" -> emit("GEOMETRY ACB1 188 188 354 871 1", 30)
+            "GEOMETRY" -> emit("GEOMETRY ${Protocol.PROTOCOL_VERSION} 188 188 354 871 1", 30)
             "ALIGN STATUS" -> emit(alignmentStatus(), 30)
             "BTTEST" -> emit("BT SKIP SIMULATOR", 30)
             "STOP" -> {
@@ -82,7 +95,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             }
             else -> when {
                 fault && command.startsWith("START ") -> emit("ERR FAULT", 30)
-                fault && command.startsWith("PLAY ") -> emit("ERR FAULT", 30)
                 command.startsWith("START ") -> {
                     occupied.clear()
                     occupied.addAll(MonitorStateDefaults.START_SQUARES)
@@ -97,14 +109,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     if (!appBoard) emit("SETUP PRESS A", 30)
                     emit("SESSION $humanSide", 60)
                     emit(if (humanSide == "W") "TURN HUMAN" else "TURN COMPUTER", 120)
-                }
-                command.startsWith("PLAY ") -> {
-                    val fields = command.split(' ')
-                    val move = fields.getOrNull(1).orEmpty()
-                    emit("MOVING $move", 50)
-                    applyMove(move, fields.getOrNull(2))
-                    sequence = 14
-                    emit("DONE $move", 250)
                 }
                 command.startsWith("PLAN ") -> beginPlan(command)
                 command.startsWith("DRAG ") -> runDrag(command)
@@ -233,7 +237,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         runCatching {
             val square = checkNotNull(planCaptureSquare)
             check(square in occupied) { "PLAN STATE" }
-            check(square % 8 == 0 || findCaptureExitRank(square, occupied) != null) { "BAD ROUTE" }
+            check(captureCanReachBin(square)) { "BAD ROUTE" }
             occupied.remove(square)
             planCaptureSquare = null
             emit("REMOVED", 180)
@@ -291,6 +295,26 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         planCaptureSquare = null
         planInitial = null
         planExpected = null
+    }
+
+    private fun captureCanReachBin(source: Int): Boolean {
+        val blocked = occupied - source
+        val queue = ArrayDeque(listOf(source))
+        val seen = mutableSetOf(source)
+        while (queue.isNotEmpty()) {
+            val square = queue.removeFirst()
+            if (square % 8 == 0) return true
+            val file = square % 8
+            val rank = square / 8
+            val neighbours = buildList {
+                if (file > 0) add(square - 1)
+                if (file < 7) add(square + 1)
+                if (rank > 0) add(square - 8)
+                if (rank < 7) add(square + 8)
+            }
+            neighbours.filter { it !in blocked && seen.add(it) }.forEach(queue::addLast)
+        }
+        return false
     }
 
     private fun alignmentStatus(): String {

@@ -1,12 +1,30 @@
 # Nano firmware development
 
-Firmware 4.8 keeps the controller responsible for deterministic motion, sensor
+Firmware 5.0 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.8.0 behavior
+## Release 5.0.0 behavior
+
+Firmware and both companions now use one exact release contract. A companion
+must send `HELLO 5.0.0` on its USB or Bluetooth transport before any control or
+motion command; the Nano answers only an exact match. `INFO`, `TELEM`, `BOARD`,
+`STOP`, and the byte-level `!` emergency halt remain available for diagnosis and
+recovery. The old `PLAY`, `PING`, and `STATUS` commands and capability-string
+negotiation were removed. Install matching app and firmware releases together.
+
+Standalone capture removal now searches the complete 8x8 empty-square graph.
+It chooses a shortest orthogonal route to any of the eight a-file exits and
+compresses it into straight, fast, full-step square-centre carries. This uses
+stack workspace only—no EEPROM and no global SRAM. If every exit is genuinely
+disconnected, the LCD requests the existing sensor-verified manual move.
+
+All supported builds assume the capture bin and carriage clearance extend along
+the complete left edge beside `a1` through `a8`.
+
+## Release 4.8.0 history
 
 Firmware 4.8 advertises `EDGEEXIT`. During a deferred capture, a capable phone
 or computer may use ordinary verified `DRAG` segments to carry the captured
@@ -16,10 +34,8 @@ The Nano follows that capture square through every proven transition and allows
 zero temporary pieces whenever any edge exit is reachable and invokes the same
 parking/dependency search only when every exit is genuinely disconnected.
 
-Standalone capture removal remains deliberately compact: it tries vertical-
-then-left square-centre L routes and requests the existing sensor-verified
-manual fallback if none is clear. This keeps general graph search on the
-companion without increasing Nano global SRAM.
+Version 5.0 supersedes the compact L-only standalone routing described by this
+historical release.
 
 ## Release 4.7.0 behavior
 
@@ -30,7 +46,7 @@ to park pieces blocking all left-bin lanes, request `REMOVE`, prove the complete
 board frame, finish the main move, and restore every parked piece. This closes
 positions where a legal capture previously failed with `ERR BAD ROUTE` before
 the planner could clear an exit. Firmware 4.1-4.6 remains supported through
-capability detection; firmware 4.7 and newer advertise `REMOVE`.
+capability detection; that compatibility negotiation was removed in version 5.0.
 
 ## Release 4.6.0 behavior
 
@@ -215,8 +231,8 @@ castles, exact commit/cancel behavior, emergency halt, and injected stale or
 failed sensor transitions. No model code is compiled into the Nano.
 
 `non_motion_serial_test.py` samples a connected Nano using a hard allowlist of
-only `PING`, `INFO`, `STATUS`, `TELEM`, and `BOARD`. It checks firmware identity,
-capabilities, framing, magnet-off telemetry, and repeated serial stability. Reed
+only `HELLO 5.0.0`, `INFO`, `TELEM`, and `BOARD`. It checks exact release identity,
+framing, magnet-off telemetry, and repeated serial stability. Reed
 occupancy is recorded but deliberately not judged. The probe cannot send an
 upload, calibration, movement, magnet, transaction, stop, or emergency command.
 Some Nano USB adapters can reset when their serial port opens even with DTR held
@@ -249,9 +265,10 @@ a certified safety function.
 
 ## Resource policy
 
-The 4.8 Nano build uses 29802 bytes of flash and 1115 bytes of global SRAM.
-`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 918 bytes of
-physical flash and 933 bytes for stack/local runtime state. Firmware 4.8 is 64
-flash bytes smaller than 4.7 and still adds no global SRAM. The packed
+The 5.0 Nano build uses 29534 bytes of flash and 1091 bytes of global SRAM.
+`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 1186 bytes of
+physical flash and 957 bytes for stack/local runtime state. Despite full-board
+standalone bin routing, 5.0 saves 268 flash bytes and 24 global SRAM bytes versus
+4.8. The packed
 three-snapshot board representation uses 24 bytes instead of 192 bytes and is
 reused as either reed-derived or command-derived occupancy.

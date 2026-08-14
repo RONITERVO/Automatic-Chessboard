@@ -42,7 +42,8 @@ from protocol import (
     parse_geometry,
     parse_info,
     parse_telemetry,
-    play_command,
+    hello_command,
+    SOFTWARE_VERSION,
     start_game_command,
 )
 from routing import MotionPlan, PlannerConfig, PlanningError, plan_chess_move
@@ -55,7 +56,7 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.6.0"
+APP_VERSION = SOFTWARE_VERSION
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
@@ -514,7 +515,7 @@ class AutomaticChessboardApp:
         ttk.Label(
             engine_frame,
             text=("Stockfish and collision-safe rearrangement planning run on Windows. "
-                  "Firmware 4.6 executes one fail-safe drag transaction at a time."),
+                  "Matching 5.0 firmware executes one fail-safe drag transaction at a time."),
             wraplength=470, style="Quiet.TLabel",
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
@@ -623,7 +624,7 @@ class AutomaticChessboardApp:
             wraplength=430,
         ).grid(row=1, column=0, sticky="ew", pady=(5, 8))
 
-        self.alignment_message = tk.StringVar(value="Connect firmware 4.5 or newer to begin.")
+        self.alignment_message = tk.StringVar(value="Connect matching 5.0 firmware to begin.")
         self.alignment_geometry_text = tk.StringVar(value="Current firmware geometry: not read")
         self.alignment_points_text = tk.StringVar(value="Point A: —   Point B: —")
         self.alignment_result_text = tk.StringVar(value="Result appears after two valid points.")
@@ -887,13 +888,13 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board before refreshing.", parent=self.root)
             return
-        self._queue_safe_requests("INFO", "TELEM", "BOARD")
+        self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
 
     @staticmethod
     def _expected_response(command: str) -> str:
         verb = command.split(maxsplit=1)[0].upper()
-        if verb in ("PING", "HELLO"):
-            return "PONG"
+        if verb == "HELLO":
+            return "HELLO"
         if verb == "BTTEST":
             return "BT"
         if command.strip().upper() == "ALIGN STATUS":
@@ -1009,12 +1010,14 @@ class AutomaticChessboardApp:
         lower = status.lower()
         if "connected" in lower and "disconnected" not in lower:
             self.model.connected = True
+            self.model.firmware = None
             if not self.manual_calibration_verified:
                 self.manual_status.set("Connected; calibrate from this page before moving.")
-            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
+            self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
         elif any(word in lower for word in ("disconnected", "interrupted", "stopped", "reconnecting")):
             self._invalidate_game_session()
             self.model.connected = False
+            self.model.firmware = None
             self.safe_request_queue.clear()
             self.safe_request_pending = None
             self.manual_calibration_verified = False
@@ -1045,15 +1048,24 @@ class AutomaticChessboardApp:
         event = parse_event(line)
         self.response_counts[event.kind] = self.response_counts.get(event.kind, 0) + 1
         self._append_log("RX", event.kind, " ".join(event.args))
-        self._complete_safe_request(event.kind)
+        completion_kind = event.kind
+        if (event.kind == "ERR" and event.args[:1] == ("VERSION",) and
+                self.safe_request_pending and self.safe_request_pending[0] == "HELLO"):
+            completion_kind = "HELLO"
+        self._complete_safe_request(completion_kind)
         if event.kind == "INFO":
             try:
                 self.model.firmware = parse_info(event)
             except ValueError as error:
                 self.model.last_error = str(error)
             else:
-                if "ALIGN" in self.model.firmware.capabilities:
+                if self.model.firmware.compatible:
                     self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
+                else:
+                    self.model.last_error = (
+                        f"Software mismatch: app {SOFTWARE_VERSION}, firmware "
+                        f"{self.model.firmware.firmware}. Install the matching release on both."
+                    )
         elif event.kind == "GEOMETRY":
             try:
                 self.alignment_geometry = parse_geometry(event)
@@ -1131,7 +1143,7 @@ class AutomaticChessboardApp:
                 else:
                     self._verify_manual_sensors()
                     self._maybe_start_route_planning()
-        elif event.kind in ("READY", "PONG"):
+        elif event.kind in ("READY", "HELLO"):
             self._set_connection_text("Board connected and responding")
         elif event.kind == "SETUP":
             self.motion_expected = False
@@ -1405,14 +1417,6 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
             return False
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if not {"CALIBRATE", "MANUAL"}.issubset(capabilities):
-            messagebox.showerror(
-                "Firmware update required",
-                "Install firmware 3.31 or newer to use in-app calibration and square movement.",
-                parent=self.root,
-            )
-            return False
         if not self._sensor_frame_ready():
             return False
         if self.session_active:
@@ -1441,12 +1445,11 @@ class AutomaticChessboardApp:
         return True
 
     def _sensor_frame_ready(self) -> bool:
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "SENSORFRAME" in capabilities:
+        if self.model.firmware and self.model.firmware.compatible:
             return True
         messagebox.showerror(
-            "Firmware update required",
-            "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.",
+            "Matching software required",
+            f"Install version {SOFTWARE_VERSION} on both this app and the Nano, then reconnect.",
             parent=self.root,
         )
         return False
@@ -1674,12 +1677,7 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
             return
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "ALIGN" not in capabilities:
-            messagebox.showerror(
-                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
-                parent=self.root,
-            )
+        if not self._sensor_frame_ready():
             return
         self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
         self.alignment_message.set("Reading firmware geometry and any interrupted alignment session.")
@@ -1700,12 +1698,7 @@ class AutomaticChessboardApp:
             return
         if not self._manual_capability_ready():
             return
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "ALIGN" not in capabilities:
-            messagebox.showerror(
-                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
-                parent=self.root,
-            )
+        if not self._sensor_frame_ready():
             return
         if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
             messagebox.showwarning("Already aligning", "Finish the active alignment first.", parent=self.root)
@@ -1858,18 +1851,9 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
             return
-        sensorless = self.game_input_mode.get() == "App"
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if sensorless:
-            if not {"APPBOARD", "PLANROUTE"}.issubset(capabilities):
-                messagebox.showerror(
-                    "Firmware update required",
-                    "App-controlled play requires firmware 4.6 or newer with APPBOARD and PLANROUTE.",
-                    parent=self.root,
-                )
-                return
-        elif not self._sensor_frame_ready():
+        if not self._sensor_frame_ready():
             return
+        sensorless = self.game_input_mode.get() == "App"
         warning = (
             "Confirm all pieces are in the standard starting position. Reed switches will be ignored: "
             "select every human move by tapping the app board, do not move pieces by hand except when "
@@ -2076,34 +2060,20 @@ class AutomaticChessboardApp:
         self.pending_engine_move = move
         self.pending_move_is_human = human
         self.pending_move_generation = move_generation
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "PLANROUTE" in capabilities:
-            self.safe_request_queue.clear()
-            self.route_snapshot_pending = True
-            self.route_snapshot_request_sent = False
-            self.route_planning = False
-            self.motion_expected = True
-            self.route_waiting_for = "BOARD"
-            self.route_current_command = "BOARD"
-            self.route_deadline = 0.0
-            self.game_status.set(
-                "Checking a fresh virtual app/Nano board state before collision-safe routing..."
-                if self.sensorless_game else
-                "Reading all 64 sensors before collision-safe route planning..."
-            )
-            self._dispatch_route_snapshot()
-            return
-
-        # Backward compatibility for firmware 4.0 and earlier. Legal chess moves
-        # retain the original direct/knight physical planner.
-        command = play_command(
-            move.uci(),
-            castling=self.board.is_castling(move),
-            en_passant=self.board.is_en_passant(move),
+        self.safe_request_queue.clear()
+        self.route_snapshot_pending = True
+        self.route_snapshot_request_sent = False
+        self.route_planning = False
+        self.motion_expected = True
+        self.route_waiting_for = "BOARD"
+        self.route_current_command = "BOARD"
+        self.route_deadline = 0.0
+        self.game_status.set(
+            "Checking a fresh virtual app/Nano board state before collision-safe routing..."
+            if self.sensorless_game else
+            "Reading all 64 sensors before collision-safe route planning..."
         )
-        if self._send(command):
-            self.motion_expected = True
-            self.game_status.set(f"Board is moving {move.uci()}; keep hands clear.")
+        self._dispatch_route_snapshot()
 
     def _dispatch_route_snapshot(self) -> None:
         if (not self.route_snapshot_pending or self.route_snapshot_request_sent or
@@ -2166,12 +2136,8 @@ class AutomaticChessboardApp:
                     position,
                     move,
                     physical_occupancy=occupancy,
-                    deferred_capture="REMOVE" in (
-                        self.model.firmware.capabilities if self.model.firmware else frozenset()
-                    ),
-                    edge_capture_exit="EDGEEXIT" in (
-                        self.model.firmware.capabilities if self.model.firmware else frozenset()
-                    ),
+                    deferred_capture=True,
+                    edge_capture_exit=True,
                     config=config,
                 )
                 self.events.put(("route_plan_ready", (generation, plan)))
@@ -2277,7 +2243,7 @@ class AutomaticChessboardApp:
             error = actual_error
         detail = str(error) or error.__class__.__name__
         self.recorder.record("route", "plan_failed", error=detail)
-        # A 4.7+ PLAN is reversible because no magnet motion was issued. Never
+        # PLAN is reversible because no magnet motion was issued. Never
         # attempt automatic cancellation after REMOVE/DRAG motion: a
         # lost acknowledgement leaves the physical arrangement uncertain.
         connected = self.transport is not None and self.transport.is_connected
@@ -2482,11 +2448,11 @@ class AutomaticChessboardApp:
         connected = bool(self.transport and self.transport.is_connected)
         self._set_diag("connection", "Pass" if connected else "Fail",
                        self.model.connection_text, "pass" if connected else "fail")
-        expected = ("PONG", "INFO", "TELEM", "BOARD")
+        expected = ("HELLO", "INFO", "TELEM", "BOARD")
         baseline = {kind: self.response_counts.get(kind, 0) for kind in expected}
         self.diagnostic_batch = (baseline, time.monotonic() + (18.0 if connected else 0.0))
         if connected:
-            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
+            self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
         for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
 
@@ -2528,14 +2494,15 @@ class AutomaticChessboardApp:
         def fresh(kind: str) -> bool:
             return self.response_counts.get(kind, 0) > baseline.get(kind, 0)
 
-        connected = bool(self.transport and self.transport.is_connected and fresh("PONG"))
+        connected = bool(self.transport and self.transport.is_connected and fresh("HELLO"))
         self._set_diag("connection", "Pass" if connected else "Fail",
-                       self.model.connection_text if connected else "No current PONG response",
+                       self.model.connection_text if connected else "No matching HELLO response",
                        "pass" if connected else "fail")
         info = self.model.firmware if fresh("INFO") else None
-        self._set_diag("firmware", "Pass" if info else "Fail",
+        info_ok = bool(info and info.compatible)
+        self._set_diag("firmware", "Pass" if info_ok else "Fail",
                        f"Firmware {info.firmware}, protocol {info.protocol}" if info else "No INFO response",
-                       "pass" if info else "fail")
+                       "pass" if info_ok else "fail")
         telemetry = self.model.telemetry if fresh("TELEM") else None
         self._set_diag("telemetry", "Pass" if telemetry else "Fail",
                        self.model.sequence_name() if telemetry else "No TELEM response",

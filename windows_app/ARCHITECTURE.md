@@ -32,9 +32,9 @@ timing, magnet cutoff, straight-corridor validation, per-drag occupancy proof,
 and final-frame proof.
 
 This separation keeps the Nano maintainable and makes future planners replaceable
-without weakening the hardware guardrails. The app uses the `PLANROUTE`
-capability when available and falls back to the firmware 4.0 `PLAY` command for
-older boards.
+without weakening the hardware guardrails. Version 5.0 has one route-transaction
+contract and no direct-move fallback. An exact `HELLO 5.0.0` handshake gates all
+control and motion commands.
 
 ## Routing model
 
@@ -52,14 +52,13 @@ The bounded best-first search can:
 - handle capture removal, en passant, promotion occupancy, and both standard
   castling sides.
 
-On firmware 4.7+, capture removal is itself a bounded search transition. With
-firmware 4.8's `EDGEEXIT`, the captured piece becomes a tracked transaction
+Capture removal is itself a bounded search transition. The captured piece
+becomes a tracked transaction
 object: Windows routes it through empty square centres to any available `a1`-
 `a8` exit using ordinary verified `DRAG`s, then sends `REMOVE`. A zero-disturbance
 path therefore wins even when it winds around occupied squares. Only when every
 edge exit is disconnected does the normal dependency/parking search move another
-piece. Capability detection retains the stricter 4.7 boundary-lane planner and
-the original firmware 4.1-4.6 behavior.
+piece. There is no version-dependent routing branch in the 5.0 companion.
 
 Candidate corridors and parking squares are ranked before full configuration
 search. Disturbance count dominates the cost, followed by the physical number of
@@ -88,11 +87,11 @@ PLAN -> BOARD -> (DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOVE -> BOAR
 
 Windows waits for the exact acknowledgement, maintains its own expected
 occupancy frame, and applies separate control and motion timeouts. The Nano also
-checks the authoritative occupancy frame locally. `PLAN` is motionless on 4.7+;
+checks the authoritative occupancy frame locally. `PLAN` is motionless;
 after any `REMOVE` or drag, a lost or mismatched acknowledgement makes physical
 state uncertain and ends the session instead of retrying.
 
-Firmware 4.6 adds an explicit second authority mode rather than weakening that
+`APPBOARD` provides an explicit second authority mode rather than weakening that
 proof opportunistically. In `APPBOARD` play, both human and AI moves originate
 in the UI. The Nano seeds and independently updates a virtual standard-position
 occupancy frame; `BOARD` exposes that command-derived frame so the existing
@@ -134,11 +133,10 @@ polling pauses until they finish or fail.
 
 ## Extensibility
 
-Protocol evolution is capability-based. Add new optional lines rather than
-changing old positional responses. Parsers reject malformed data without taking
-control action. Every public capability needs parser tests, simulator support or
-an explicit hardware-only boundary, protocol documentation, and a backward-
-compatible fallback where practical.
+Protocol evolution uses coordinated release versions. Change the shared version,
+firmware, both companions, typed parsers, simulators, diagnostics, documentation,
+and tests together. Parsers reject malformed data without taking control action;
+there is no legacy motion fallback.
 
 ## Safety design
 

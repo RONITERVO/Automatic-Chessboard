@@ -7,15 +7,6 @@ void sendHostError(const __FlashStringHelper *message) {
   Serial.println(message);
 }
 
-void sendHostStatus() {
-  Serial.print(F("STATUS ACB1 "));
-  Serial.print(sequence);
-  Serial.print(' ');
-  Serial.print(trolley_homed ? 1 : 0);
-  Serial.print(' ');
-  Serial.println(remote_mode ? 1 : 0);
-}
-
 int freeRam() {
   extern int __heap_start, *__brkval;
   int stack_top;
@@ -29,14 +20,13 @@ static inline int readControlPinRaw(byte pin) {
 #endif
 
 void sendHostInfo() {
-  Serial.print(F("INFO ACB2 "));
+  Serial.print(F("INFO ACB3 "));
   Serial.print(F(FIRMWARE_VERSION));
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
-  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
-  Serial.print(',');
+  Serial.print(' ');
   Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
 #else
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
+  Serial.println(F(" NANO"));
 #endif
 }
 
@@ -46,7 +36,7 @@ void sendTelemetry() {
 #else
   int black_raw = analogRead(BUTTON_B_LIMIT_BLACK);
 #endif
-  Serial.print(F("TELEM ACB2 "));
+  Serial.print(F("TELEM ACB3 "));
   Serial.print(sequence);
   Serial.print(' ');
   Serial.print(trolley_homed ? 1 : 0);
@@ -246,7 +236,7 @@ void finishHostManualMotion(boolean succeeded) {
 }
 
 void sendHostGeometry() {
-  Serial.print(F("GEOMETRY ACB1 "));
+  Serial.print(F("GEOMETRY ACB3 "));
   Serial.print(FILE_PITCH_STEPS);
   Serial.print(' ');
   Serial.print(RANK_PITCH_STEPS);
@@ -686,9 +676,17 @@ void commitRemoteRoutePlan() {
   finishRemoteComputerTurn();
 }
 
-void processHostCommand(char *line) {
-  if (strcmp(line, "PING") == 0 || strcmp(line, "HELLO") == 0) {
-    Serial.println(F("PONG ACB1"));
+void processHostCommand(char *line, HostInputBuffer &buffer) {
+  if (strncmp_P(line, PSTR("HELLO "), 6) == 0) {
+    if (strcmp_P(line + 6, PSTR(FIRMWARE_VERSION)) == 0) {
+      buffer.flags |= HOST_VERSION_AGREED;
+      Serial.print(F("HELLO "));
+      Serial.println(F(FIRMWARE_VERSION));
+    }
+    else {
+      buffer.flags &= ~HOST_VERSION_AGREED;
+      sendHostError(F("VERSION"));
+    }
     return;
   }
   if (strcmp(line, "INFO") == 0) {
@@ -699,12 +697,19 @@ void processHostCommand(char *line) {
     sendTelemetry();
     return;
   }
-  if (strcmp(line, "STATUS") == 0) {
-    sendHostStatus();
-    return;
-  }
   if (strcmp(line, "BOARD") == 0) {
     sendSensorSnapshot();
+    return;
+  }
+  // STOP and the byte-level '!' emergency command are deliberately available
+  // even to a mismatched client. Every other state-changing command requires
+  // an exact companion/firmware release handshake on this transport.
+  if (strcmp(line, "STOP") == 0) {
+    stopRemoteSession();
+    return;
+  }
+  if (!(buffer.flags & HOST_VERSION_AGREED)) {
+    sendHostError(F("VERSION"));
     return;
   }
   if (strcmp_P(line, PSTR("GEOMETRY")) == 0) {
@@ -745,10 +750,6 @@ void processHostCommand(char *line) {
   }
   if (strcmp_P(line, PSTR("ALIGN END")) == 0) {
     runHostAlignmentEnd();
-    return;
-  }
-  if (strcmp(line, "STOP") == 0) {
-    stopRemoteSession();
     return;
   }
   if (strcmp(line, "CALIBRATE") == 0) {
@@ -822,39 +823,6 @@ void processHostCommand(char *line) {
     commitRemoteRoutePlan();
     return;
   }
-  if (strncmp(line, "PLAY ", 5) == 0) {
-    if (!remote_mode || sequence != remote_wait_host) {
-      sendHostError(F("NOT READY"));
-      return;
-    }
-    if (remote_human_move_pending) {
-      sendHostError(F("ACCEPT FIRST"));
-      return;
-    }
-
-    char *move_text = line + 5;
-    char *flag_text = strchr(move_text, ' ');
-    if (flag_text) {
-      *flag_text++ = 0;
-      remote_move_flags = *flag_text;
-    }
-    else remote_move_flags = 0;
-
-    if (!validMoveText(move_text)) {
-      sendHostError(F("BAD MOVE"));
-      return;
-    }
-    for (byte i = 0; i < 4; i++) lastM[i] = move_text[i];
-    lastM[4] = 0;
-    remote_promotion_piece = move_text[4];
-    if (remote_promotion_piece == 'q' || remote_promotion_piece == 'r' ||
-        remote_promotion_piece == 'b' || remote_promotion_piece == 'n') {
-      remote_move_flags = 'P';
-    }
-    else remote_promotion_piece = 0;
-    executeRemoteComputerMove();
-    return;
-  }
   if (strncmp(line, "GAMEOVER", 8) == 0) {
     if (!remote_mode) {
       sendHostError(F("NO SESSION"));
@@ -878,25 +846,26 @@ void processHostStream(Stream &input, HostInputBuffer &buffer) {
     char value = input.read();
     if (value == '!') {
       buffer.length = 0;
-      buffer.overflowed = false;
+      buffer.flags &= ~HOST_INPUT_OVERFLOWED;
       tripRemoteEmergencyStop();
       continue;
     }
     if (value == '\r' || value == '\n') {
-      if (!buffer.overflowed && buffer.length) {
+      if (!(buffer.flags & HOST_INPUT_OVERFLOWED) && buffer.length) {
         buffer.data[buffer.length] = 0;
-        processHostCommand(buffer.data);
+        processHostCommand(buffer.data, buffer);
       }
       buffer.length = 0;
-      buffer.overflowed = false;
+      buffer.flags &= ~HOST_INPUT_OVERFLOWED;
     }
-    else if (value >= 32 && value <= 126 && !buffer.overflowed) {
+    else if (value >= 32 && value <= 126 &&
+             !(buffer.flags & HOST_INPUT_OVERFLOWED)) {
       if (buffer.length < HOST_INPUT_SIZE - 1) {
         buffer.data[buffer.length++] = value;
       }
       else {
         buffer.length = 0;
-        buffer.overflowed = true;
+        buffer.flags |= HOST_INPUT_OVERFLOWED;
         sendHostError(F("LINE LONG"));
       }
     }
@@ -1008,32 +977,6 @@ void showRemoteSensorMismatch() {
   lcd.print(F("CHECK MOVED PIECE"));
   lcd.setCursor(0, 1);
   lcd.print(F("A=RETRY B=STOP"));
-}
-
-void executeRemoteComputerMove() {
-  lcd.clear();
-  lcd.print(F("PC MOVE "));
-  printMove(lastM);
-  lcd.setCursor(0, 1);
-  lcd.print(F("KEEP HANDS CLEAR"));
-  Serial.print(F("MOVING "));
-  Serial.println(lastM);
-  delay(500);
-
-  if (!computerPlayerMovement(lastM, remote_move_flags)) {
-    sequence = fault_screen;
-    showMotionFault();
-    sendHostError(F("MOTION"));
-    return;
-  }
-  if (!remoteBoardMatchesExpected()) {
-    sequence = remote_sensor_check;
-    showRemoteSensorMismatch();
-    sendHostError(F("SENSORS"));
-    return;
-  }
-  syncSensorState();
-  finishRemoteComputerTurn();
 }
 
 void finishRemoteComputerTurn() {

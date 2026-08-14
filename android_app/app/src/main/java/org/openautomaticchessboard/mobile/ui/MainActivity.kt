@@ -108,7 +108,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var alignmentPointA: AlignmentPoint? = null
     private var alignmentPointB: AlignmentPoint? = null
     private var alignmentPending = ""
-    private var alignmentMessage = "Connect firmware 4.5 or newer to align the board."
+    private var alignmentMessage = "Connect matching 5.0 firmware to align the board."
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
         override fun run() {
@@ -683,8 +683,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     override fun onBoardEvent(event: BoardEvent) {
         game.handle(event)
         when (event.kind) {
-            "INFO" -> if (runCatching { Protocol.parseInfo(event) }.getOrNull()
-                    ?.capabilities?.contains("ALIGN") == true) {
+            "INFO" -> if (runCatching { Protocol.parseInfo(event) }.getOrNull()?.compatible == true) {
                 repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
             }
             "GEOMETRY" -> runCatching { Protocol.parseGeometry(event) }
@@ -958,12 +957,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun confirmStartGame() {
         if (!monitorState.connected) { toast("Connect to the board first"); return }
         val appControlled = prefs.getBoolean("app_controlled_play", false)
-        val capabilities = monitorState.firmware?.capabilities.orEmpty()
-        if (appControlled && !capabilities.containsAll(setOf("APPBOARD", "PLANROUTE"))) {
-            alert("Firmware update required", "App-controlled play requires firmware 4.6 or newer with APPBOARD and PLANROUTE.")
-            return
-        }
-        if (!appControlled && !sensorFrameReady()) return
+        if (!sensorFrameReady()) return
         val message = if (appControlled) {
             "Confirm all pieces are in the standard starting position. Reed switches will be ignored: " +
                 "select every human move by tapping this app, never move pieces by hand except when prompted " +
@@ -984,11 +978,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun manualCapabilityReady(): Boolean {
         if (!monitorState.connected) { toast("Connect to the board first"); return false }
-        val capabilities = monitorState.firmware?.capabilities.orEmpty()
-        if (!capabilities.containsAll(setOf("MANUAL", "CALIBRATE"))) {
-            alert("Firmware update required", "Install firmware 3.31 or newer to use in-app calibration and square movement.")
-            return false
-        }
         if (!sensorFrameReady()) return false
         if (gameState.active) { alert("Game active", "Stop the game session before manual head or piece movement."); return false }
         if (alignmentIsActive()) { alert("Alignment active", "Record or finish board alignment first."); return false }
@@ -1000,8 +989,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun sensorFrameReady(): Boolean {
-        if ("SENSORFRAME" in monitorState.firmware?.capabilities.orEmpty()) return true
-        alert("Firmware update required", "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.")
+        if (monitorState.firmware?.compatible == true) return true
+        alert(
+            "Matching software required",
+            "Install version ${Protocol.SOFTWARE_VERSION} on both this app and the Nano, then reconnect.",
+        )
         return false
     }
 
@@ -1115,8 +1107,8 @@ class MainActivity : Activity(), BoardRepository.Observer {
             alignmentMessage = "Connect to the board first."
             return
         }
-        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
-            alignmentMessage = "Firmware 4.5 or newer is required for alignment."
+        if (monitorState.firmware?.compatible != true) {
+            alignmentMessage = "App and Nano must both run ${Protocol.SOFTWARE_VERSION}."
             return
         }
         repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
@@ -1126,10 +1118,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun startAlignmentChoice() {
         if (alignmentPending.isNotEmpty()) { toast("Wait for the current operation"); return }
         if (!manualCapabilityReady()) return
-        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
-            alert("Firmware update required", "Install firmware 4.5 or newer for board alignment.")
-            return
-        }
         if (!manualCalibrationVerified) {
             alert("Calibrate first", "Calibrate and wait for the e6 telemetry proof before alignment.")
             return

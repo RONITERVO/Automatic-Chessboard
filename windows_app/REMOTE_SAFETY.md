@@ -25,7 +25,7 @@ the board must be able to use it whenever remote movement is attempted.
 
 ## Route transaction guarantees
 
-Firmware 4.1 verifies the complete occupancy frame before a route begins, before
+Firmware 5.0 verifies the complete occupancy frame before a route begins, before
 and after every straight drag, and before commit. Windows independently checks a
 fresh `BOARD` frame after capture removal and every drag. These checks detect
 many stale-plan, dropped-piece, wrong-square, blocked-corridor, and link-ordering

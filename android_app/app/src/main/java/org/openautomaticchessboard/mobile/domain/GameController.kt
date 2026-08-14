@@ -102,6 +102,9 @@ class GameController(
     fun start(humanPlaysWhite: Boolean, useAppBoard: Boolean = false): Result<Unit> = runCatching {
         check(!active) { "Stop the current game first" }
         check(engine.isInstalled) { "Stockfish is unavailable for this Android CPU" }
+        check(channel.connected && channel.softwareCompatible) {
+            "App and Nano must both run ${Protocol.SOFTWARE_VERSION}"
+        }
         resetRoute()
         board = Board()
         moveList = MoveList()
@@ -320,31 +323,17 @@ class GameController(
         }
         pendingEngineMove = move
         pendingMoveIsHuman = human
-        if ("PLANROUTE" in channel.firmwareCapabilities) {
-            routePhase = RoutePhase.SNAPSHOT
-            routeGeneration++
-            routeSnapshotRequestedMs = System.currentTimeMillis()
-            status = if (appControlled) {
-                "Checking a fresh virtual board snapshot for collision-safe routing…"
-            } else {
-                "Reading all 64 sensors for collision-safe routing…"
-            }
-            channel.sendCommand("BOARD")
-                .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
-                .onFailure { failRoute(it.message ?: "Could not request the board snapshot") }
-            return
+        routePhase = RoutePhase.SNAPSHOT
+        routeGeneration++
+        routeSnapshotRequestedMs = System.currentTimeMillis()
+        status = if (appControlled) {
+            "Checking a fresh virtual board snapshot for collision-safe routing…"
+        } else {
+            "Reading all 64 sensors for collision-safe routing…"
         }
-        val movingPiece = board.getPiece(move.from)
-        val castling = movingPiece.pieceType == PieceType.KING &&
-            kotlin.math.abs(move.from.ordinal % 8 - move.to.ordinal % 8) == 2
-        val enPassant = movingPiece.pieceType == PieceType.PAWN && board.getPiece(move.to) == Piece.NONE &&
-            move.from.ordinal % 8 != move.to.ordinal % 8
-        channel.sendCommand(Protocol.playCommand(move.toString(), castling, enPassant)).onSuccess {
-            status = "Board is moving $move; keep hands clear."
-        }.onFailure {
-            pendingEngineMove = null
-            status = it.message ?: "Could not request engine move"
-        }
+        channel.sendCommand("BOARD")
+            .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
+            .onFailure { failRoute(it.message ?: "Could not request the board snapshot") }
     }
 
     private fun handleRouteEvent(event: BoardEvent): Boolean {
@@ -505,8 +494,8 @@ class GameController(
                 position,
                 immutableMove,
                 sensors.toSet(),
-                deferredCapture = "REMOVE" in channel.firmwareCapabilities,
-                edgeCaptureExit = "EDGEEXIT" in channel.firmwareCapabilities,
+                deferredCapture = true,
+                edgeCaptureExit = true,
             )
         } catch (error: Exception) {
             failRoute(error.message ?: "Could not construct a route problem")

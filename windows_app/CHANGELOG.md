@@ -2,10 +2,17 @@
 
 ## Unreleased
 
-- Added firmware-4.8 `EDGEEXIT` capture routing. The captured piece can now be
+- Released the coordinated 5.0 protocol: exact `HELLO 5.0.0` gating, fixed
+  current feature contract, and no `PLAY`, `PING`, `STATUS`, or old-firmware
+  fallback paths. Apps and Nano must be updated together.
+- Added full-board standalone capture routing. The Nano now finds a shortest
+  empty orthogonal path to any `a1`-`a8` bin exit and requests manual completion
+  only when no exit is reachable.
+- Added capture routing through arbitrary empty square-centre paths to any
+  `a1`-`a8` bin exit,
   carried through arbitrary empty square-centre paths to any `a1`-`a8` bin exit,
   so reachable detours beat moving an unrelated piece. The Nano tracks every
-  verified capture drag while 4.7 compatibility keeps its original lane model.
+  verified capture drag.
 - Added firmware-4.7 deferred capture removal. The route search can now park
   blockers before `REMOVE`, prove the capture frame, complete the main move,
   and restore every temporary piece in one transaction.

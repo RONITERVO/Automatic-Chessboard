@@ -9,6 +9,8 @@ from collections.abc import Callable
 
 from protocol import (
     LineBuffer,
+    PROTOCOL_VERSION,
+    SOFTWARE_VERSION,
     board_hex_from_squares,
     parse_drag_command,
     parse_plan_command,
@@ -290,6 +292,7 @@ class SimulatorTransport:
         self._alignment_marker = False
         self._alignment_x = 0
         self._alignment_y = 0
+        self._version_agreed = False
 
     @property
     def is_connected(self) -> bool:
@@ -303,14 +306,14 @@ class SimulatorTransport:
     def start(self) -> None:
         self._connected = True
         self.on_status("Simulator connected (no hardware movement)")
-        self._emit("READY ACB1")
+        self._emit(f"READY {SOFTWARE_VERSION}")
 
     def _board_hex(self) -> str:
         return board_hex_from_squares(self._physical_squares)
 
     def _telemetry(self) -> str:
         uptime = int(time.monotonic() - self._started)
-        return (f"TELEM ACB2 {self._sequence} {int(self._homed)} {int(self._remote_mode)} "
+        return (f"TELEM {PROTOCOL_VERSION} {self._sequence} {int(self._homed)} {int(self._remote_mode)} "
                 f"{int(self._fault)} 0 {self._trolley_x} {self._trolley_y} 1 1 1023 900 {uptime}")
 
     def _clear_plan(self) -> None:
@@ -336,21 +339,22 @@ class SimulatorTransport:
             self._clear_plan()
             self._clear_alignment()
             self._emit("ESTOP REMOTE")
-        elif upper in ("PING", "HELLO"):
-            self._emit("PONG ACB1")
+        elif upper == f"HELLO {SOFTWARE_VERSION}":
+            self._version_agreed = True
+            self._emit(f"HELLO {SOFTWARE_VERSION}")
+        elif upper.startswith("HELLO"):
+            self._version_agreed = False
+            self._emit("ERR VERSION")
+        elif not self._version_agreed and upper not in {"INFO", "TELEM", "BOARD", "STOP"}:
+            self._emit("ERR VERSION")
         elif upper == "INFO":
-            self._emit(
-                "INFO ACB2 4.8.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,ALIGN"
-            )
-        elif upper == "STATUS":
-            self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._remote_mode)}")
+            self._emit(f"INFO {PROTOCOL_VERSION} {SOFTWARE_VERSION} SIM")
         elif upper == "TELEM":
             self._emit(self._telemetry())
         elif upper == "BOARD":
             self._emit(f"BOARD {self._board_hex()}")
         elif upper == "GEOMETRY":
-            self._emit("GEOMETRY ACB1 188 188 354 871 1")
+            self._emit(f"GEOMETRY {PROTOCOL_VERSION} 188 188 354 871 1")
         elif upper == "ALIGN STATUS":
             self._emit(self._alignment_status())
         elif upper == "BTTEST":
@@ -453,16 +457,17 @@ class SimulatorTransport:
                 self._emit(f"ERR {error}")
         elif upper == "REMOVE":
             try:
-                from routing import find_centerline_capture_exit_rank
+                from routing import find_empty_path
 
                 if self._plan_move is None or self._plan_capture is None:
                     raise RuntimeError("NO CAPTURE")
                 capture = self._plan_capture
                 if capture not in self._physical_squares:
                     raise RuntimeError("PLAN STATE")
-                if find_centerline_capture_exit_rank(
-                    capture, self._physical_squares
-                ) is None:
+                if not any(
+                    find_empty_path(capture, exit_square, self._physical_squares)
+                    for exit_square in range(0, 64, 8)
+                ):
                     raise RuntimeError("BAD ROUTE")
                 self._physical_squares.remove(capture)
                 self._plan_dirty = True
@@ -518,27 +523,6 @@ class SimulatorTransport:
                             self._emit("PROMOTION OK", 0.16)
             except Exception as error:
                 self._emit(f"ERR {error}")
-        elif upper.startswith("PLAY "):
-            try:
-                if self._fault:
-                    raise RuntimeError("FAULT")
-                uci = text.split()[1].lower()
-                move = chess.Move.from_uci(uci)
-                if move not in self._board.legal_moves:
-                    raise ValueError("illegal in current position")
-                self._emit(f"MOVING {uci}")
-
-                def finish() -> None:
-                    self._board.push(move)
-                    self._physical_squares = set(self._board.piece_map())
-                    self._sequence = 14
-                    self.on_line(f"DONE {uci}")
-
-                timer = threading.Timer(0.5, finish)
-                timer.daemon = True
-                timer.start()
-            except Exception as error:
-                self._emit(f"ERR PLAY {error}")
         elif upper.startswith("HEAD "):
             square = text.split(maxsplit=1)[1].lower()
             if self._fault:

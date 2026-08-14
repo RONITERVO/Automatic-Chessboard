@@ -33,23 +33,41 @@ def square_name(square: int) -> str:
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
 
 
-def capture_exit_clear(occupied: Iterable[int], capture: int, exit_rank: int) -> bool:
-    squares = frozenset(occupied)
-    file = capture % 8 + 1
-    source_rank = capture // 8 + 1
-    for rank in range(min(source_rank, exit_rank), max(source_rank, exit_rank) + 1):
-        if rank != source_rank and (rank - 1) * 8 + file - 1 in squares:
-            return False
-    for column in range(1, file):
-        if (exit_rank - 1) * 8 + column - 1 in squares:
-            return False
-    return True
+def capture_exit_path(occupied: Iterable[int], capture: int) -> tuple[int, ...] | None:
+    """Shortest empty orthogonal square-centre path to any a-file bin exit."""
+
+    if capture not in range(64):
+        raise ValueError("capture square outside board")
+    blocked = frozenset(occupied) - {capture}
+    parents: dict[int, int | None] = {capture: None}
+    queue = [capture]
+    for current in queue:
+        if current % 8 == 0:
+            reversed_path: list[int] = []
+            cursor: int | None = current
+            while cursor is not None:
+                reversed_path.append(cursor)
+                cursor = parents[cursor]
+            return tuple(reversed(reversed_path))
+        file_index, rank_index = current % 8, current // 8
+        neighbours = []
+        if file_index > 0:
+            neighbours.append(current - 1)
+        if file_index < 7:
+            neighbours.append(current + 1)
+        if rank_index > 0:
+            neighbours.append(current - 8)
+        if rank_index < 7:
+            neighbours.append(current + 8)
+        for neighbour in neighbours:
+            if neighbour not in blocked and neighbour not in parents:
+                parents[neighbour] = current
+                queue.append(neighbour)
+    return None
 
 
 def capture_has_exit(occupied: Iterable[int], capture: int) -> bool:
-    source_rank = capture // 8 + 1
-    ranks = (*range(source_rank, 0, -1), *range(source_rank + 1, 9))
-    return any(capture_exit_clear(occupied, capture, rank) for rank in ranks)
+    return capture_exit_path(occupied, capture) is not None
 
 
 @dataclass(frozen=True)
