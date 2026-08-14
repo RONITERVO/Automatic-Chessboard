@@ -20,12 +20,20 @@ When the standalone Micro-Max opponent chooses a knight, the LCD instead asks
 the player to make the displayed AI move manually. Pressing A verifies the
 result from the reed switches and continues the current game; B exits to menu.
 
+Capture removal uses a bounded occupancy-aware search rather than assuming its
+original fixed lane is empty. A captured piece can first travel vertically
+through empty square centres, then leave along a lower rank boundary only when
+every square touching that lane to the left is empty. Current/lower ranks are
+preferred, the known white-edge outside lane is allowed, and the unvalidated
+outer black-side lane is never used. If no verified exit exists, local play
+requests the complete move manually and verifies the resulting occupancy.
+
 Firmware 4.3 added an explicit `mks-gen-l-v1` build profile for the integrated
 ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains tight 28586-byte flash / 1118-byte SRAM budgets.
+the default and retains tight 29064-byte flash / 1118-byte SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,

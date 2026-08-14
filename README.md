@@ -260,6 +260,14 @@ If the local Micro-Max opponent selects a knight move, the LCD shows the exact
 hand and press A; the Nano verifies the reed-switch occupancy before continuing
 the same game. B returns to the menu.
 
+Before an automatic capture, the Nano searches for a verified route to the left
+bin. It may carry the captured piece vertically through empty square centres to
+a lower-boundary lane whose two adjacent rows are clear all the way left. It
+prefers the current or a lower rank and uses only the previously validated
+white-edge outside lane; it never tries the unvalidated outer black-side lane.
+If no route is clear, standalone play uses the same `MANUAL` instruction and
+sensor-verified continuation instead of risking a collision.
+
 For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the
 physical diagonal-clearance constraint is satisfied conservatively. Turning

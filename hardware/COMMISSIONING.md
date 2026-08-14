@@ -119,7 +119,11 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 7. Test one piece on direct horizontal, vertical, and diagonal moves. Test a
    knight through connected Play and verify it becomes separate straight
    square-centre drags; no continuous knight or S-shaped carry is permitted.
-8. Optionally run the connected magnet-free endurance test documented in
+8. Test an automatic capture first with its direct lower-left boundary lane
+   empty, then with that lane blocked but a vertically reachable lane clear.
+   Verify a fully blocked exit requests the displayed move manually and causes
+   no capture motion.
+9. Optionally run the connected magnet-free endurance test documented in
    `../firmware/README.md`, with an empty board and someone beside the cutoff.
 
 ## Stop conditions

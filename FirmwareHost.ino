@@ -506,6 +506,11 @@ void beginRemoteRoutePlan(char *arguments) {
       sendHostError(F("PLAN STATE"));
       return;
     }
+    if (!findCaptureExitRank(file, rank)) {
+      sequence = remote_wait_host;
+      sendHostError(F("BAD ROUTE"));
+      return;
+    }
     move_from = (rank - 1) * 8 + file - 1;  // Capture square for final-frame proof.
     setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
     if (!removeCapturedPiece(file, rank) || motion_fault ||

@@ -2,7 +2,44 @@
 
 // ---------------------------- AI physical movement -----------------------
 
+// A capture may leave on the boundary below any rank. The carried piece first
+// travels vertically through empty square centres, then uses that boundary
+// only when every square touching the lane to its left is empty. The source
+// square is ignored because it becomes empty as the captured piece departs.
+boolean captureExitClear(byte file, byte source_rank, byte exit_rank) {
+  byte first_rank = min(source_rank, exit_rank);
+  byte last_rank = max(source_rank, exit_rank);
+  for (byte rank = first_rank; rank <= last_rank; rank++) {
+    if (rank != source_rank &&
+        boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1))
+      return false;
+  }
+
+  for (byte column = 0; column < file; column++) {
+    if (column < file - 1 &&
+        boardSquareOccupied(reed_sensor_record, 8 - exit_rank, column))
+      return false;
+    if (exit_rank > 1 &&
+        !(exit_rank - 1 == source_rank && column == file - 1) &&
+        boardSquareOccupied(reed_sensor_record, 9 - exit_rank, column))
+      return false;
+  }
+  return true;
+}
+
+byte findCaptureExitRank(byte file, byte source_rank) {
+  // Prefer the current or a lower rank: rank 1 uses the already validated
+  // outside-white-edge lane. Search upward only when no lower route is clear.
+  for (byte rank = source_rank; rank > 0; rank--)
+    if (captureExitClear(file, source_rank, rank)) return rank;
+  for (byte rank = source_rank + 1; rank <= 8; rank++)
+    if (captureExitClear(file, source_rank, rank)) return rank;
+  return 0;
+}
+
 boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
+  byte exit_rank = findCaptureExitRank(file, rank);
+  if (!exit_rank) return false;
   if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
   if (use_magnet) {
     lcd.clear();
@@ -11,6 +48,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     lcd.print(F("TO LEFT BIN"));
     setMagnet(true);
   }
+  if (exit_rank != rank &&
+      !moveHeldPieceSafely(file, rank, file, exit_rank)) return false;
 
   int end_x = (int)CAPTURE_SIDE_X_STEPS -
               (int)file * (int)FILE_PITCH_STEPS;
@@ -26,8 +65,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   // The off-board bin coordinate cannot be stored as a board square. If this
   // capture came from the corner-switch side, move down the bin lane before
   // starting the first calibration approach.
-  if (rank > CALIBRATION_PARK_RANK) {
-    int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
+  if (exit_rank > CALIBRATION_PARK_RANK) {
+    int staging_steps = ((int)exit_rank - CALIBRATION_PARK_RANK) *
                         (int)RANK_PITCH_STEPS;
     if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
   }
@@ -110,6 +149,14 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
                         boardSquareOccupied(reed_sensor_status,
                                             8 - departure_y,
                                             arrival_column));
+
+  byte capture_rank = destination_occupied ? arrival_y :
+                      (en_passant ? departure_y : 0);
+  if (!manual_move && capture_rank &&
+      !findCaptureExitRank(arrival_x, capture_rank)) {
+    if (move_flags != 'L') return false;
+    manual_move = true;
+  }
 
   if (!manual_move) {
     if (destination_occupied) {
