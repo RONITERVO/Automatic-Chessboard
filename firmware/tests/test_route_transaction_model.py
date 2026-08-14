@@ -129,6 +129,18 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertEqual("REMOVED", model.remove_capture())
         self.assertNotIn(square_index("e5"), model.observed)
 
+    def test_capture_can_be_dragged_to_any_a_file_exit_before_removal(self):
+        model = MotionlessRouteExecutor({
+            square_index("c6"), square_index("e5"), square_index("a4"),
+            square_index("d5"), square_index("e6"),
+        })
+        self.assertEqual("PLAN READY", model.begin("PLAN c6e5-e5"))
+        model.drag("DRAG e5e3")
+        model.drag("DRAG e3a3")
+        self.assertEqual("REMOVED", model.remove_capture())
+        self.assertNotIn(square_index("a3"), model.observed)
+        self.assertIn(square_index("a4"), model.observed)
+
     def test_exact_commit_cancellation_and_incomplete_plan(self):
         source, target = square_index("a1"), square_index("a2")
         cancelled = MotionlessRouteExecutor({source})

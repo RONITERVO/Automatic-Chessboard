@@ -32,11 +32,11 @@ void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
-  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
+  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
   Serial.print(',');
   Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
 #else
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,DEVPATH,DEVJOG,ALIGN"));
 #endif
 }
 
@@ -502,6 +502,9 @@ void runHostPieceMove(const char *move, boolean routed) {
       hostMotionFault(F("SENSORS"));
       return;
     }
+    byte source = (from_rank - 1) * 8 + from_file - 1;
+    if (move_to == source)
+      move_to = (to_rank - 1) * 8 + to_file - 1;
     sequence = remote_route_plan;
   }
   else {
@@ -646,7 +649,7 @@ void __attribute__((noinline)) runRemoteCaptureRemoval() {
   if (sequence == remote_route_plan && move_to != NO_SQUARE) {
     byte file = (move_to & 7) + 1;
     byte rank = (move_to >> 3) + 1;
-    if (remoteBoardMatchesExpected() && findCaptureExitRank(file, rank)) {
+    if (remoteBoardMatchesExpected() && captureRouteClear(file, rank)) {
       setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
       if (!removeCapturedPiece(file, rank) || !remoteBoardMatchesExpected()) {
         hostMotionFault(F("SENSORS"));

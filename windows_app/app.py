@@ -2169,6 +2169,9 @@ class AutomaticChessboardApp:
                     deferred_capture="REMOVE" in (
                         self.model.firmware.capabilities if self.model.firmware else frozenset()
                     ),
+                    edge_capture_exit="EDGEEXIT" in (
+                        self.model.firmware.capabilities if self.model.firmware else frozenset()
+                    ),
                     config=config,
                 )
                 self.events.put(("route_plan_ready", (generation, plan)))
@@ -2274,7 +2277,7 @@ class AutomaticChessboardApp:
             error = actual_error
         detail = str(error) or error.__class__.__name__
         self.recorder.record("route", "plan_failed", error=detail)
-        # A 4.7 PLAN is reversible because no magnet motion was issued. Never
+        # A 4.7+ PLAN is reversible because no magnet motion was issued. Never
         # attempt automatic cancellation after REMOVE/DRAG motion: a
         # lost acknowledgement leaves the physical arrangement uncertain.
         connected = self.transport is not None and self.transport.is_connected

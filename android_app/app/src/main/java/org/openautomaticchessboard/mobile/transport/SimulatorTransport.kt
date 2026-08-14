@@ -20,6 +20,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var appBoard = false
     private var sequence = 1
     private var plan: PlanRouteRequest? = null
+    private var planCaptureSquare: Int? = null
     private var planInitial: Set<Int>? = null
     private var planExpected: Set<Int>? = null
     private var alignmentSquare: String? = null
@@ -48,7 +49,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.7.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,ALIGN", 30)
+            "INFO" -> emit("INFO ACB2 4.8.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,ALIGN", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0}", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
@@ -214,6 +215,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 }
             }
             plan = request
+            planCaptureSquare = request.captureSquare
             planInitial = initial
             planExpected = expected
             sequence = 20
@@ -224,15 +226,16 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private fun removeCapture() {
         if (fault) { emit("ERR FAULT", 30); return }
         val activePlan = plan
-        if (activePlan == null || activePlan.captureSquare == null) {
+        if (activePlan == null || planCaptureSquare == null) {
             emit("ERR NO CAPTURE", 30)
             return
         }
         runCatching {
-            val square = activePlan.captureSquare
+            val square = checkNotNull(planCaptureSquare)
             check(square in occupied) { "PLAN STATE" }
-            check(findCaptureExitRank(square, occupied) != null) { "BAD ROUTE" }
+            check(square % 8 == 0 || findCaptureExitRank(square, occupied) != null) { "BAD ROUTE" }
             occupied.remove(square)
+            planCaptureSquare = null
             emit("REMOVED", 180)
         }.onFailure { emit("ERR ${it.message ?: "BAD ROUTE"}", 30) }
     }
@@ -243,7 +246,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         if (plan == null) { emit("ERR NO PLAN", 30); return }
         runCatching {
             val route = Protocol.parseDragCommand(command)
-            check(route.source != plan?.captureSquare || route.source !in occupied) { "CAPTURE PENDING" }
             check(route.source in occupied) { "SOURCE EMPTY" }
             check(route.target !in occupied) { "TARGET FULL" }
             check(route.path.drop(1).none { it in occupied }) { "ROUTE BLOCKED" }
@@ -251,6 +253,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             emit("MOVING PIECE $label", 30)
             occupied.remove(route.source)
             occupied.add(route.target)
+            if (route.source == planCaptureSquare) planCaptureSquare = route.target
             trolleyX = route.target % 8 + 1
             trolleyY = route.target / 8 + 1
             emit("MOVED PIECE $label", 180)
@@ -285,6 +288,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
 
     private fun clearPlan() {
         plan = null
+        planCaptureSquare = null
         planInitial = null
         planExpected = null
     }

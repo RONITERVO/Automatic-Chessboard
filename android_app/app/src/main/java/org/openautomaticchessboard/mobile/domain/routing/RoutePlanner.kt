@@ -12,6 +12,7 @@ import kotlin.math.abs
 import kotlin.math.min
 
 private const val BOARD_SQUARES = 64
+private val CAPTURE_EDGE_EXITS = (0 until BOARD_SQUARES step 8).toSet()
 private const val DISTURBANCE_COST = 1_000_000_000_000L
 private const val PICKUP_COST = 100_000_000L
 private const val STEP_COST = 10_000L
@@ -42,6 +43,7 @@ data class PlanningProblem(
     val castlingSide: String? = null,
     val initialPhysicalOccupancy: Set<Int>? = null,
     val deferredCapture: Boolean = false,
+    val edgeCaptureExit: Boolean = false,
 ) {
     init {
         require(pieces.map(PieceTask::start).distinct().size == pieces.size) {
@@ -120,34 +122,53 @@ data class MotionPlan(
     val relocations: List<Relocation>,
     val statistics: PlanStatistics,
     val captureRemovalIndex: Int? = null,
+    val capturePath: List<Int> = emptyList(),
 ) {
     val temporaryPieceCount: Int get() = relocations
         .filter { it.purpose in setOf("evacuate", "repark", "restore") }
         .map(Relocation::pieceKey).toSet().size
-    val dragCount: Int get() = relocations.sumOf { Protocol.splitRouteRuns(it.path).size }
+    val dragCount: Int get() =
+        (if (capturePath.size > 1) Protocol.splitRouteRuns(capturePath).size else 0) +
+            relocations.sumOf { Protocol.splitRouteRuns(it.path).size }
     val pickupCount: Int get() = dragCount + if (problem.capturedSquare != null) 1 else 0
-    val carriedSteps: Int get() = relocations.sumOf(Relocation::steps)
+    val carriedSteps: Int get() = maxOf(0, capturePath.size - 1) + relocations.sumOf(Relocation::steps)
 
     fun validate() {
         val positions = problem.pieces.associate { it.key to it.start }.toMutableMap()
         val occupancy = problem.pieces.associate { it.start to it.key }.toMutableMap()
-        val capture = problem.capturedSquare
+        var capture = problem.capturedSquare
         var capturePending = capture != null && problem.deferredCapture
         if (capturePending) {
             occupancy[checkNotNull(capture)] = "<captured>"
             if (captureRemovalIndex == null) throw PlanningException("Deferred capture has no removal step")
         } else if (captureRemovalIndex != null) {
             throw PlanningException("Unexpected capture-removal step")
+        } else if (capturePath.isNotEmpty()) {
+            throw PlanningException("Unexpected capture path")
         }
         fun removeCapture() {
             val square = capture
             if (!capturePending || square == null || occupancy[square] != "<captured>") {
                 throw PlanningException("Capture-removal state is inconsistent")
             }
-            if (findCaptureExitRank(square, occupancy.keys) == null) {
+            if (problem.edgeCaptureExit) {
+                if (capturePath.isEmpty() || capturePath.first() != square || capturePath.last() % 8 != 0) {
+                    throw PlanningException("Captured piece has no valid a-file exit path")
+                }
+                validateOrthogonalPath(capturePath)
+                val stationary = occupancy.keys - square
+                if (capturePath.drop(1).any { it in stationary }) {
+                    throw PlanningException("Capture route crosses an occupied square")
+                }
+                occupancy.remove(square)
+                capture = capturePath.last()
+                occupancy[checkNotNull(capture)] = "<captured>"
+            } else if (capturePath.isNotEmpty()) {
+                throw PlanningException("Legacy capture plan unexpectedly carries an edge path")
+            } else if (findCaptureExitRank(square, occupancy.keys) == null) {
                 throw PlanningException("Captured piece has no collision-safe exit lane")
             }
-            occupancy.remove(square)
+            occupancy.remove(checkNotNull(capture))
             capturePending = false
         }
         relocations.forEachIndexed { index, move ->
@@ -173,10 +194,19 @@ data class MotionPlan(
     fun protocolCommands(): List<String> = buildList {
         add(Protocol.planCommand(problem.moveUci, problem.capturedSquare, problem.castlingSide))
         add("BOARD")
+        fun appendCapture() {
+            if (capturePath.size > 1) {
+                Protocol.splitRouteRuns(capturePath).forEach { run ->
+                    add(Protocol.dragCommand(run))
+                    add("BOARD")
+                }
+            }
+            add(Protocol.removeCommand(problem.capturedSquare))
+            add("BOARD")
+        }
         relocations.forEachIndexed { index, relocation ->
             if (index == captureRemovalIndex) {
-                add(Protocol.removeCommand(problem.capturedSquare))
-                add("BOARD")
+                appendCapture()
             }
             Protocol.splitRouteRuns(relocation.path).forEach { run ->
                 add(Protocol.dragCommand(run))
@@ -184,8 +214,7 @@ data class MotionPlan(
             }
         }
         if (captureRemovalIndex == relocations.size) {
-            add(Protocol.removeCommand(problem.capturedSquare))
-            add("BOARD")
+            appendCapture()
         }
         add("COMMIT")
     }
@@ -227,6 +256,11 @@ private data class SearchAction(
 )
 private data class ParentStep(val previous: SearchState, val action: SearchAction)
 private data class SearchResult(val state: SearchState, val parents: Map<SearchState, ParentStep?>)
+private data class ReconstructedPlan(
+    val relocations: List<Relocation>,
+    val captureIndex: Int?,
+    val capturePath: List<Int>,
+)
 private data class SearchEntry(val priority: Long, val tie: Long, val cost: Long, val state: SearchState)
 private enum class SearchMode { FOCUSED, BROAD, EXHAUSTIVE }
 
@@ -276,7 +310,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                 val reconstructed = reconstruct(problem, result)
                 val plan = MotionPlan(
                     problem,
-                    reconstructed.first,
+                    reconstructed.relocations,
                     PlanStatistics(
                         expandedTotal,
                         generatedTotal,
@@ -284,7 +318,8 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                         (System.nanoTime() - started) / 1_000_000L,
                         mode.name.lowercase(),
                     ),
-                    reconstructed.second,
+                    reconstructed.captureIndex,
+                    reconstructed.capturePath,
                 )
                 plan.validate()
                 return plan
@@ -352,9 +387,15 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
     private fun heuristic(problem: PlanningProblem, state: SearchState): Long {
         if (!state.captureRemoved) {
             val capture = problem.capturedSquare ?: return PICKUP_COST
-            val occupied = state.positions.values.toSet()
-            val blockers = captureExitRanks(capture).minOf { rank ->
-                captureClearanceSquares(capture, rank).count { it in occupied }
+            val blockers = if (problem.edgeCaptureExit) {
+                val occupant = state.positions.values.mapIndexed { index, square -> square to index }.toMap()
+                relaxedShortestPath(capture, CAPTURE_EDGE_EXITS, occupant, -1)
+                    ?.drop(1)?.count { it in occupant } ?: 0
+            } else {
+                val occupied = state.positions.values.toSet()
+                captureExitRanks(capture).minOf { rank ->
+                    captureClearanceSquares(capture, rank).count { it in occupied }
+                }
             }
             return PICKUP_COST + blockers * STEP_COST
         }
@@ -427,7 +468,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         obligations.take(2).forEach { obligation ->
             relaxedCorridors(
                 state.positions.values[obligation],
-                problem.pieces[obligation].goal,
+                setOf(problem.pieces[obligation].goal),
                 occupant,
                 obligation,
                 config.corridorCandidates,
@@ -506,13 +547,31 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
             val forbidden: Set<Int>,
             val blockers: List<Int>,
         )
-        val lanes = captureExitRanks(capture).mapIndexed { preference, rank ->
-            val clearance = captureClearanceSquares(capture, rank)
-            val blockers = clearance.mapNotNull(occupant::get).filter { it >= 0 }.distinct().sorted()
-            if (blockers.isEmpty()) {
-                return listOf(SearchAction(-1, capture, emptyList(), "capture", PICKUP_COST))
+        val lanes = if (problem.edgeCaptureExit) {
+            relaxedCorridors(
+                capture, CAPTURE_EDGE_EXITS, occupant, -1, config.corridorCandidates,
+            ).mapIndexed { preference, corridor ->
+                val blockers = corridor.drop(1).mapNotNull(occupant::get)
+                    .filter { it >= 0 }.distinct().sorted()
+                if (blockers.isEmpty()) {
+                    val turns = routeTurns(corridor)
+                    val drags = if (corridor.size > 1) turns + 1 else 0
+                    val cost = (drags + 1) * PICKUP_COST +
+                        (corridor.size - 1) * STEP_COST + turns * TURN_COST +
+                        clearanceRisk(corridor, occupied - capture)
+                    return listOf(SearchAction(-1, corridor.last(), corridor, "capture", cost))
+                }
+                Lane(blockers.size, preference, corridor.toSet(), blockers)
             }
-            Lane(blockers.size, preference, clearance + capture, blockers)
+        } else {
+            captureExitRanks(capture).mapIndexed { preference, rank ->
+                val clearance = captureClearanceSquares(capture, rank)
+                val blockers = clearance.mapNotNull(occupant::get).filter { it >= 0 }.distinct().sorted()
+                if (blockers.isEmpty()) {
+                    return listOf(SearchAction(-1, capture, emptyList(), "capture", PICKUP_COST))
+                }
+                Lane(blockers.size, preference, clearance + capture, blockers)
+            }
         }
         val actions = mutableMapOf<Pair<Int, Int>, SearchAction>()
         lanes.sortedWith(compareBy<Lane> { it.blockerCount }.thenBy { it.preference })
@@ -692,7 +751,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
     private fun reconstruct(
         problem: PlanningProblem,
         result: SearchResult,
-    ): Pair<List<Relocation>, Int?> {
+    ): ReconstructedPlan {
         val reverse = mutableListOf<SearchAction>()
         var state = result.state
         while (true) {
@@ -702,9 +761,11 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         }
         val relocations = mutableListOf<Relocation>()
         var captureIndex: Int? = null
+        var capturePath = emptyList<Int>()
         reverse.asReversed().forEach { action ->
             if (action.pieceIndex == -1) {
                 captureIndex = relocations.size
+                capturePath = action.path
             } else {
                 relocations += Relocation(
                     problem.pieces[action.pieceIndex].key,
@@ -715,7 +776,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                 )
             }
         }
-        return relocations to captureIndex
+        return ReconstructedPlan(relocations, captureIndex, capturePath)
     }
 }
 
@@ -724,6 +785,7 @@ fun planningProblemFromChess(
     move: Move,
     physicalOccupancy: Set<Int>? = null,
     deferredCapture: Boolean = false,
+    edgeCaptureExit: Boolean = false,
 ): PlanningProblem {
     if (!board.isMoveLegal(move, true)) throw PlanningException("Illegal chess move: $move")
     val from = move.from.ordinal
@@ -772,6 +834,7 @@ fun planningProblemFromChess(
         castlingSide,
         physicalOccupancy,
         deferredCapture,
+        edgeCaptureExit,
     )
 }
 
@@ -959,12 +1022,12 @@ private fun relaxedShortestPath(
 
 private fun relaxedCorridors(
     start: Int,
-    goal: Int,
+    goals: Set<Int>,
     occupant: Map<Int, Int>,
     movingPiece: Int,
     limit: Int,
 ): List<List<Int>> {
-    val first = relaxedShortestPath(start, setOf(goal), occupant, movingPiece) ?: return emptyList()
+    val first = relaxedShortestPath(start, goals, occupant, movingPiece) ?: return emptyList()
     fun score(path: List<Int>) = RelaxedCost(
         path.drop(1).count { occupant[it]?.let { piece -> piece != movingPiece } == true },
         path.size - 1,
@@ -976,7 +1039,7 @@ private fun relaxedCorridors(
         val base = frontier.removeFirst()
         base.zipWithNext().forEach { edge ->
             val candidate = relaxedShortestPath(
-                start, setOf(goal), occupant, movingPiece, setOf(edge),
+                start, goals, occupant, movingPiece, setOf(edge),
             ) ?: return@forEach
             if (candidate !in found) {
                 found[candidate] = score(candidate)

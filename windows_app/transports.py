@@ -340,8 +340,8 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.7.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,ALIGN"
+                "INFO ACB2 4.8.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,ALIGN"
             )
         elif upper == "STATUS":
             self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._remote_mode)}")
@@ -453,14 +453,16 @@ class SimulatorTransport:
                 self._emit(f"ERR {error}")
         elif upper == "REMOVE":
             try:
-                from routing import find_capture_exit_rank
+                from routing import find_centerline_capture_exit_rank
 
                 if self._plan_move is None or self._plan_capture is None:
                     raise RuntimeError("NO CAPTURE")
                 capture = self._plan_capture
                 if capture not in self._physical_squares:
                     raise RuntimeError("PLAN STATE")
-                if find_capture_exit_rank(capture, self._physical_squares) is None:
+                if find_centerline_capture_exit_rank(
+                    capture, self._physical_squares
+                ) is None:
                     raise RuntimeError("BAD ROUTE")
                 self._physical_squares.remove(capture)
                 self._plan_dirty = True
@@ -472,8 +474,6 @@ class SimulatorTransport:
                 if self._plan_move is None:
                     raise RuntimeError("NO PLAN")
                 route = parse_drag_command(text)
-                if route.source == self._plan_capture and route.source in self._physical_squares:
-                    raise ValueError("CAPTURE PENDING")
                 if route.source not in self._physical_squares:
                     raise ValueError("SOURCE EMPTY")
                 if route.target in self._physical_squares:
@@ -485,6 +485,8 @@ class SimulatorTransport:
                 self._emit(f"MOVING PIECE {label}")
                 self._physical_squares.remove(route.source)
                 self._physical_squares.add(route.target)
+                if route.source == self._plan_capture:
+                    self._plan_capture = route.target
                 self._trolley_x = chess.square_file(route.target) + 1
                 self._trolley_y = chess.square_rank(route.target) + 1
                 self._plan_dirty = True

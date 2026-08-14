@@ -66,10 +66,11 @@ and deterministic square order. The physical cost prioritizes:
 Search duration, node count, temporary pieces, corridor/parking branch width,
 and dependency depth are bounded. A limit failure is explicit and never falls
 back to an unverified move. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search. With firmware 4.7's `REMOVE`
-capability, capture removal is a search transition: the captured square remains
-occupied until an exact firmware-compatible exit lane is clear, so ordinary
-recursive parking can clear blocked lanes without a separate capture script.
+standard castling sides are adapted before search. With firmware 4.8's
+`EDGEEXIT`, capture removal is a search transition containing a tracked carried
+path to any available `a1`-`a8` exit. A winding empty route requires no temporary
+piece movement; only a genuinely disconnected edge invokes ordinary recursive
+parking. Capability detection preserves the stricter firmware 4.7 lane model.
 
 ## Route transaction
 
@@ -80,14 +81,14 @@ counter discards results after stop, disconnect, or position change.
 Execution is strictly:
 
 ```text
-PLAN -> BOARD -> (straight DRAG -> BOARD)* -> [REMOVE -> BOARD] ->
+PLAN -> BOARD -> (straight DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOVE -> BOARD] ->
         (straight DRAG -> BOARD)* -> COMMIT
 ```
 
 Each exact acknowledgement advances one state. The phone maintains the expected
 occupancy independently from the Nano and uses separate control and physical-
-motion timeouts. A 4.7 `PLAN` never moves hardware; `REMOVE` is sent only after
-the planner has cleared an exit lane. After `REMOVE` or any `DRAG`, loss of
+motion timeouts. A 4.7+ `PLAN` never moves hardware; `REMOVE` is sent only after
+the planner has routed the capture to a valid exit. After `REMOVE` or any `DRAG`, loss of
 proof makes state uncertain. The app sends one `STOP`, releases the connection
 owner, ends the game, and requires inspection instead of retry.
 

@@ -2,10 +2,9 @@
 
 // ---------------------------- AI physical movement -----------------------
 
-// A capture may leave on the boundary below any rank. The carried piece first
-// travels vertically through empty square centres, then uses that boundary
-// only when every square touching the lane to its left is empty. The source
-// square is ignored because it becomes empty as the captured piece departs.
+// Standalone capture removal uses a compact square-centre L route. Connected
+// companions with EDGEEXIT can first DRAG the captured piece through any safe
+// orthogonal route to an a-file square, where this same primitive removes it.
 boolean captureExitClear(byte file, byte source_rank, byte exit_rank) {
   byte first_rank = min(source_rank, exit_rank);
   byte last_rank = max(source_rank, exit_rank);
@@ -14,27 +13,22 @@ boolean captureExitClear(byte file, byte source_rank, byte exit_rank) {
         boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1))
       return false;
   }
-
-  for (byte column = 0; column < file; column++) {
-    if (column < file - 1 &&
-        boardSquareOccupied(reed_sensor_record, 8 - exit_rank, column))
+  for (byte column = 0; column < file - 1; column++)
+    if (boardSquareOccupied(reed_sensor_record, 8 - exit_rank, column))
       return false;
-    if (exit_rank > 1 &&
-        !(exit_rank - 1 == source_rank && column == file - 1) &&
-        boardSquareOccupied(reed_sensor_record, 9 - exit_rank, column))
-      return false;
-  }
   return true;
 }
 
 byte findCaptureExitRank(byte file, byte source_rank) {
-  // Prefer the current or a lower rank: rank 1 uses the already validated
-  // outside-white-edge lane. Search upward only when no lower route is clear.
   for (byte rank = source_rank; rank > 0; rank--)
     if (captureExitClear(file, source_rank, rank)) return rank;
   for (byte rank = source_rank + 1; rank <= 8; rank++)
     if (captureExitClear(file, source_rank, rank)) return rank;
   return 0;
+}
+
+boolean captureRouteClear(byte file, byte rank) {
+  return findCaptureExitRank(file, rank) != 0;
 }
 
 // This preflight is used before ordinary motion and again after a manual
@@ -82,12 +76,10 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   }
   if (exit_rank != rank &&
       !moveHeldPieceSafely(file, rank, file, exit_rank)) return false;
-
-  int end_x = (int)CAPTURE_SIDE_X_STEPS -
-              (int)file * (int)FILE_PITCH_STEPS;
-  int end_y = -(int)RANK_PITCH_STEPS / 2;
-  if (!pulseCoreXYCorridor(0, end_y, end_x, 0, 0, 0,
-                           SPEED_SLOW, true)) return false;
+  if (file != 1 &&
+      !moveHeldPieceSafely(file, exit_rank, 1, exit_rank)) return false;
+  int end_x = (int)CAPTURE_SIDE_X_STEPS - (int)FILE_PITCH_STEPS;
+  if (!pulseCoreXYLine(end_x, 0, SPEED_SLOW, true)) return false;
   // The corridor completes before release. setMagnet(false) keeps the head
   // stationary for the existing pre-release delay. The extra dwell after
   // power goes low lets the piece fall clear before capture-triggered homing.
@@ -95,7 +87,7 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   if (use_magnet) delay(CAPTURE_DROP_SETTLE_MS);
 
   // The off-board bin coordinate cannot be stored as a board square. If this
-  // capture came from the corner-switch side, move down the bin lane before
+  // capture left above the calibration park, move down outside the board before
   // starting the first calibration approach.
   if (exit_rank > CALIBRATION_PARK_RANK) {
     int staging_steps = ((int)exit_rank - CALIBRATION_PARK_RANK) *
@@ -191,7 +183,7 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
     manual_move = true;
   }
   if (!manual_move && capture_rank &&
-      !findCaptureExitRank(arrival_x, capture_rank)) {
+      !captureRouteClear(arrival_x, capture_rank)) {
     if (move_flags != 'L') return false;
     manual_move = true;
   }

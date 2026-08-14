@@ -52,11 +52,14 @@ The bounded best-first search can:
 - handle capture removal, en passant, promotion occupancy, and both standard
   castling sides.
 
-On firmware 4.7, capture removal is itself a bounded search transition. The
-captured square remains occupied while the same dependency/parking search clears
-one firmware-valid left-bin lane; only then does Windows send `REMOVE`, verify a
-fresh `BOARD`, and continue. Firmware 4.1-4.6 retains its pre-removal planning
-path through capability detection.
+On firmware 4.7+, capture removal is itself a bounded search transition. With
+firmware 4.8's `EDGEEXIT`, the captured piece becomes a tracked transaction
+object: Windows routes it through empty square centres to any available `a1`-
+`a8` exit using ordinary verified `DRAG`s, then sends `REMOVE`. A zero-disturbance
+path therefore wins even when it winds around occupied squares. Only when every
+edge exit is disconnected does the normal dependency/parking search move another
+piece. Capability detection retains the stricter 4.7 boundary-lane planner and
+the original firmware 4.1-4.6 behavior.
 
 Candidate corridors and parking squares are ranked before full configuration
 search. Disturbance count dominates the cost, followed by the physical number of
@@ -79,13 +82,13 @@ stale by disconnect, stop, or a newer move.
 Execution is one command at a time:
 
 ```text
-PLAN -> BOARD -> (DRAG -> BOARD)* -> [REMOVE -> BOARD] ->
+PLAN -> BOARD -> (DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOVE -> BOARD] ->
         (DRAG -> BOARD)* -> COMMIT
 ```
 
 Windows waits for the exact acknowledgement, maintains its own expected
 occupancy frame, and applies separate control and motion timeouts. The Nano also
-checks the authoritative occupancy frame locally. `PLAN` is motionless on 4.7;
+checks the authoritative occupancy frame locally. `PLAN` is motionless on 4.7+;
 after any `REMOVE` or drag, a lost or mismatched acknowledgement makes physical
 state uncertain and ends the session instead of retrying.
 

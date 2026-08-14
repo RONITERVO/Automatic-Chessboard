@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added firmware-4.8 `EDGEEXIT` capture routing. The captured piece can now be
+  carried through arbitrary empty square-centre paths to any `a1`-`a8` bin exit,
+  so reachable detours beat moving an unrelated piece. The Nano tracks every
+  verified capture drag while 4.7 compatibility keeps its original lane model.
 - Added firmware-4.7 deferred capture removal. The route search can now park
   blockers before `REMOVE`, prove the capture frame, complete the main move,
   and restore every temporary piece in one transaction.

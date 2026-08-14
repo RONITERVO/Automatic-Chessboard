@@ -40,12 +40,8 @@ def capture_exit_clear(occupied: Iterable[int], capture: int, exit_rank: int) ->
     for rank in range(min(source_rank, exit_rank), max(source_rank, exit_rank) + 1):
         if rank != source_rank and (rank - 1) * 8 + file - 1 in squares:
             return False
-    for column in range(1, file + 1):
-        if column < file and (exit_rank - 1) * 8 + column - 1 in squares:
-            return False
-        below = (exit_rank - 2) * 8 + column - 1
-        if (exit_rank > 1 and (column, exit_rank - 1) != (file, source_rank)
-                and below in squares):
+    for column in range(1, file):
+        if (exit_rank - 1) * 8 + column - 1 in squares:
             return False
     return True
 
@@ -155,6 +151,7 @@ class MotionlessRouteExecutor:
         self.final_expected: frozenset[int] | None = None
         self.plan: PlanRequest | None = None
         self.capture_pending = False
+        self.capture_square: int | None = None
         self.fault = False
 
     @property
@@ -177,10 +174,11 @@ class MotionlessRouteExecutor:
         self.turn_start = self.observed
         self.final_expected = request.final_occupancy(self.turn_start)
         self.capture_pending = request.capture is not None
+        self.capture_square = request.capture
         return "PLAN READY"
 
     def remove_capture(self, observed_after: Iterable[int] | None = None) -> str:
-        capture = self.plan.capture if self.plan is not None else None
+        capture = self.capture_square
         if not self.capture_pending or capture is None:
             raise RouteProtocolError("CAPTURE")
         if self.observed != self.expected or not capture_has_exit(self.observed, capture):
@@ -193,6 +191,7 @@ class MotionlessRouteExecutor:
             self._latch_sensor_fault()
             raise RouteProtocolError("SENSORS")
         self.capture_pending = False
+        self.capture_square = None
         return "REMOVED"
 
     def drag(self, command: str, observed_after: Iterable[int] | None = None) -> str:
@@ -217,6 +216,8 @@ class MotionlessRouteExecutor:
         if self.observed != self.expected:
             self._latch_sensor_fault()
             raise RouteProtocolError("SENSORS")
+        if request.source == self.capture_square:
+            self.capture_square = request.target
         return f"MOVED PIECE {square_name(request.source)}{square_name(request.target)}"
 
     def commit(self) -> str:
@@ -247,6 +248,7 @@ class MotionlessRouteExecutor:
         self.turn_start = None
         self.final_expected = None
         self.capture_pending = False
+        self.capture_square = None
 
     def _latch_sensor_fault(self) -> None:
         self.fault = True

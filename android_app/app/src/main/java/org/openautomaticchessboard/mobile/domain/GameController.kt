@@ -506,6 +506,7 @@ class GameController(
                 immutableMove,
                 sensors.toSet(),
                 deferredCapture = "REMOVE" in channel.firmwareCapabilities,
+                edgeCaptureExit = "EDGEEXIT" in channel.firmwareCapabilities,
             )
         } catch (error: Exception) {
             failRoute(error.message ?: "Could not construct a route problem")

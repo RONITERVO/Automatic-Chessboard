@@ -1,10 +1,25 @@
 # Nano firmware development
 
-Firmware 4.7 keeps the controller responsible for deterministic motion, sensor
+Firmware 4.8 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
+
+## Release 4.8.0 behavior
+
+Firmware 4.8 advertises `EDGEEXIT`. During a deferred capture, a capable phone
+or computer may use ordinary verified `DRAG` segments to carry the captured
+piece through any empty square-centre path to any available `a1`-`a8` exit.
+The Nano follows that capture square through every proven transition and allows
+`REMOVE` only while it is still present. The bounded host search therefore uses
+zero temporary pieces whenever any edge exit is reachable and invokes the same
+parking/dependency search only when every exit is genuinely disconnected.
+
+Standalone capture removal remains deliberately compact: it tries vertical-
+then-left square-centre L routes and requests the existing sensor-verified
+manual fallback if none is clear. This keeps general graph search on the
+companion without increasing Nano global SRAM.
 
 ## Release 4.7.0 behavior
 
@@ -15,7 +30,7 @@ to park pieces blocking all left-bin lanes, request `REMOVE`, prove the complete
 board frame, finish the main move, and restore every parked piece. This closes
 positions where a legal capture previously failed with `ERR BAD ROUTE` before
 the planner could clear an exit. Firmware 4.1-4.6 remains supported through
-capability detection; only 4.7 advertises `REMOVE`.
+capability detection; firmware 4.7 and newer advertise `REMOVE`.
 
 ## Release 4.6.0 behavior
 
@@ -65,13 +80,12 @@ result from the reed switches and continues the current game; B exits to menu.
 The same fallback applies when a straight corridor is occupied or either shared
 corner of a diagonal step is occupied.
 
-Capture removal uses a bounded occupancy-aware search rather than assuming its
-original fixed lane is empty. A captured piece can first travel vertically
-through empty square centres, then leave along a lower rank boundary only when
-every square touching that lane to the left is empty. Current/lower ranks are
-preferred, the known white-edge outside lane is allowed, and the unvalidated
-outer black-side lane is never used. If no verified exit exists, local play
-requests the complete move manually and verifies the resulting occupancy.
+Standalone capture removal no longer assumes one fixed boundary lane. A
+captured piece can travel vertically through empty square centres and then left
+along an empty rank to any position beside `a1`-`a8`; current/lower ranks are
+preferred. If no compact L route is clear, local play requests the complete move
+manually and verifies the resulting occupancy. `EDGEEXIT` companions additionally
+route around obstacles and can clear true disconnections before removal.
 Manual captures use two sensor-verified phases: `REMOVE` the captured square
 and press A, then automatically carry the AI piece only when the remaining
 route is queen-aligned and every square and diagonal corner is clear. Otherwise
@@ -235,9 +249,9 @@ a certified safety function.
 
 ## Resource policy
 
-The 4.7 Nano build uses 29866 bytes of flash and 1115 bytes of global SRAM.
-`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 854 bytes of
-physical flash and 933 bytes for stack/local runtime state. App-authoritative
-Firmware 4.7 adds 422 flash bytes over 4.5 while adding no global SRAM. The packed
+The 4.8 Nano build uses 29802 bytes of flash and 1115 bytes of global SRAM.
+`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 918 bytes of
+physical flash and 933 bytes for stack/local runtime state. Firmware 4.8 is 64
+flash bytes smaller than 4.7 and still adds no global SRAM. The packed
 three-snapshot board representation uses 24 bytes instead of 192 bytes and is
 reused as either reed-derived or command-derived occupancy.

@@ -22,6 +22,7 @@ from typing import Iterable, Iterator, Sequence
 BOARD_FILES = 8
 BOARD_SQUARES = 64
 NO_SQUARE = -1
+CAPTURE_EDGE_EXITS = frozenset(range(0, BOARD_SQUARES, BOARD_FILES))
 
 # Lexicographic physical priorities encoded in a single Python integer.  The
 # ranges are deliberately separated by several orders of magnitude so one new
@@ -70,6 +71,7 @@ class PlanningProblem:
     castling_side: str | None = None
     initial_physical_occupancy: frozenset[int] | None = None
     deferred_capture: bool = False
+    edge_capture_exit: bool = False
 
     def __post_init__(self) -> None:
         starts = [piece.start for piece in self.pieces]
@@ -183,6 +185,7 @@ class MotionPlan:
     relocations: tuple[Relocation, ...]
     statistics: PlanStatistics
     capture_removal_index: int | None = None
+    capture_path: tuple[int, ...] = ()
 
     @property
     def temporary_piece_count(self) -> int:
@@ -200,11 +203,18 @@ class MotionPlan:
     def drag_count(self) -> int:
         from protocol import split_route_runs
 
-        return sum(len(split_route_runs(move.path)) for move in self.relocations)
+        capture_drags = (
+            len(split_route_runs(self.capture_path)) if len(self.capture_path) > 1 else 0
+        )
+        return capture_drags + sum(
+            len(split_route_runs(move.path)) for move in self.relocations
+        )
 
     @property
     def carried_steps(self) -> int:
-        return sum(move.steps for move in self.relocations)
+        return max(0, len(self.capture_path) - 1) + sum(
+            move.steps for move in self.relocations
+        )
 
     def validate(self) -> None:
         """Replay labels and occupancy; raise if any route or final state is invalid."""
@@ -219,12 +229,27 @@ class MotionPlan:
                 raise PlanningError("Deferred capture plan has no removal step")
         elif self.capture_removal_index is not None:
             raise PlanningError("Unexpected capture-removal step")
+        elif self.capture_path:
+            raise PlanningError("Unexpected capture path")
 
         def remove_capture() -> None:
-            nonlocal capture_pending
+            nonlocal capture_pending, capture
             if not capture_pending or capture is None or occupancy.get(capture) != "<captured>":
                 raise PlanningError("Capture-removal state is inconsistent")
-            if find_capture_exit_rank(capture, occupancy) is None:
+            if self.problem.edge_capture_exit:
+                path = self.capture_path
+                if not path or path[0] != capture or path[-1] % BOARD_FILES:
+                    raise PlanningError("Captured piece has no valid a-file exit path")
+                validate_orthogonal_path(path)
+                stationary = set(occupancy) - {capture}
+                if any(square in stationary for square in path[1:]):
+                    raise PlanningError("Capture route crosses an occupied square")
+                del occupancy[capture]
+                capture = path[-1]
+                occupancy[capture] = "<captured>"
+            elif self.capture_path:
+                raise PlanningError("Legacy capture plan unexpectedly carries an edge path")
+            elif find_capture_exit_rank(capture, occupancy) is None:
                 raise PlanningError("Captured piece has no collision-safe exit lane")
             del occupancy[capture]
             capture_pending = False
@@ -284,13 +309,20 @@ class MotionPlan:
             ),
             "BOARD",
         ]
+
+        def append_capture() -> None:
+            if len(self.capture_path) > 1:
+                for run in split_route_runs(self.capture_path):
+                    commands.extend((drag_command(run), "BOARD"))
+            commands.extend((remove_command(self.problem.captured_square), "BOARD"))
+
         for index, move in enumerate(self.relocations):
             if index == self.capture_removal_index:
-                commands.extend((remove_command(self.problem.captured_square), "BOARD"))
+                append_capture()
             for run in split_route_runs(move.path):
                 commands.extend((drag_command(run), "BOARD"))
         if self.capture_removal_index == len(self.relocations):
-            commands.extend((remove_command(self.problem.captured_square), "BOARD"))
+            append_capture()
         commands.append(commit_plan_command())
         return tuple(commands)
 
@@ -391,6 +423,31 @@ def find_capture_exit_rank(
         ),
         None,
     )
+
+
+def find_centerline_capture_exit_rank(
+    capture_square: int, occupied: Iterable[int]
+) -> int | None:
+    """Firmware 4.8 standalone-compatible vertical-then-left exit."""
+
+    occupied_without_capture = frozenset(occupied) - {capture_square}
+    file_index = capture_square % BOARD_FILES
+    source_rank = capture_square // BOARD_FILES + 1
+    for exit_rank in capture_exit_ranks(capture_square):
+        vertical = {
+            file_index + (rank - 1) * BOARD_FILES
+            for rank in range(
+                min(source_rank, exit_rank), max(source_rank, exit_rank) + 1
+            )
+            if rank != source_rank
+        }
+        horizontal = {
+            column + (exit_rank - 1) * BOARD_FILES
+            for column in range(file_index)
+        }
+        if not ((vertical | horizontal) & occupied_without_capture):
+            return exit_rank
+    return None
 
 
 def manhattan(first: int, second: int) -> int:
@@ -575,7 +632,7 @@ def _relaxed_shortest_path(
 
 def relaxed_corridors(
     start: int,
-    goal: int,
+    goal: int | frozenset[int],
     occupant_by_square: dict[int, int],
     moving_piece: int,
     limit: int,
@@ -588,9 +645,8 @@ def relaxed_corridors(
     sufficient for conflict discovery and branch ordering.
     """
 
-    first = _relaxed_shortest_path(
-        start, frozenset({goal}), occupant_by_square, moving_piece
-    )
+    goals = frozenset({goal}) if isinstance(goal, int) else goal
+    first = _relaxed_shortest_path(start, goals, occupant_by_square, moving_piece)
     if first is None:
         return ()
     found: dict[tuple[int, ...], tuple[int, int, int]] = {}
@@ -609,7 +665,7 @@ def relaxed_corridors(
         for edge in zip(base, base[1:]):
             candidate = _relaxed_shortest_path(
                 start,
-                frozenset({goal}),
+                goals,
                 occupant_by_square,
                 moving_piece,
                 banned_edges=frozenset({edge}),
@@ -721,7 +777,9 @@ class RearrangementPlanner:
                 result = self._search(problem, initial, budget, mode)
                 if result is None:
                     continue
-                relocations, capture_index = self._reconstruct(problem, result[0], result[1])
+                relocations, capture_index, capture_path = self._reconstruct(
+                    problem, result[0], result[1]
+                )
                 statistics = PlanStatistics(
                     expanded_nodes=self._expanded_total,
                     generated_nodes=self._generated_total,
@@ -729,7 +787,9 @@ class RearrangementPlanner:
                     elapsed_s=monotonic() - started,
                     search_mode=mode,
                 )
-                plan = MotionPlan(problem, relocations, statistics, capture_index)
+                plan = MotionPlan(
+                    problem, relocations, statistics, capture_index, capture_path
+                )
                 plan.validate()
                 return plan
 
@@ -823,11 +883,22 @@ class RearrangementPlanner:
             capture = problem.captured_square
             if capture is None:
                 return PICKUP_COST
-            occupied = frozenset(state.positions)
-            blockers = min(
-                len(capture_clearance_squares(capture, rank) & occupied)
-                for rank in capture_exit_ranks(capture)
-            )
+            if problem.edge_capture_exit:
+                occupant = {
+                    square: index for index, square in enumerate(state.positions)
+                }
+                corridor = _relaxed_shortest_path(
+                    capture, CAPTURE_EDGE_EXITS, occupant, NO_SQUARE
+                )
+                blockers = 0 if corridor is None else sum(
+                    square in occupant for square in corridor[1:]
+                )
+            else:
+                occupied = frozenset(state.positions)
+                blockers = min(
+                    len(capture_clearance_squares(capture, rank) & occupied)
+                    for rank in capture_exit_ranks(capture)
+                )
             return PICKUP_COST + blockers * STEP_COST
         mismatched = [
             index
@@ -1034,7 +1105,7 @@ class RearrangementPlanner:
         disturbance_budget: int,
         mode: str,
     ) -> tuple[_SearchAction, ...]:
-        """Clear a firmware-valid exit lane before removing a captured piece."""
+        """Clear and, when supported, route the capture to any a-file exit."""
 
         capture = problem.captured_square
         if capture is None:
@@ -1043,18 +1114,52 @@ class RearrangementPlanner:
         occupant[capture] = NO_SQUARE
         occupied = frozenset(occupant)
         lane_options: list[tuple[int, int, frozenset[int], list[int]]] = []
-        for preference, rank in enumerate(capture_exit_ranks(capture)):
-            clearance = capture_clearance_squares(capture, rank)
-            blockers = sorted({
-                occupant[square]
-                for square in clearance
-                if square in occupant and occupant[square] != NO_SQUARE
-            })
-            if not blockers:
-                return (
-                    _SearchAction(NO_SQUARE, capture, (), "capture", PICKUP_COST),
+        if problem.edge_capture_exit:
+            corridors = relaxed_corridors(
+                capture,
+                CAPTURE_EDGE_EXITS,
+                occupant,
+                NO_SQUARE,
+                self.config.corridor_candidates,
+            )
+            for preference, corridor in enumerate(corridors):
+                blockers = sorted({
+                    occupant[square]
+                    for square in corridor[1:]
+                    if square in occupant and occupant[square] != NO_SQUARE
+                })
+                if not blockers:
+                    turns = route_turns(corridor)
+                    drags = turns + 1 if len(corridor) > 1 else 0
+                    cost = (
+                        (drags + 1) * PICKUP_COST
+                        + (len(corridor) - 1) * STEP_COST
+                        + turns * TURN_COST
+                        + clearance_risk(corridor, occupied - {capture})
+                    )
+                    return (
+                        _SearchAction(
+                            NO_SQUARE, corridor[-1], corridor, "capture", cost
+                        ),
+                    )
+                lane_options.append(
+                    (len(blockers), preference, frozenset(corridor), blockers)
                 )
-            lane_options.append((len(blockers), preference, clearance | {capture}, blockers))
+        else:
+            for preference, rank in enumerate(capture_exit_ranks(capture)):
+                clearance = capture_clearance_squares(capture, rank)
+                blockers = sorted({
+                    occupant[square]
+                    for square in clearance
+                    if square in occupant and occupant[square] != NO_SQUARE
+                })
+                if not blockers:
+                    return (
+                        _SearchAction(NO_SQUARE, capture, (), "capture", PICKUP_COST),
+                    )
+                lane_options.append(
+                    (len(blockers), preference, clearance | {capture}, blockers)
+                )
 
         actions: dict[tuple[int, int], _SearchAction] = {}
         for _count, _preference, forbidden, blockers in sorted(lane_options)[
@@ -1312,7 +1417,7 @@ class RearrangementPlanner:
         problem: PlanningProblem,
         final_state: _SearchState,
         parent: dict[_SearchState, tuple[_SearchState, _SearchAction] | None],
-    ) -> tuple[tuple[Relocation, ...], int | None]:
+    ) -> tuple[tuple[Relocation, ...], int | None, tuple[int, ...]]:
         reverse: list[_SearchAction] = []
         state = final_state
         while parent[state] is not None:
@@ -1322,9 +1427,11 @@ class RearrangementPlanner:
         reverse.reverse()
         relocations: list[Relocation] = []
         capture_index: int | None = None
+        capture_path: tuple[int, ...] = ()
         for action in reverse:
             if action.piece_index == NO_SQUARE:
                 capture_index = len(relocations)
+                capture_path = action.path
                 continue
             relocations.append(
                 Relocation(
@@ -1335,7 +1442,7 @@ class RearrangementPlanner:
                     purpose=action.purpose,
                 )
             )
-        return tuple(relocations), capture_index
+        return tuple(relocations), capture_index, capture_path
 
 
 def planning_problem_from_chess(
@@ -1344,6 +1451,7 @@ def planning_problem_from_chess(
     *,
     physical_occupancy: frozenset[int] | None = None,
     deferred_capture: bool = False,
+    edge_capture_exit: bool = False,
 ) -> PlanningProblem:
     """Adapt a legal python-chess move to the physical rearrangement model.
 
@@ -1408,6 +1516,7 @@ def planning_problem_from_chess(
         castling_side=castling_side,
         initial_physical_occupancy=physical_occupancy,
         deferred_capture=deferred_capture,
+        edge_capture_exit=edge_capture_exit,
     )
 
 
@@ -1417,6 +1526,7 @@ def plan_chess_move(
     *,
     physical_occupancy: frozenset[int] | None = None,
     deferred_capture: bool = False,
+    edge_capture_exit: bool = False,
     config: PlannerConfig | None = None,
 ) -> MotionPlan:
     problem = planning_problem_from_chess(
@@ -1424,5 +1534,6 @@ def plan_chess_move(
         move,
         physical_occupancy=physical_occupancy,
         deferred_capture=deferred_capture,
+        edge_capture_exit=edge_capture_exit,
     )
     return RearrangementPlanner(config).plan(problem)

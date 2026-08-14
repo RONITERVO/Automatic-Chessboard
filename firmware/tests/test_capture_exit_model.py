@@ -7,14 +7,8 @@ def exit_clear(occupied, file, source_rank, exit_rank):
         if rank != source_rank and (file, rank) in occupied:
             return False
 
-    for column in range(1, file + 1):
-        if column < file and (column, exit_rank) in occupied:
-            return False
-        if (
-            exit_rank > 1
-            and (column, exit_rank - 1) != (file, source_rank)
-            and (column, exit_rank - 1) in occupied
-        ):
+    for column in range(1, file):
+        if (column, exit_rank) in occupied:
             return False
     return True
 
@@ -63,17 +57,17 @@ class CaptureExitModelTests(unittest.TestCase):
         occupied = {(4, 4), (2, 4)}
         self.assertEqual(find_exit_rank(occupied, 4, 4), 3)
 
-    def test_checks_both_rows_touching_the_boundary_lane(self):
+    def test_adjacent_rows_do_not_block_a_square_centre_lane(self):
         occupied = {(4, 4), (2, 3)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 2)
+        self.assertEqual(find_exit_rank(occupied, 4, 4), 4)
 
     def test_moves_up_only_when_lower_routes_are_blocked(self):
         occupied = {(4, 4), (2, 4), (4, 3)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 6)
-
-    def test_source_is_ignored_after_vertical_departure(self):
-        occupied = {(4, 4), (4, 3)}
         self.assertEqual(find_exit_rank(occupied, 4, 4), 5)
+
+    def test_piece_below_does_not_block_current_centreline(self):
+        occupied = {(4, 4), (4, 3)}
+        self.assertEqual(find_exit_rank(occupied, 4, 4), 4)
 
     def test_returns_no_route_when_both_vertical_directions_are_blocked(self):
         occupied = {(4, 4), (2, 4), (4, 3), (4, 5)}

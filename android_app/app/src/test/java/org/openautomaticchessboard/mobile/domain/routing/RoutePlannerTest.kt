@@ -6,6 +6,7 @@ import com.github.bhlangonijr.chesslib.Side
 import com.github.bhlangonijr.chesslib.Square
 import com.github.bhlangonijr.chesslib.move.Move
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -122,6 +123,59 @@ class RoutePlannerTest {
         assertTrue(commands.subList(2, removeIndex).any { it.startsWith("DRAG ") })
         assertEquals("BOARD", commands[removeIndex + 1])
         assertEquals(1, plan.captureRemovalIndex)
+    }
+
+    @Test fun edgeExitRoutesCaptureWithoutMovingUnrelatedA4() {
+        val board = Board()
+        listOf("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4").forEach { uci ->
+            board.doMove(Move(uci, board.sideToMove), true)
+        }
+        val move = Move("c6e5", Side.BLACK)
+        val problem = planningProblemFromChess(
+            board,
+            move,
+            (0 until 64).filter { board.getPiece(Square.values()[it]) != Piece.NONE }.toSet(),
+            deferredCapture = true,
+            edgeCaptureExit = true,
+        )
+
+        val plan = planner(4).plan(problem)
+
+        plan.validate()
+        assertEquals(0, plan.temporaryPieceCount)
+        assertEquals(0, plan.captureRemovalIndex)
+        assertEquals(parseSquare("e5"), plan.capturePath.first())
+        assertEquals(parseSquare("a3"), plan.capturePath.last())
+        val commands = plan.protocolCommands()
+        assertFalse("DRAG a4a5" in commands)
+        assertTrue(commands.indexOf("DRAG e3a3") < commands.indexOf("REMOVE"))
+    }
+
+    @Test fun edgeExitUsesAWindingEmptyRouteBeforeDisturbingPieces() {
+        val fixed = listOf(
+            "a1", "a2", "a3", "a4", "a5", "a7", "a8",
+            "b1", "b2", "b3", "b4", "b7", "b8",
+        )
+        val pieces = mutableListOf(PieceTask("main", parseSquare("h8"), parseSquare("h7"), true))
+        fixed.forEach { name ->
+            pieces += PieceTask("fixed-$name", parseSquare(name), parseSquare(name))
+        }
+        val problem = PlanningProblem(
+            pieces,
+            "h8h7",
+            capturedSquare = parseSquare("e5"),
+            deferredCapture = true,
+            edgeCaptureExit = true,
+        )
+
+        val plan = planner(0).plan(problem)
+
+        plan.validate()
+        assertEquals(0, plan.temporaryPieceCount)
+        assertEquals(
+            listOf("e5", "e6", "d6", "c6", "b6", "a6").map(::parseSquare),
+            plan.capturePath,
+        )
     }
 
     @Test fun chessAdapterHandlesCaptureEnPassantPromotionAndCastling() {

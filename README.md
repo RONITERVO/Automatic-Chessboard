@@ -99,13 +99,15 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.7.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.8.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
 straight orthogonal drags and proves the complete sensor frame before and after
-each one. Capture removal is an explicit verified transaction step, so the
-companions can first park pieces blocking every exit lane. En passant, promotion
+each one. Capture removal is an explicit verified transaction step. An
+`EDGEEXIT` companion routes the captured piece through empty square centres to
+any available position beside `a1` through `a8`, moving another piece only when
+all eight exits are genuinely disconnected. En passant, promotion
 occupancy, and standard castling are included. Firmware 4.0 clients retain their
 original `PLAY` path.
 
@@ -271,8 +273,8 @@ The standalone and legacy `PLAY` planner accepts direct carried moves only when
 their square centres share a file, rank, or diagonal. It does not attempt a
 continuous knight or S-shaped carry. Connected play represents those moves as
 separate verified square-centre drags. Capture removal and the rook part of
-legacy castling retain explicit horizontal/vertical clearance lanes to reach
-their necessary off-board or temporarily obstructed destinations.
+legacy castling retain explicit horizontal/vertical segments to reach their
+necessary off-board or temporarily obstructed destinations.
 Standalone carries also preflight every traversed square; diagonal steps
 require both shared orthogonal corner squares to be empty. An unsafe direct
 carry becomes a manual, sensor-verified move before the magnet is energized.
@@ -282,13 +284,13 @@ If the local Micro-Max opponent selects a knight move, the LCD shows the exact
 hand and press A; the Nano verifies the reed-switch occupancy before continuing
 the same game. B returns to the menu.
 
-Before an automatic capture, the Nano searches for a verified route to the left
-bin. It may carry the captured piece vertically through empty square centres to
-a lower-boundary lane whose two adjacent rows are clear all the way left. It
-prefers the current or a lower rank and uses only the previously validated
-white-edge outside lane; it never tries the unvalidated outer black-side lane.
-If no route is clear, standalone play uses the same `MANUAL` instruction and
-sensor-verified continuation instead of risking a collision.
+Before an automatic standalone capture, the Nano searches for a compact
+square-centre L route to the left bin: vertical through an empty file, then left
+through an empty rank. It prefers the current or a lower rank. If no such route
+is clear, standalone play uses the same `MANUAL` instruction and sensor-verified
+continuation instead of risking a collision. Connected firmware 4.8 play is more
+capable: the companion can route around obstacles to any free `a1`-`a8` exit and
+uses its normal bounded evacuation search only when every direct route is blocked.
 Manual captures are deliberately two-stage: remove the displayed captured
 square and press A. If the remaining AI carry is queen-aligned and every
 traversed square and diagonal corner is clear, the Nano resumes that move
@@ -321,9 +323,9 @@ board-square coordinates; the playing-field edge is `x = 0.50`. Release uses a
 conservative `x = 0.48` center line, just outside the playing field and about
 25 full steps away from the limit switch.
 
-For every capture, the head first moves half a rank toward the lower clearance
-line and then follows that straight lane to the left-side release point. The
-corridor uses the normal carrying speed and finishes before magnet release.
+For every capture, the piece reaches an `a`-file square centre and then follows
+that rank directly to the left-side release point. The final axial segment uses
+the normal carrying speed and finishes before magnet release.
 The head remains stationary through the magnet's release delay and for another
 400 ms while the piece falls into the bin. It then immediately
 homes both axes from the nearby calibration side and restores the known e6

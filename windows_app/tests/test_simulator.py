@@ -33,6 +33,7 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn("SENSORFRAME", info)
         self.assertIn("PLANROUTE", info)
         self.assertIn("REMOVE", info)
+        self.assertIn("EDGEEXIT", info)
         self.assertIn("APPBOARD", info)
         transport.close()
 
@@ -318,7 +319,12 @@ class SimulatorTests(unittest.TestCase):
         move = chess.Move.from_uci("c6e5")
         plan = RearrangementPlanner(
             PlannerConfig(time_limit_s=5.0, max_nodes=500_000)
-        ).plan(planning_problem_from_chess(board, move, deferred_capture=True))
+        ).plan(planning_problem_from_chess(
+            board, move, deferred_capture=True, edge_capture_exit=True,
+        ))
+
+        self.assertEqual(plan.temporary_piece_count, 0)
+        self.assertNotIn("DRAG a4a5", plan.protocol_commands())
 
         lines = []
         transport = SimulatorTransport(lines.append, lambda _status: None)

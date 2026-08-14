@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.7.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.8.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.7.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,APPBOARD,DEVPATH,DEVJOG,ALIGN
+< INFO ACB2 4.8.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,REMOVE,EDGEEXIT,APPBOARD,DEVPATH,DEVJOG,ALIGN
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -105,10 +105,17 @@ PLAN <from><to><mode><capture-square-or-->
 - `mode` is `-` for an ordinary move, `q`, `r`, `b`, or `n` for promotion,
   and `k` or `c` for standard king-side or queen-side castling.
 - Captures name the occupied square. For en passant this is the captured pawn's
-  square, not the move destination. Firmware 4.7 advertises `REMOVE`: `PLAN`
-  then reserves the transaction without moving, allowing the host to park any
-  pieces blocking every exit lane. `REMOVE` removes the named captured piece
-  and replies `REMOVED`; a `BOARD` proof must follow before more drags.
+  square, not the move destination. Firmware 4.7+ advertises `REMOVE`: `PLAN`
+  reserves the transaction without moving and `REMOVE` replies `REMOVED`; a
+  `BOARD` proof follows.
+- Firmware 4.8 adds `EDGEEXIT`. Before `REMOVE`, the host may carry the pending
+  captured piece with the same straight `DRAG` command used for other pieces.
+  The Nano tracks its verified square through every segment. A capable planner
+  routes it through empty square centres to any `a1`-`a8` exit, so another piece
+  is moved only when all eight exits are disconnected. `REMOVE` completes the
+  short axial movement from the selected `a`-file centre into the left bin.
+- Firmware 4.7 lacks `EDGEEXIT`; new clients retain its stricter boundary-lane
+  clearance model and do not send capture `DRAG`s.
 - Firmware 4.1-4.6 does not advertise `REMOVE` and retains its original behavior
   of removing a capture during `PLAN`. New clients keep that compatibility path,
   but blocked capture exits require firmware 4.7 or newer.

@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.7.0).
+This is the phone-first companion for firmware 3.31+ (current firmware 4.8.0).
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -41,6 +41,12 @@ are orthogonal and turning paths become separate straight drags at square
 centres. The phone and Nano both verify all 64 occupancy switches after capture
 removal and every drag. A timeout or disconnect after physical motion stops the
 session and requires inspection; it is never retried from an assumed state.
+
+With firmware 4.8 `EDGEEXIT`, a captured piece is routed through empty square
+centres to any available position beside `a1`-`a8`. A route around obstacles is
+always preferred over moving another piece; the parking search is used only
+when every edge exit is disconnected. Firmware 4.7 retains its stricter lane
+model through capability negotiation.
 
 The **Route** button on the Play page adjusts the bounded search duration and
 maximum number of temporarily moved pieces without adding a scrolling settings
