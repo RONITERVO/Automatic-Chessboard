@@ -1,6 +1,6 @@
 # Hardware build guide
 
-This folder is the electrical build contract for firmware **4.3.0**. It is
+This folder is the electrical build contract for firmware **4.4.0**. It is
 intended to be detailed enough for a school lab or first-time builder without
 pretending that the prototype PCB is a manufacturing-ready product.
 
@@ -39,7 +39,7 @@ repository root after changing hardware pins, firmware pins, or the sensor map.
 
 | Artifact | Status | Use |
 | --- | --- | --- |
-| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.3.0 Nano hardware from these |
+| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.4.0 Nano hardware from these |
 | `MKS_GEN_L_V1.md` and `mks-gen-l-v1-connections.csv` | Current alternative | Replace Nano, external drivers, and TIP120 with an MKS Gen L V1.0 |
 | Firmware constants in `global.h` | Current | Pin and motion configuration |
 | Commissioning checklist | Current | Required before first movement |

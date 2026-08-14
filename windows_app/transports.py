@@ -7,7 +7,13 @@ import threading
 import time
 from collections.abc import Callable
 
-from protocol import LineBuffer, board_hex_from_squares, parse_drag_command, parse_plan_command
+from protocol import (
+    LineBuffer,
+    board_hex_from_squares,
+    parse_drag_command,
+    parse_plan_command,
+    queen_aligned,
+)
 
 HC08_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
 HC08_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
@@ -326,7 +332,7 @@ class SimulatorTransport:
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.3.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "INFO ACB2 4.4.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
                 "SENSORFRAME,PLANROUTE"
             )
         elif upper == "STATUS":
@@ -524,6 +530,8 @@ class SimulatorTransport:
                     raise ValueError("SOURCE EMPTY")
                 if target in self._physical_squares:
                     raise ValueError("TARGET FULL")
+                if not queen_aligned(source, target):
+                    raise ValueError("BAD ROUTE")
                 self._emit(f"MOVING PIECE {move}")
                 self._physical_squares.remove(source)
                 self._physical_squares.add(target)

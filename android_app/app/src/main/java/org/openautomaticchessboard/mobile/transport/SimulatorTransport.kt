@@ -39,7 +39,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.3.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE", 30)
+            "INFO" -> emit("INFO ACB2 4.4.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE", 30)
             "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0}", 30)
             "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
@@ -101,6 +101,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                         !homed -> emit("ERR CALIBRATE", 30)
                         from !in occupied -> emit("ERR SOURCE EMPTY", 30)
                         to in occupied -> emit("ERR TARGET FULL", 30)
+                        !Protocol.queenAligned(from, to) -> emit("ERR BAD ROUTE", 30)
                         else -> {
                             emit("MOVING PIECE $move", 30)
                             occupied.remove(from); occupied.add(to)

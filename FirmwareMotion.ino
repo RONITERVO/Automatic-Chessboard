@@ -79,8 +79,9 @@ boolean pulseMotor(byte direction, unsigned int speed_delay, unsigned int steps,
   return true;
 }
 
-boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
-                        unsigned int speed_delay, boolean monitor_stops) {
+boolean pulseCoreXYQueenSegment(int delta_x_steps, int delta_y_steps,
+                                unsigned int speed_delay,
+                                boolean monitor_stops) {
   if (monitor_stops && motion_fault) return false;
 
   // CoreXY transform for the existing motor polarity:
@@ -93,14 +94,14 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
       (unsigned int)(black_delta < 0 ? -black_delta : black_delta);
   unsigned int event_count = max(white_steps, black_steps);
   if (event_count == 0) return true;
+  boolean step_white = white_steps != 0;
+  boolean step_black = black_steps != 0;
 
   markTrolleyPositionUnknown();
   digitalWrite(MOTOR_WHITE_DIR, white_delta >= 0 ? HIGH : LOW);
   digitalWrite(MOTOR_BLACK_DIR, black_delta >= 0 ? HIGH : LOW);
   delayMicroseconds(2);
 
-  unsigned long white_accumulator = 0;
-  unsigned long black_accumulator = 0;
   for (unsigned int event = 0; event < event_count; event++) {
     if ((event & 7) == 0 && pollRemoteEmergencyStop()) return false;
     if (monitor_stops &&
@@ -112,13 +113,6 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
       return false;
     }
 
-    white_accumulator += white_steps;
-    black_accumulator += black_steps;
-    boolean step_white = white_accumulator >= event_count;
-    boolean step_black = black_accumulator >= event_count;
-    if (step_white) white_accumulator -= event_count;
-    if (step_black) black_accumulator -= event_count;
-
     unsigned int low_time = speed_delay * 2U - MOTOR_STEP_PULSE_US;
     digitalWrite(MOTOR_WHITE_STEP, step_white ? HIGH : LOW);
     digitalWrite(MOTOR_BLACK_STEP, step_black ? HIGH : LOW);
@@ -128,6 +122,30 @@ boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
     delayMicroseconds(low_time);
   }
   return true;
+}
+
+boolean pulseCoreXYLine(int delta_x_steps, int delta_y_steps,
+                        unsigned int speed_delay, boolean monitor_stops) {
+  // Full stepping on the physical mechanism is reliable only when each
+  // Cartesian segment is horizontal, vertical, or an exact 45-degree
+  // diagonal. Never interpolate unequal X/Y step ratios. Split every other
+  // displacement into one diagonal segment followed by one axial segment so
+  // this invariant applies to every motion caller, not only chess paths.
+  unsigned int x_steps = abs(delta_x_steps);
+  unsigned int y_steps = abs(delta_y_steps);
+  if (!x_steps || !y_steps || x_steps == y_steps) {
+    return pulseCoreXYQueenSegment(delta_x_steps, delta_y_steps,
+                                   speed_delay, monitor_stops);
+  }
+
+  int diagonal_steps = min(x_steps, y_steps);
+  int diagonal_x = delta_x_steps < 0 ? -diagonal_steps : diagonal_steps;
+  int diagonal_y = delta_y_steps < 0 ? -diagonal_steps : diagonal_steps;
+  if (!pulseCoreXYQueenSegment(diagonal_x, diagonal_y,
+                               speed_delay, monitor_stops)) return false;
+  return pulseCoreXYQueenSegment(delta_x_steps - diagonal_x,
+                                 delta_y_steps - diagonal_y,
+                                 speed_delay, monitor_stops);
 }
 
 boolean pulseCoreXYCorridor(int first_x, int first_y,
@@ -162,31 +180,21 @@ boolean moveTrolleyStraightTo(byte target_x, byte target_y,
   return true;
 }
 
-// A legal sliding move has a clear direct corridor, so the shortest straight
-// path gives the weakest magnet the least lateral acceleration. Knights enter
-// the square-boundary lane, traverse it, and enter the destination square.
+boolean queenAlignedSquares(byte from_x, byte from_y, byte to_x, byte to_y) {
+  byte squares_x = abs((int)to_x - from_x);
+  byte squares_y = abs((int)to_y - from_y);
+  return !squares_x || !squares_y || squares_x == squares_y;
+}
+
+// A carried square-to-square move must itself be queen-aligned. Connected
+// planners express knights and every other turning route as separate DRAGs
+// that stop on square centres. Never restore a continuous knight/S-curve here:
+// unequal or turning carry paths lose full steps on the physical mechanism.
 boolean moveHeldPieceSafely(byte from_x, byte from_y, byte to_x, byte to_y) {
   int dx = ((int)to_x - from_x) * (int)FILE_PITCH_STEPS;
   int dy = ((int)to_y - from_y) * (int)RANK_PITCH_STEPS;
-  byte squares_x = abs((int)to_x - from_x);
-  byte squares_y = abs((int)to_y - from_y);
-  boolean ok;
-
-  if (squares_x == 1 && squares_y == 2) {
-    int first_x = dx / 2;
-    ok = pulseCoreXYCorridor(first_x, 0, 0, dy, dx - first_x, 0,
-                             SPEED_SLOW, true);
-  }
-  else if (squares_x == 2 && squares_y == 1) {
-    int first_y = dy / 2;
-    ok = pulseCoreXYCorridor(0, first_y, dx, 0, 0, dy - first_y,
-                             SPEED_SLOW, true);
-  }
-  else {
-    ok = pulseCoreXYLine(dx, dy, SPEED_SLOW, true);
-  }
-
-  if (!ok) return false;
+  if (!queenAlignedSquares(from_x, from_y, to_x, to_y)) return false;
+  if (!pulseCoreXYLine(dx, dy, SPEED_SLOW, true)) return false;
   trolley_coordinate_X = to_x;
   trolley_coordinate_Y = to_y;
   rememberTrolleyPosition();

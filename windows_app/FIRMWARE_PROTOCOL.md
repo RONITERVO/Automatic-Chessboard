@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.3.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.4.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.3.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG
+< INFO ACB2 4.4.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -147,6 +147,9 @@ is latched.
   and the destination empty. The head first reaches e2 with the magnet off,
   energizes it only for the carried segment, and verifies that e2 became empty
   and e4 occupied before emitting `MOVED PIECE e2e4`.
+- Firmware 4.4 accepts `PIECE` only when its square centres share a file, rank,
+  or diagonal. Turning and knight moves use `PLANROUTE`; direct unsupported
+  geometry returns `ERR BAD ROUTE` before the head or magnet moves.
 
 Possible rejections include `ERR CALIBRATE`, `ERR SOURCE EMPTY`,
 `ERR TARGET FULL`, `ERR SENSORS`, `ERR BUSY`, `ERR FAULT`, and `ERR MOTION`.
@@ -156,7 +159,7 @@ best-effort remote halt during calibration and direct movement.
 ## Developer motion tools
 
 `DEVPATH` advertises `PATH e2e4`, a developer-only, magnet-free command that
-exercises the production straight or knight piece planner without changing
+exercises the production queen-aligned piece planner without changing
 sensor state. It has the same calibration, fault, idle-state, and emergency-halt
 guards as direct movement and returns `MOVED PATH e2e4`. It is intended for the
 repository endurance tool, not normal game clients.

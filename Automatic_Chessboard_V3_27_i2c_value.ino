@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.3.0.
+ * Automatic Chessboard firmware 4.4.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.3.0"
+#define FIRMWARE_VERSION "4.4.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Aligned direct manual movement and the simulator with firmware 4.4's
+  file/rank/diagonal-only carry contract. Turning moves remain available through
+  the collision-safe square-centre route planner.
+
 ## 1.2.0
 
 - Added host-side labeled rearrangement planning for collision-safe automatic

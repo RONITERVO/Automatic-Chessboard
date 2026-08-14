@@ -87,6 +87,15 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
   byte arrival_y = move_text[3] - '0';
   byte displacement_x = abs((int)arrival_x - (int)departure_x);
   byte displacement_y = abs((int)arrival_y - (int)departure_y);
+  boolean castling = move_flags == 'C' ||
+                     (departure_x == 5 && departure_y == arrival_y &&
+                      (departure_y == 1 || departure_y == 8) && displacement_x == 2);
+  // 'L' is the local Micro-Max fallback: record an unsupported knight as the
+  // expected position without moving, then let the normal sensor-check screen
+  // guide and verify the player's manual placement.
+  boolean manual_move = !castling &&
+      !queenAlignedSquares(departure_x, departure_y, arrival_x, arrival_y);
+  if (manual_move && move_flags != 'L') return false;
 
   byte arrival_row = 8 - arrival_y;
   byte arrival_column = arrival_x - 1;
@@ -102,33 +111,32 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
                                             8 - departure_y,
                                             arrival_column));
 
-  if (destination_occupied) {
-    if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
-  }
-  else if (en_passant) {
-    if (!removeCapturedPiece(arrival_x, departure_y)) return false;
-  }
+  if (!manual_move) {
+    if (destination_occupied) {
+      if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
+    }
+    else if (en_passant) {
+      if (!removeCapturedPiece(arrival_x, departure_y)) return false;
+    }
 
-  if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
-    return false;
-  boolean castling = move_flags == 'C' ||
-                     (departure_x == 5 && departure_y == arrival_y &&
-                      (departure_y == 1 || departure_y == 8) && displacement_x == 2);
-  if (castling) {
-    if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
+    if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
       return false;
-  }
-  else {
-    setMagnet(true);
-    if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
-      return false;
-  }
+    if (castling) {
+      if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
+        return false;
+    }
+    else {
+      setMagnet(true);
+      if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
+        return false;
+    }
 
-  setMagnet(false);
-  if (motion_fault) return false;
-  trolley_coordinate_X = arrival_x;
-  trolley_coordinate_Y = arrival_y;
-  rememberTrolleyPosition();
+    setMagnet(false);
+    if (motion_fault) return false;
+    trolley_coordinate_X = arrival_x;
+    trolley_coordinate_Y = arrival_y;
+    rememberTrolleyPosition();
+  }
 
   byte departure_row = 8 - departure_y;
   byte departure_column = departure_x - 1;
@@ -154,5 +162,5 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
 }
 
 boolean blackPlayerMovement() {
-  return computerPlayerMovement(lastM, 0);
+  return computerPlayerMovement(lastM, 'L');
 }

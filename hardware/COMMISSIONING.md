@@ -50,7 +50,7 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 4.3.0 and fresh telemetry.
+6. Verify the monitor reports firmware 4.4.0 and fresh telemetry.
 
 For a differently sized or positioned playing field, finish normal switch and
 motion commissioning first, then use **Service > Geometry** as documented in
@@ -116,7 +116,9 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
    it, then the second approach finds the A6/black switch.
 5. Confirm the carriage parks at e6 without striking an end stop.
 6. Close the surface and test empty-board sensor stability.
-7. Test one piece on short straight moves, then diagonal and knight paths.
+7. Test one piece on direct horizontal, vertical, and diagonal moves. Test a
+   knight through connected Play and verify it becomes separate straight
+   square-centre drags; no continuous knight or S-shaped carry is permitted.
 8. Optionally run the connected magnet-free endurance test documented in
    `../firmware/README.md`, with an empty board and someone beside the cutoff.
 

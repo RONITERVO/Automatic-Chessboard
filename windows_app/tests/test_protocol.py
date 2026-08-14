@@ -17,6 +17,7 @@ from protocol import (
     piece_command,
     plan_command,
     play_command,
+    queen_aligned,
     split_route_runs,
 )
 
@@ -130,6 +131,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("COMMIT"), CommandRisk.MOTION)
         self.assertEqual(head_command("e6"), "HEAD e6")
         self.assertEqual(piece_command("e2", "e4"), "PIECE e2e4")
+
+    def test_direct_carries_are_queen_aligned(self):
+        self.assertTrue(queen_aligned(0, 7))
+        self.assertTrue(queen_aligned(0, 56))
+        self.assertTrue(queen_aligned(0, 63))
+        self.assertFalse(queen_aligned(1, 18))
+        self.assertFalse(queen_aligned(0, 0))
 
 
 if __name__ == "__main__":

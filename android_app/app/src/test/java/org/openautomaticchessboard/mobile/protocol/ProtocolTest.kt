@@ -106,4 +106,12 @@ class ProtocolTest {
         assertFalse(value.buttonAReleased)
         assertEquals(-1, value.trolleyX)
     }
+
+    @Test fun directCarriesAreQueenAligned() {
+        assertTrue(Protocol.queenAligned(0, 7))
+        assertTrue(Protocol.queenAligned(0, 56))
+        assertTrue(Protocol.queenAligned(0, 63))
+        assertFalse(Protocol.queenAligned(1, 18))
+        assertFalse(Protocol.queenAligned(0, 0))
+    }
 }

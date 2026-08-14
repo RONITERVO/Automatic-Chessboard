@@ -315,6 +315,10 @@ void runHostPieceMove(const char *move, boolean routed) {
     sendHostError(F("SAME SQUARE"));
     return;
   }
+  if (!queenAlignedSquares(from_file, from_rank, to_file, to_rank)) {
+    sendHostError(F("BAD ROUTE"));
+    return;
+  }
 
   scanSensors();
   if (routed && memcmp(reed_sensor_record.rows, reed_sensor_status.rows, 8)) {
@@ -387,7 +391,7 @@ void runHostPieceMove(const char *move, boolean routed) {
 
 // Developer-only, magnet-free execution of the production piece path. This
 // replaces the fixed 200-ply on-device endurance routine with a configurable
-// host tool while retaining the same straight and knight-corridor planners.
+// host tool while exercising only the production queen-aligned carry planner.
 void runHostPathTest(const char *move) {
   if (sequence != main_menu || remote_mode) {
     sendHostError(F("BUSY"));
@@ -408,6 +412,10 @@ void runHostPathTest(const char *move) {
   byte to_rank = move[3] - '0';
   if (from_file == to_file && from_rank == to_rank) {
     sendHostError(F("SAME SQUARE"));
+    return;
+  }
+  if (!queenAlignedSquares(from_file, from_rank, to_file, to_rank)) {
+    sendHostError(F("BAD ROUTE"));
     return;
   }
 

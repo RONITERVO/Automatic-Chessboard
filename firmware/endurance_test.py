@@ -14,7 +14,10 @@ import time
 from dataclasses import dataclass
 
 CALIBRATED = re.compile(r"^CALIBRATED ([a-h][1-8]) W(\d+) B(\d+)$")
-ROUTE = ("e6a1", "a1c2", "c2h7", "h7f8", "f8e6")
+# Closed path made only from horizontal, vertical, and 45-degree square-centre
+# segments. Firmware 4.4 deliberately rejects the former continuous knight
+# corridors because their turns did not stop on square centres.
+ROUTE = ("e6a2", "a2a8", "a8h8", "h8b2", "b2b6", "b6e6")
 
 
 @dataclass(frozen=True)

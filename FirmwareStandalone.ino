@@ -86,9 +86,10 @@ void showCalibrationReferenceFault() {
 void showAiSensorMismatch() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("CHECK AI PIECE"));
+  lcd.print(F("MANUAL "));
+  printMove(lastM);
   lcd.setCursor(0, 1);
-  lcd.print(F("A=RETRY B=MENU"));
+  lcd.print(F("A=CHECK B=MENU"));
 }
 
 void showPendingMove() {

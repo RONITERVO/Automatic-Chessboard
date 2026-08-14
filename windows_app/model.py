@@ -7,7 +7,7 @@ from time import monotonic
 
 import chess
 
-from protocol import FirmwareInfo, Telemetry
+from protocol import FirmwareInfo, Telemetry, queen_aligned
 
 
 SEQUENCE_NAMES = {
@@ -94,6 +94,8 @@ class ManualSelection:
             return ManualSelection("piece"), "Source cleared; choose a piece"
         if occupied is not None and square in occupied:
             return self, f"Destination {square_name(square)} is occupied"
+        if not queen_aligned(self.source, square):
+            return self, "Choose a destination on the same file, rank, or diagonal"
         return ManualSelection("piece", self.source, square), (
             f"Move {square_name(self.source)} to {square_name(square)}"
         )
@@ -102,6 +104,8 @@ class ManualSelection:
         if self.mode == "head":
             return None if self.target is None else f"HEAD {square_name(self.target)}"
         if self.source is None or self.target is None:
+            return None
+        if not queen_aligned(self.source, self.target):
             return None
         return f"PIECE {square_name(self.source)}{square_name(self.target)}"
 

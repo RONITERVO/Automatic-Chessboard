@@ -153,6 +153,9 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn("CALIBRATED e6", lines)
         self.assertIn("MOVED HEAD e4", lines)
         self.assertIn("MOVED PIECE e2e4", lines)
+        transport.send("PIECE b1c3")
+        self.wait_for(lines, lambda values: "ERR BAD ROUTE" in values)
+        self.assertIn("ERR BAD ROUTE", lines)
         transport.close()
 
     def test_planroute_requires_a_homed_computer_turn(self):

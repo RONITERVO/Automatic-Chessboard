@@ -47,6 +47,10 @@ class MonitorModelTests(unittest.TestCase):
         selection, _ = ManualSelection("piece").choose(chess.E2, occupied)
         selection, _ = selection.choose(chess.E4, occupied)
         self.assertEqual(selection.command(), "PIECE e2e4")
+        knight_source, _ = ManualSelection("piece").choose(chess.E2, occupied)
+        rejected, message = knight_source.choose(chess.F4, occupied)
+        self.assertIsNone(rejected.target)
+        self.assertIn("same file, rank, or diagonal", message)
         telemetry = Telemetry("ACB2", 1, True, False, False, False,
                               5, 6, True, True, 1023, 700, 1)
         self.assertTrue(calibration_matches("e6", telemetry))

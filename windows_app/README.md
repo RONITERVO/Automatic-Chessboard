@@ -17,7 +17,7 @@ next steps. Raw protocol data remains available in the Developer tab.
 | --- | --- | --- |
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
-| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Direct carries must share a file, rank, or diagonal; requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
 | Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Requires firmware 4.1; bounded search can report that no verified plan was found |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
@@ -124,6 +124,10 @@ plans the complete physical rearrangement before an automatic move. It can park
 blocking pieces temporarily, restore them, stage the main piece when it blocks a
 return path, and recursively free a trapped blocker. Carried paths are
 orthogonal, avoiding physically unsafe diagonal squeezing.
+
+Firmware 4.4 removes continuous knight and unequal-ratio carry paths. The Play
+planner still completes those chess moves by stopping on verified square
+centres and issuing separate straight `DRAG` operations.
 
 Before planning, the app requires a fresh 64-square frame that exactly matches
 the logical game. It then executes a transaction containing one straight drag at

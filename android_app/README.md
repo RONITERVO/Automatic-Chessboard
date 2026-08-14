@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.3.0).
+This is the phone-first companion for firmware 3.31+ (current firmware 4.4.0).
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -18,6 +18,10 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Developer | Structured and raw-equivalent protocol timeline, pagination, documented-command allowlist, motion lock plus confirmation, simulator `SIMMOVE` |
 | Support | JSONL session logs, copied diagnostic summary, sanitized ZIP with no frames, PGNs, camera credentials, or Bluetooth address |
 | Safety | Persistent HALT button, separate single-byte `!` path, motion polling pause, stale-state warnings, no remote fault clearing |
+
+Firmware 4.4 restricts direct manual carries to square centres on the same file,
+rank, or diagonal. The Play planner continues to handle knights and other
+turning moves as separate orthogonal square-centre `DRAG` operations.
 
 With firmware 4.1, the phone plans automatic moves as labeled board
 rearrangements. It can evacuate and restore blockers, stage the main piece while

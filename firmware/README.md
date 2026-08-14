@@ -1,14 +1,26 @@
 # Nano firmware development
 
-Firmware 4.3 keeps the controller responsible for deterministic motion, sensor
+Firmware 4.4 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.3.0 behavior
+## Release 4.4.0 behavior
 
-Firmware 4.3 adds an explicit `mks-gen-l-v1` build profile for the integrated
+Firmware 4.4 makes queen-aligned stepping a firmware-wide invariant. Every raw
+CoreXY displacement is executed only as horizontal, vertical, or exact
+45-degree segments; an unequal X/Y request is decomposed instead of using an
+interpolated step ratio. Direct carried commands accept only square-centre
+moves sharing a file, rank, or diagonal. Knights and other turning carries must
+use the connected `PLANROUTE` executor, which already stops and verifies at
+square centres between straight `DRAG` commands. Unsupported legacy/direct
+routes fail before capture removal, magnet pickup, or head movement.
+When the standalone Micro-Max opponent chooses a knight, the LCD instead asks
+the player to make the displayed AI move manually. Pressing A verifies the
+result from the reed switches and continues the current game; B exits to menu.
+
+Firmware 4.3 added an explicit `mks-gen-l-v1` build profile for the integrated
 ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
@@ -160,9 +172,9 @@ magnet-free `PATH` developer command and a USB tool:
 python ./firmware/endurance_test.py --port COM7 --cycles 40 --confirm-motion
 ```
 
-The test exercises straight and knight-corridor production paths, returns to e6,
-re-homes periodically, and compares both measured step counts with an e6
-baseline. It requires motor power and causes real movement. Remove all pieces,
+The test exercises horizontal, vertical, and both diagonal queen-aligned paths,
+returns to e6, re-homes periodically, and compares both measured step counts
+with an e6 baseline. It requires motor power and causes real movement. Remove all pieces,
 keep the physical cutoff within reach, and never treat the `!` radio/USB halt as
 a certified safety function.
 

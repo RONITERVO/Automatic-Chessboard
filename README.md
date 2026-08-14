@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.3.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.4.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
@@ -208,8 +208,9 @@ firmware that has no valid position journal yet.
 
 Firmware 4.0 and later move the former fixed on-device AI self-play workload to the
 configurable [`firmware/endurance_test.py`](firmware/endurance_test.py) tool.
-This recovers scarce Nano memory while retaining real production straight and
-knight planning through the guarded, developer-only `PATH` protocol command.
+Firmware 4.4 uses that guarded, developer-only `PATH` command only for
+horizontal, vertical, and 45-degree square-centre paths; continuous knight or
+S-shaped travel is deliberately rejected.
 The magnet is forced off, results are logged on the computer, cycle count and
 reference frequency are configurable, and both homing step counts are compared
 against a measured baseline. See [`firmware/README.md`](firmware/README.md) for
@@ -247,10 +248,17 @@ its established flash budget; both apps and the `BOARD` command retain complete
 
 ## Piece-retention travel planner
 
-The standalone and legacy `PLAY` planner uses the shortest straight path for
-normal legal moves. Knight moves use three exact straight segments through the
-open square-boundary lane. Capture removal and the rook part of castling use the
-same explicit clearance lanes.
+The standalone and legacy `PLAY` planner accepts direct carried moves only when
+their square centres share a file, rank, or diagonal. It does not attempt a
+continuous knight or S-shaped carry. Connected play represents those moves as
+separate verified square-centre drags. Capture removal and the rook part of
+legacy castling retain explicit horizontal/vertical clearance lanes to reach
+their necessary off-board or temporarily obstructed destinations.
+
+If the local Micro-Max opponent selects a knight move, the LCD shows the exact
+`MANUAL` instruction instead of attempting unsafe travel. Move that piece by
+hand and press A; the Nano verifies the reed-switch occupancy before continuing
+the same game. B returns to the menu.
 
 For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the
@@ -262,7 +270,9 @@ piece, and recursion limits prevent unbounded work; failure stops the move rathe
 than falling back to an unverified path.
 
 Every corridor ends on an exact whole-step destination, with no interpolation
-rounding to accumulate between moves. Hardware validation uses a `1000`
+rounding to accumulate between moves. Firmware 4.4 also removes unequal-ratio
+CoreXY interpolation below every caller: each displacement is one or more pure
+horizontal, vertical, or 45-degree segments. Hardware validation uses a `1000`
 microsecond half-period for start, carrying, and unloaded motion. Keeping these
 equal intentionally avoids the mechanism's strong low-speed resonance.
 

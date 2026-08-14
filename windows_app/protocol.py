@@ -215,6 +215,18 @@ def _square_text(square: int) -> str:
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
 
 
+def queen_aligned(source: int, target: int) -> bool:
+    """Return whether one direct carry is horizontal, vertical, or 45 degrees."""
+
+    _square_text(source)
+    _square_text(target)
+    file_delta = abs(source % 8 - target % 8)
+    rank_delta = abs(source // 8 - target // 8)
+    return source != target and (
+        file_delta == 0 or rank_delta == 0 or file_delta == rank_delta
+    )
+
+
 def _route_step(first: int, second: int) -> int:
     delta = second - first
     if delta in (-8, 8):

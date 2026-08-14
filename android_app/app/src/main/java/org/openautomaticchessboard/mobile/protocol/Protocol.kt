@@ -137,6 +137,15 @@ object Protocol {
         return "${'a' + square % 8}${square / 8 + 1}"
     }
 
+    fun queenAligned(source: Int, target: Int): Boolean {
+        squareName(source)
+        squareName(target)
+        val fileDelta = kotlin.math.abs(source % 8 - target % 8)
+        val rankDelta = kotlin.math.abs(source / 8 - target / 8)
+        return source != target &&
+            (fileDelta == 0 || rankDelta == 0 || fileDelta == rankDelta)
+    }
+
     fun splitRouteRuns(path: List<Int>): List<List<Int>> {
         require(path.size >= 2) { "A drag route needs source and destination" }
         val steps = path.zipWithNext(::routeStep)
