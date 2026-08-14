@@ -1,6 +1,6 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for firmware 3.31+ (current firmware 4.4.0).
+This is the phone-first companion for firmware 3.31+ (current firmware 4.5.0).
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -12,6 +12,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Connection | Native BLE scan, saved-device reconnect, HC-08 FFE0/FFE1 GATT, exponential retry, 20-byte writes |
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
 | Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
+| Align board | Measure two user-chosen squares with precise X/Y nudges and copy exact `global.h` source values; head-only is the safe default and a magnetic marker is optional |
 | Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, Elo and think time, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |
@@ -82,6 +83,14 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
    at least 700 and near 1023.
 5. Use **Board** to reconcile every red missing and orange extra square.
 6. Test physical limit behavior locally before **Start + calibrate**.
+
+For a differently sized or positioned playing field, use **Move > Align board**
+after a successful calibration. Select a square, start head-only measurement,
+nudge until centered, and record it. Repeat at a widely separated square with a
+different file and rank. **Result** shows copyable firmware coefficients and
+correctly accounts for non-default microstepping. The app does not write EEPROM
+or modify firmware. Every measurement leaves the head unhomed, including after
+disconnect or interruption, so recalibration is mandatory before play.
 
 The red **HALT** control is best-effort radio delivery, not an emergency-stop
 system. It intentionally leaves the carriage position unknown. Cut physical

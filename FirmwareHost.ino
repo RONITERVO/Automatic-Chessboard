@@ -32,11 +32,11 @@ void sendHostInfo() {
   Serial.print(F("INFO ACB2 "));
   Serial.print(F(FIRMWARE_VERSION));
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
-  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
+  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN"));
   Serial.print(',');
   Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
 #else
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG"));
+  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN"));
 #endif
 }
 
@@ -231,6 +231,123 @@ void finishHostManualMotion(boolean succeeded) {
   }
   sequence = main_menu;
   showMainMenu();
+}
+
+void sendHostGeometry() {
+  Serial.print(F("GEOMETRY ACB1 "));
+  Serial.print(FILE_PITCH_STEPS);
+  Serial.print(' ');
+  Serial.print(RANK_PITCH_STEPS);
+  Serial.print(' ');
+  Serial.print(CALIBRATION_PARK_BLACK_STEPS);
+  Serial.print(' ');
+  Serial.print(CALIBRATION_PARK_WHITE_STEPS);
+  Serial.print(' ');
+  Serial.println(MOTOR_MICROSTEPS);
+}
+
+void sendHostAlignment(const __FlashStringHelper *status, boolean details) {
+  Serial.print(F("ALIGN "));
+  Serial.print(status);
+  if (details) {
+    Serial.print(' ');
+    printHostSquare(trolley_coordinate_X, trolley_coordinate_Y);
+    Serial.print(' ');
+    Serial.print(lifted_count ? 'M' : 'H');
+    Serial.print(' ');
+    Serial.print((signed char)lifted_squares[0]);
+    Serial.print(' ');
+    Serial.print((signed char)lifted_squares[1]);
+  }
+  Serial.println();
+}
+
+void runHostAlignmentBegin(const char *square, boolean magnetic_marker) {
+  if (sequence != main_menu || remote_mode || motion_fault ||
+      magnet_state || !trolley_homed) {
+    sendHostError(F("ALIGN"));
+    return;
+  }
+
+  sequence = host_manual_motion;
+  Serial.print(F("ALIGNING "));
+  Serial.println(square);
+  boolean moved = moveTrolleyStraightTo(square[0] - 'a' + 1,
+                                        square[1] - '0', SPEED_FAST);
+  if (!moved || motion_fault) {
+    finishHostManualMotion(false);
+    return;
+  }
+
+  lifted_squares[0] = 0;
+  lifted_squares[1] = 0;
+  lifted_count = magnetic_marker ? 1 : 0;
+  // Alignment intentionally invalidates the persisted square before any
+  // offset is possible. A disconnect or power loss can therefore never make
+  // an offset head look calibrated on the next boot.
+  markTrolleyPositionUnknown();
+  trolley_homed = false;
+  sequence = host_alignment;
+  lcd.clear();
+  lcd.print(F("ALIGN "));
+  printHostSquare(trolley_coordinate_X, trolley_coordinate_Y);
+  lcd.setCursor(0, 1);
+  lcd.print(F("APP NUDGE / END"));
+  sendHostAlignment(F("READY"), true);
+}
+
+void runHostAlignmentNudge(char axis, char sign) {
+  if (sequence != host_alignment || remote_mode || motion_fault || magnet_state) {
+    sendHostError(F("ALIGN"));
+    return;
+  }
+  byte index = axis == 'X' ? 0 : 1;
+  int delta = sign == '+' ? 1 : -1;
+  int proposed = (signed char)lifted_squares[index] + delta;
+  if (proposed < -60 || proposed > 60) {
+    sendHostError(F("LIMIT"));
+    return;
+  }
+
+  setMagnet(lifted_count != 0);
+  boolean moved = pulseCoreXYLine(index ? 0 : delta,
+                                  index ? delta : 0, SPEED_FAST, true);
+  setMagnet(false);
+  if (!moved || motion_fault) {
+    hostMotionFault(F("MOTION"));
+    return;
+  }
+  lifted_squares[index] = (byte)(signed char)proposed;
+  sendHostAlignment(F("ACTIVE"), true);
+}
+
+void runHostAlignmentEnd() {
+  if (sequence != host_alignment || remote_mode || motion_fault || magnet_state) {
+    sendHostError(F("ALIGN"));
+    return;
+  }
+  sequence = host_manual_motion;
+  boolean moved = pulseCoreXYLine(-(signed char)lifted_squares[0],
+                                  -(signed char)lifted_squares[1],
+                                  SPEED_FAST, true);
+  setMagnet(false);
+  if (!moved || motion_fault) {
+    hostMotionFault(F("MOTION"));
+    return;
+  }
+  trolley_homed = false;
+  markTrolleyPositionUnknown();
+  resetMoveTracker();
+  sequence = main_menu;
+  showMainMenu();
+  sendHostAlignment(F("ENDED"), false);
+}
+
+void sendHostAlignmentStatus() {
+  if (sequence == host_alignment)
+    sendHostAlignment(F("ACTIVE"), true);
+  else
+    sendHostAlignment(F("IDLE"), false);
 }
 
 void runHostCalibration() {
@@ -566,6 +683,14 @@ void processHostCommand(char *line) {
     sendSensorSnapshot();
     return;
   }
+  if (strcmp_P(line, PSTR("GEOMETRY")) == 0) {
+    sendHostGeometry();
+    return;
+  }
+  if (strcmp_P(line, PSTR("ALIGN STATUS")) == 0) {
+    sendHostAlignmentStatus();
+    return;
+  }
   if (strcmp(line, "BTTEST") == 0) {
     if (sequence == main_menu) testBluetoothModule();
     else sendHostError(F("BUSY"));
@@ -579,6 +704,23 @@ void processHostCommand(char *line) {
       (line[4] == 'W' || line[4] == 'B') &&
       (line[5] == '+' || line[5] == '-') && line[6] == 0) {
     runHostMotorJog(line[4], line[5]);
+    return;
+  }
+  if (strncmp_P(line, PSTR("ALIGN "), 6) == 0 &&
+      line[6] >= 'a' && line[6] <= 'h' &&
+      line[7] >= '1' && line[7] <= '8' && line[8] == ' ' &&
+      (line[9] == 'H' || line[9] == 'M') && line[10] == 0) {
+    runHostAlignmentBegin(line + 6, line[9] == 'M');
+    return;
+  }
+  if (strncmp_P(line, PSTR("NUDGE "), 6) == 0 &&
+      (line[6] == 'X' || line[6] == 'Y') &&
+      (line[7] == '+' || line[7] == '-') && line[8] == 0) {
+    runHostAlignmentNudge(line[6], line[7]);
+    return;
+  }
+  if (strcmp_P(line, PSTR("ALIGN END")) == 0) {
+    runHostAlignmentEnd();
     return;
   }
   if (strcmp(line, "STOP") == 0) {

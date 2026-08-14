@@ -128,7 +128,8 @@ class SimulatorTests(unittest.TestCase):
         transport._board.push_uci("e2e4")
         transport._board.push_uci("d7d5")
         transport._physical_squares = set(transport._board.piece_map())
-        transport._sequence = 17
+        transport._sequence = 15
+        transport._remote_mode = True
         transport._homed = True
         move = chess.Move.from_uci("e4d5")
         self.assertIn(move, transport._board.legal_moves)
@@ -158,13 +159,68 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn("ERR BAD ROUTE", lines)
         transport.close()
 
+    def test_remote_state_numbers_match_firmware_45(self):
+        from protocol import parse_event, parse_telemetry
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("START B")
+        self.wait_for(lines, lambda values: "TURN COMPUTER" in values)
+        transport.send("TELEM")
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
+        active = parse_telemetry(parse_event(
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        ))
+        self.assertEqual(active.sequence, 15)
+        self.assertTrue(active.remote_mode)
+        transport.send("STOP")
+        self.wait_for(lines, lambda values: "STOPPED" in values)
+        transport.send("TELEM")
+        self.wait_for(lines, lambda values: sum(value.startswith("TELEM ACB2") for value in values) >= 2)
+        idle = parse_telemetry(parse_event(
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        ))
+        self.assertEqual(idle.sequence, 1)
+        self.assertFalse(idle.remote_mode)
+        transport.close()
+
+    def test_alignment_session_is_recoverable_and_leaves_position_unknown(self):
+        from protocol import parse_alignment, parse_event, parse_geometry
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("CALIBRATE")
+        self.wait_for(lines, lambda values: "CALIBRATED e6" in values)
+        transport.send("GEOMETRY")
+        transport.send("ALIGN a2 H")
+        self.wait_for(lines, lambda values: "ALIGN READY a2 H 0 0" in values)
+        geometry_line = next(value for value in lines if value.startswith("GEOMETRY "))
+        self.assertEqual(parse_geometry(parse_event(geometry_line)).file_pitch, 188)
+        transport.send("NUDGE X+")
+        transport.send("NUDGE Y-")
+        self.wait_for(lines, lambda values: "ALIGN ACTIVE a2 H 1 -1" in values)
+        active = parse_alignment(parse_event("ALIGN ACTIVE a2 H 1 -1"))
+        self.assertEqual((active.offset_x, active.offset_y), (1, -1))
+        transport.send("ALIGN STATUS")
+        self.wait_for(lines, lambda values: values.count("ALIGN ACTIVE a2 H 1 -1") >= 2)
+        transport.send("ALIGN END")
+        self.wait_for(lines, lambda values: "ALIGN ENDED" in values)
+        transport.send("TELEM")
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        self.assertEqual(telemetry.split()[3], "0")
+        transport.close()
+
     def test_planroute_requires_a_homed_computer_turn(self):
         from protocol import plan_command
 
         lines = []
         transport = SimulatorTransport(lines.append, lambda _status: None)
         transport.start()
-        transport._sequence = 17
+        transport._sequence = 15
+        transport._remote_mode = True
         transport.send(plan_command("e2e4"))
         self.wait_for(lines, lambda values: "ERR NOT READY" in values)
         self.assertIn("ERR NOT READY", lines)
@@ -191,7 +247,8 @@ class SimulatorTests(unittest.TestCase):
                 transport.start()
                 transport._board = board.copy(stack=False)
                 transport._physical_squares = set(board.piece_map())
-                transport._sequence = 17
+                transport._sequence = 15
+                transport._remote_mode = True
                 transport._homed = True
                 for command in plan.protocol_commands():
                     baseline = len(lines)

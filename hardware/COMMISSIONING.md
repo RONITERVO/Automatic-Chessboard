@@ -50,13 +50,15 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 4.4.0 and fresh telemetry.
+6. Verify the monitor reports firmware 4.5.0 and fresh telemetry.
 
 For a differently sized or positioned playing field, finish normal switch and
-motion commissioning first, then use **Service > Geometry** as documented in
-`firmware/README.md`. It requires only a visible magnetic marker; reed sensors,
-a calibration sheet, a camera, and either companion app are optional. Rebuild
-and upload the reported constants, calibrate, then verify separated squares.
+motion commissioning first, then use **Board alignment** on Windows or **Move >
+Align board** on Android as documented in `firmware/README.md`. Head-only visual
+alignment is the default; a visible magnetic marker is optional. Reed sensors,
+a calibration sheet, and a camera are not required. Rebuild and upload the
+reported constants, calibrate, then verify separated squares. Terminal-only
+builders can use the documented `GEOMETRY`, `ALIGN`, and `NUDGE` commands.
 
 ## Stage C: switches and 64 sensors
 

@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.4.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.5.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
@@ -143,12 +143,12 @@ motor drivers. For an A4988, the common modes are:
 | 16 | HIGH | HIGH | HIGH |
 
 The current high-friction-drive profile remains in full-step mode
-(`MOTOR_MICROSTEPS = 1`). Its measured working values ramp slow movement from
-approximately 250 to 278 full steps per second and decelerate again before
-stopping. If the driver jumpers or wiring are changed later, change this
+(`MOTOR_MICROSTEPS = 1`). Its measured working value uses a fixed fast step
+interval; avoiding slow ramps prevents the prototype's strong low-speed
+resonance. If the driver jumpers or wiring are changed later, change this
 constant to the same value. The firmware then scales the steps per square,
-homing limit, ramp length, and step intervals to preserve the existing travel
-distance and approximate physical speeds.
+homing limit, and step intervals to preserve the existing travel distance and
+approximate physical speeds.
 
 Set the driver current limit from the motor's rated phase current and the sense
 resistors fitted to the particular driver board. For an A4988, consult that
@@ -223,16 +223,25 @@ driver with suitable diagnostic feedback.
 
 ## Builder geometry measurement
 
-Firmware 4.2 keeps board geometry as four compile-time constants, uses no
-geometry EEPROM, and does not depend on either app. After normal calibration,
-open **Service > Geometry**, select any square, place one visible magnetic
-marker there, and align it using precise, coordinated one-step file/rank
-movements. The LCD reports the selected square and signed X/Y correction
-without changing the installed geometry.
+Firmware 4.5 keeps board geometry as four compile-time constants, with no
+geometry EEPROM or runtime configuration. The Windows and Android companions
+provide the measurement interface so the Nano's local controls stay focused on
+play and calibration. After normal calibration, open **Board alignment** on
+Windows or **Move > Align board** on Android, select a square, and start the
+recommended head-only session. Use the four one-step controls until the head is
+visually centered, then record the point. A magnetic marker is optional and
+requires the separate safety confirmation.
 
-Measure two widely separated squares with different files and ranks. The
-formulas beside the constants in [`global.h`](global.h) give the new values, or
-run the optional offline calculator:
+Measure two widely separated squares with different files and ranks. The apps
+show the exact four source values to edit in [`global.h`](global.h), including
+correct handling of non-default microstepping. The session never writes EEPROM
+or changes installed geometry, and it reverses all nudges when finished. It
+marks the head position unknown before the first nudge, so calibration is
+mandatory even after disconnect or power loss.
+
+For terminal-only work, send `GEOMETRY`, then `ALIGN <square> H`, use `NUDGE
+X+|X-|Y+|Y-`, record the `ALIGN ACTIVE` offsets, and finish with `ALIGN END`.
+The optional offline calculator accepts the two recorded reports:
 
 ```powershell
 python ./firmware/geometry_calculator.py `
@@ -242,9 +251,8 @@ python ./firmware/geometry_calculator.py `
 Edit the four reported constants, upload, calibrate again, and verify at least
 four widely separated squares. This corrects translation and independent axis
 scale; a rotated, skewed, or nonuniform board must be aligned mechanically.
-The former duplicate local sensor screen was replaced to hold the Nano within
-its established flash budget; both apps and the `BOARD` command retain complete
-64-square sensor inspection.
+The removed local maintenance carousel and duplicate sensor screen reduce Nano
+flash and SRAM; both apps and the `BOARD` command retain complete diagnostics.
 
 ## Piece-retention travel planner
 

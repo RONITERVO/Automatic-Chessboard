@@ -1,12 +1,28 @@
 # Nano firmware development
 
-Firmware 4.4 keeps the controller responsible for deterministic motion, sensor
+Firmware 4.5 keeps the controller responsible for deterministic motion, sensor
 normalization, safety interlocks, persistence, the two-button/LCD experience,
 and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 4.4.0 behavior
+## Release 4.5.0 behavior
+
+Firmware 4.5 replaces the local maintenance carousel with a simpler startup:
+Button A starts standalone play and Button B calibrates. Complete sensor,
+telemetry, switch, motor-jog, and board-registration tools remain available to
+connected builders, where they can explain results and be tested without using
+scarce Nano UI memory.
+
+Board registration is a recoverable host-guided session. `GEOMETRY` reports the
+compiled pitches, park offsets, and microstep factor. `ALIGN <square> H|M`
+visits a chosen square, and four `NUDGE` commands move one logical X/Y step at a
+time. Head-only mode keeps the magnet off; optional marker mode pulses it only
+during each step. The firmware journals the carriage as unknown before nudging,
+bounds each axis to 60 steps, reverses all accumulated nudges on `ALIGN END`,
+and still requires calibration afterward. It never writes geometry to EEPROM.
+The Android and Windows apps turn two widely separated measurements into exact
+`global.h` source values.
 
 Firmware 4.4 makes queen-aligned stepping a firmware-wide invariant. Every raw
 CoreXY displacement is executed only as horizontal, vertical, or exact
@@ -41,14 +57,14 @@ ATmega2560 board. It preserves the same deterministic runtime, standalone play,
 geometry, protocol, and 64-square sensor map while using the MKS X/Y driver
 sockets, HE0 MOSFET, labeled expansion headers, full-duplex Serial2 Bluetooth,
 and software-I2C LCD wiring. See `hardware/MKS_GEN_L_V1.md`. The Nano remains
-the default and retains tight 29620-byte flash / 1118-byte SRAM budgets.
+the default and retains tight 29500-byte flash / 1115-byte global-SRAM budgets.
 
 The Nano still works without a companion: calibration, starting-position
 validation, human-vs-Micro-Max chess, physical captures/castling/en-passant,
-geometry measurement, EEPROM position recovery, LCD guidance, and two-button
-controls remain local. Full 64-square sensor inspection remains available from
-either app or a serial terminal through `BOARD`; removing its duplicate local
-screen pays for geometry setup without increasing Nano flash.
+EEPROM position recovery, LCD guidance, and two-button controls remain local.
+Full 64-square sensor inspection and board registration remain available from
+either app or a serial terminal. Removing the nested local maintenance UI makes
+the ordinary controls clearer and returns memory to long-term maintenance.
 
 Connected USB/BLE clients retain remote games, occupancy/telemetry, safe
 diagnostics, app calibration, head-only and sensor-verified piece movement, and
@@ -66,15 +82,11 @@ occupancy, and unexpected sensor transitions. Complex evacuation, restoration,
 staging, and recursive clearing remain host responsibilities so Nano memory and
 motion behaviour stay deterministic. See `windows_app/FIRMWARE_PROTOCOL.md`.
 
-Firmware 4.2 adds an app-independent **Service > Geometry** measurement mode.
-It displays the compiled file/rank pitches and corner-to-e6 park values, lets a
-builder select any square, and nudges a visible magnetic marker in coordinated
-physical axes one precise step at a time. Finishing reports, for example,
-`a2 X+3 Y-1` on the LCD. It does not save or change geometry and uses no
-additional EEPROM.
-
-Record two widely separated reports whose files and ranks both differ, then use
-the documented formulas in `global.h` or the optional offline calculator:
+Firmware 4.5 provides the same board-registration work through either companion
+or a guarded serial terminal. Calibrate first, read `GEOMETRY`, then collect two
+widely separated `ALIGN ACTIVE` reports whose files and ranks both differ. The
+apps calculate the answer directly. A terminal-only builder can use the formulas
+in `global.h` or the optional offline calculator:
 
 ```powershell
 python ./firmware/geometry_calculator.py `
@@ -84,7 +96,8 @@ python ./firmware/geometry_calculator.py `
 Edit `FILE_PITCH_STEPS`, `RANK_PITCH_STEPS`, and both
 `CALIBRATION_PARK_*_STEPS` values in `global.h`, upload, calibrate again, and
 verify several separated squares before enabling play. The mode reuses normal
-service state, so global SRAM remains at the 4.1 release level.
+state storage, never changes EEPROM geometry, and makes calibration mandatory
+after every session.
 
 For deterministic limit-input commissioning, send `SWTEST` from USB or the
 guarded developer console and follow its `PRESS A`, `RELEASE`, and `PRESS B`
@@ -108,7 +121,6 @@ Disconnect the untested driver's VMOT and the magnet branch before using them.
 - `FirmwareSensors.ino` scans the reed matrix and tracks human moves.
 - `FirmwareMotion.ino` owns CoreXY stepping, calibration, and path planning.
 - `FirmwarePieces.ino` implements captures, castling, and carried moves.
-- `FirmwareService.ino` contains local maintenance controls.
 - `PositionJournal.ino` owns power-loss-safe EEPROM position records.
 - `Micro_Max.cpp` is the separately attributed standalone engine adaptation.
 
@@ -196,7 +208,9 @@ a certified safety function.
 
 ## Resource policy
 
-`build.ps1` rejects any global SRAM increase beyond 1118 bytes and keeps the
-sketch at or below 28562 bytes, leaving at least 2158 bytes of physical Nano
-flash for future maintenance. The packed three-snapshot reed representation
-uses 24 bytes instead of 192 bytes.
+The 4.5 Nano build uses 29444 bytes of flash and 1115 bytes of global SRAM.
+`build.ps1` rejects growth beyond 29500/1115 bytes, leaving at least 1220 bytes
+of physical flash and 933 bytes for stack/local runtime state. Compared with
+4.4.0, simplifying the local UI while adding the safer connected alignment
+protocol saves 116 flash bytes and 3 global-SRAM bytes. The packed
+three-snapshot reed representation uses 24 bytes instead of 192 bytes.

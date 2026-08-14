@@ -38,6 +38,9 @@ import com.github.bhlangonijr.chesslib.Piece
 import org.openautomaticchessboard.mobile.BuildConfig
 import org.openautomaticchessboard.mobile.camera.CameraController
 import org.openautomaticchessboard.mobile.domain.BoardRepository
+import org.openautomaticchessboard.mobile.domain.AlignmentPoint
+import org.openautomaticchessboard.mobile.domain.GeometrySourceValues
+import org.openautomaticchessboard.mobile.domain.calculateGeometry
 import org.openautomaticchessboard.mobile.domain.DiagnosticResult
 import org.openautomaticchessboard.mobile.domain.DiagnosticsRunner
 import org.openautomaticchessboard.mobile.domain.EventRecorder
@@ -52,7 +55,9 @@ import org.openautomaticchessboard.mobile.domain.StockfishEngine
 import org.openautomaticchessboard.mobile.domain.SupportBundle
 import org.openautomaticchessboard.mobile.domain.TimelineEntry
 import org.openautomaticchessboard.mobile.protocol.BoardEvent
+import org.openautomaticchessboard.mobile.protocol.AlignmentStatus
 import org.openautomaticchessboard.mobile.protocol.CommandRisk
+import org.openautomaticchessboard.mobile.protocol.GeometrySettings
 import org.openautomaticchessboard.mobile.protocol.Protocol
 import org.openautomaticchessboard.mobile.transport.BleBoardTransport
 import org.openautomaticchessboard.mobile.transport.BleDevice
@@ -96,6 +101,14 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var manualPending = ManualPending.NONE
     private var manualPendingSelection: ManualSelection? = null
     private var calibrationReportedSquare: String? = null
+    private var alignmentView = false
+    private var alignmentGeometry: GeometrySettings? = null
+    private var alignmentState: AlignmentStatus? = null
+    private var alignmentSelectedSquare: Int? = null
+    private var alignmentPointA: AlignmentPoint? = null
+    private var alignmentPointB: AlignmentPoint? = null
+    private var alignmentPending = ""
+    private var alignmentMessage = "Connect firmware 4.5 or newer to align the board."
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
         override fun run() {
@@ -359,54 +372,97 @@ class MainActivity : Activity(), BoardRepository.Observer {
             sensors = monitorState.sensorSquares
             flipped = !gameState.humanWhite
             trolley = trolleyPosition()
-            selectedSquares = manualSelection.highlighted
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val status = text(manualStatus, if (landscape) 12f else 14f, Color.WHITE, true).apply { maxLines = 3 }
-        val selectionText = text("", 13f, MUTED).apply { maxLines = 2 }
+        val status = text("", if (landscape) 12f else 14f, Color.WHITE, true).apply { maxLines = 3 }
+        val selectionText = text("", 12f, MUTED).apply { maxLines = 5 }
         val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val headMode = button("Head only") {
-            if (manualPending != ManualPending.NONE) {
+            if (manualPending != ManualPending.NONE || alignmentPending.isNotEmpty() || alignmentIsActive()) {
                 manualStatus = "An operation is in progress; wait for verification."
                 manualUpdater?.invoke()
                 return@button
             }
+            alignmentView = false
             manualSelection = manualSelection.withMode(ManualMoveMode.HEAD_ONLY)
             manualStatus = "Tap one destination. The electromagnet will stay off."
             manualUpdater?.invoke()
         }
         val pieceMode = button("Move piece") {
-            if (manualPending != ManualPending.NONE) {
+            if (manualPending != ManualPending.NONE || alignmentPending.isNotEmpty() || alignmentIsActive()) {
                 manualStatus = "An operation is in progress; wait for verification."
                 manualUpdater?.invoke()
                 return@button
             }
+            alignmentView = false
             manualSelection = manualSelection.withMode(ManualMoveMode.MOVE_PIECE)
             manualStatus = "Tap an occupied source, then an empty destination."
             manualUpdater?.invoke()
         }
-        modeRow.addView(headMode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        modeRow.addView(pieceMode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
-        controls.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        controls.addView(modeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44)))
-        controls.addView(selectionText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, .75f))
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(button("Calibrate", ACCENT_DARK) { confirmManualCalibration() },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        actions.addView(button("Clear") {
-            if (manualPending != ManualPending.NONE) {
-                manualStatus = "An operation is in progress; wait for verification."
+        val alignMode = button("Align board") {
+            if (manualPending != ManualPending.NONE || alignmentPending.isNotEmpty()) {
+                alignmentMessage = "An operation is in progress; wait for its acknowledgement."
                 manualUpdater?.invoke()
                 return@button
             }
-            manualSelection = ManualSelection(manualSelection.mode)
-            manualStatus = if (manualCalibrationVerified) "Choose squares." else "Calibrate before moving."
+            alignmentView = true
+            readAlignmentState()
             manualUpdater?.invoke()
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .72f).apply { marginStart = dp(4) })
-        actions.addView(button("Move", WARN) { confirmManualMove() },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .82f).apply { marginStart = dp(4) })
+        }
+        modeRow.addView(headMode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        modeRow.addView(pieceMode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
+        modeRow.addView(alignMode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
+        controls.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        controls.addView(modeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44)))
+        controls.addView(selectionText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, .75f))
+
+        val nudges = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("X −1" to ('X' to '-'), "X +1" to ('X' to '+'),
+            "Y −1" to ('Y' to '-'), "Y +1" to ('Y' to '+')).forEachIndexed { index, (label, value) ->
+            nudges.addView(button(label, SURFACE) { nudgeAlignment(value.first, value.second) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    if (index != 0) marginStart = dp(3)
+                })
+        }
+        controls.addView(nudges, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 34 else 44),
+        ))
+
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val calibrate = button("Calibrate", ACCENT_DARK) { confirmManualCalibration() }
+        val secondary = button("Clear") {
+            if (alignmentView) startAlignmentChoice() else {
+                if (manualPending != ManualPending.NONE) {
+                    manualStatus = "An operation is in progress; wait for verification."
+                    manualUpdater?.invoke()
+                    return@button
+                }
+                manualSelection = ManualSelection(manualSelection.mode)
+                manualStatus = if (manualCalibrationVerified) "Choose squares." else "Calibrate before moving."
+                manualUpdater?.invoke()
+            }
+        }
+        val primary = button("Move", WARN) {
+            if (alignmentView) recordAlignmentPoint() else confirmManualMove()
+        }
+        val finish = button("End") { finishAlignment() }
+        actions.addView(calibrate,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        actions.addView(secondary, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
+        actions.addView(primary, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
+        actions.addView(finish, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .72f).apply { marginStart = dp(4) })
         controls.addView(actions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (landscape) 36 else 46)))
         board.onSquareTapped = squareTap@ { square ->
+            if (alignmentView) {
+                if (alignmentPending.isNotEmpty() || alignmentIsActive()) {
+                    alignmentMessage = "Finish the current alignment before selecting another square."
+                } else {
+                    alignmentSelectedSquare = square
+                    alignmentMessage = "Selected ${ManualSelection.squareName(square)}. Calibrate, then Start."
+                }
+                manualUpdater?.invoke()
+                return@squareTap
+            }
             if (manualPending != ManualPending.NONE) {
                 manualStatus = "An operation is in progress; wait for verification."
                 manualUpdater?.invoke()
@@ -417,19 +473,43 @@ class MainActivity : Activity(), BoardRepository.Observer {
             manualStatus = result.message
             manualUpdater?.invoke()
         }
+        val manualLayout = adaptive(board, controls, if (landscape) .60f else .48f)
         manualUpdater = {
+            if (!landscape) {
+                val boardWeight = if (alignmentView) .36f else .48f
+                (board.layoutParams as LinearLayout.LayoutParams).weight = boardWeight
+                (controls.layoutParams as LinearLayout.LayoutParams).weight = 1f - boardWeight
+            }
             board.pieces = gameState.pieces
             board.sensors = monitorState.sensorSquares
             board.trolley = trolleyPosition()
-            board.selectedSquares = manualSelection.highlighted
-            status.text = manualStatus
-            val calibration = if (manualCalibrationVerified) "Calibrated and verified" else "Calibration required"
-            selectionText.text = "$calibration\n${manualSelection.command() ?: if (manualSelection.mode == ManualMoveMode.HEAD_ONLY) "Tap a target square" else "Tap source and destination"}"
-            headMode.background = rounded(if (manualSelection.mode == ManualMoveMode.HEAD_ONLY) ACCENT_DARK else SURFACE)
-            pieceMode.background = rounded(if (manualSelection.mode == ManualMoveMode.MOVE_PIECE) ACCENT_DARK else SURFACE)
+            if (alignmentView) {
+                val activeSquare = alignmentState?.takeIf { alignmentIsActive() }?.square?.let(Protocol::squareIndex)
+                board.selectedSquares = setOfNotNull(activeSquare ?: alignmentSelectedSquare)
+                status.text = alignmentMessage
+                selectionText.text = alignmentSummary()
+                nudges.visibility = View.VISIBLE
+                secondary.text = "Start"
+                primary.text = if (alignmentPointA != null && alignmentPointB != null) "Result" else "Record"
+                finish.visibility = View.VISIBLE
+            } else {
+                board.selectedSquares = manualSelection.highlighted
+                status.text = manualStatus
+                val calibration = if (manualCalibrationVerified) "Calibrated and verified" else "Calibration required"
+                selectionText.text = "$calibration\n${manualSelection.command() ?: if (manualSelection.mode == ManualMoveMode.HEAD_ONLY) "Tap a target square" else "Tap source and destination"}"
+                nudges.visibility = View.GONE
+                secondary.text = "Clear"
+                primary.text = "Move"
+                finish.visibility = View.GONE
+            }
+            headMode.background = rounded(if (!alignmentView && manualSelection.mode == ManualMoveMode.HEAD_ONLY) ACCENT_DARK else SURFACE)
+            pieceMode.background = rounded(if (!alignmentView && manualSelection.mode == ManualMoveMode.MOVE_PIECE) ACCENT_DARK else SURFACE)
+            alignMode.background = rounded(if (alignmentView) ACCENT_DARK else SURFACE)
         }
         manualUpdater?.invoke()
-        return adaptive(board, controls, .60f)
+        // Alignment adds a full nudge row. Its portrait updater reserves more
+        // height for controls so nothing can cover the global navigation.
+        return manualLayout
     }
 
     private fun buildDiagnostics(): View {
@@ -542,6 +622,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
         game.connectionChanged(state.connected)
         if (!state.connected && monitorState.connected) {
             invalidateManualCalibration("Connection lost; calibrate again after reconnecting.")
+            alignmentState = null
+            alignmentPending = ""
+            alignmentMessage = "Connection lost. Reconnect and read status; interrupted alignment remains unhomed."
         } else if (manualCalibrationVerified && !ManualVerification.positionIsTrusted(state.telemetry)) {
             val reason = if (state.telemetry?.motionFault == true) {
                 "Motion stopped with the carriage position unknown. Inspect locally, recover the fault, and recalibrate."
@@ -564,27 +647,81 @@ class MainActivity : Activity(), BoardRepository.Observer {
     override fun onBoardEvent(event: BoardEvent) {
         game.handle(event)
         when (event.kind) {
-            "CALIBRATING" -> manualStatus = "Calibrating; keep the mechanism clear."
+            "INFO" -> if (runCatching { Protocol.parseInfo(event) }.getOrNull()
+                    ?.capabilities?.contains("ALIGN") == true) {
+                repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
+            }
+            "GEOMETRY" -> runCatching { Protocol.parseGeometry(event) }
+                .onSuccess {
+                    alignmentGeometry = it
+                    alignmentMessage = "Firmware geometry read. Calibrate and select a square."
+                }.onFailure { alignmentMessage = it.message ?: "Malformed geometry response" }
+            "ALIGN" -> runCatching { Protocol.parseAlignment(event) }
+                .onSuccess { status ->
+                    alignmentState = status
+                    alignmentPending = ""
+                    when (status.state) {
+                        "READY" -> {
+                            manualCalibrationVerified = false
+                            alignmentMessage = if (status.magneticMarker) {
+                                "Ready at ${status.square}. Place one marker above the head, then nudge."
+                            } else "Ready at ${status.square}. Nudge to the physical centre."
+                        }
+                        "ACTIVE" -> {
+                            manualCalibrationVerified = false
+                            alignmentMessage = "${status.square}: X%+d Y%+d. Record when centred."
+                                .format(status.offsetX, status.offsetY)
+                        }
+                        "ENDED" -> {
+                            manualCalibrationVerified = false
+                            alignmentMessage = "Returned safely. Calibrate before another point or game."
+                        }
+                        else -> alignmentMessage = "No active alignment session."
+                    }
+                }.onFailure {
+                    alignmentPending = ""
+                    alignmentMessage = it.message ?: "Malformed alignment response"
+                }
+            "CALIBRATING" -> {
+                manualStatus = "Calibrating; keep the mechanism clear."
+                alignmentMessage = "Calibrating; keep the mechanism clear."
+            }
             "CALIBRATED" -> {
                 if (manualPending == ManualPending.CALIBRATION) {
                     calibrationReportedSquare = event.args.firstOrNull()
                     manualStatus = "Calibration ended at ${calibrationReportedSquare ?: "unknown"}; checking fresh telemetry."
+                    alignmentMessage = "Calibration ended at ${calibrationReportedSquare ?: "unknown"}; checking telemetry."
                     repository.enqueueRequests("TELEM", "BOARD")
                 }
             }
+            "ALIGNING" -> alignmentMessage = "Moving to the selected square; keep hands clear."
             "MOVING" -> if (event.args.firstOrNull() in setOf("HEAD", "PIECE")) {
                 manualStatus = "${event.args.first()} movement in progress; keep hands clear."
             }
             "ESTOP" -> invalidateManualCalibration(
                 "Remote halt stopped motion and invalidated the carriage position. Inspect locally and recalibrate."
-            )
+            ).also {
+                alignmentState = null
+                alignmentPending = ""
+                alignmentMessage = "Alignment halted. Inspect locally and recalibrate."
+            }
             "MOVED" -> handleManualMoved(event.args)
             "TELEM" -> handleManualTelemetry(event)
             "BOARD" -> handleManualBoard(event)
-            "ERR" -> if (manualPending != ManualPending.NONE || event.args.joinToString(" ").contains("CALIBRATE")) {
-                manualPending = ManualPending.NONE
-                manualPendingSelection = null
-                manualStatus = "Board rejected the operation: ${event.args.joinToString(" ")}"
+            "ERR" -> {
+                if (manualPending != ManualPending.NONE || event.args.joinToString(" ").contains("CALIBRATE")) {
+                    manualPending = ManualPending.NONE
+                    manualPendingSelection = null
+                    manualStatus = "Board rejected the operation: ${event.args.joinToString(" ")}"
+                }
+                if (alignmentPending.isNotEmpty()) {
+                    alignmentPending = ""
+                    alignmentMessage = "Board rejected alignment: ${event.args.joinToString(" ")}"
+                }
+            }
+            "STOPPED" -> {
+                alignmentState = null
+                alignmentPending = ""
             }
         }
         if (currentTab == TAB_MOVE) manualUpdater?.invoke()
@@ -611,6 +748,9 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 manualStatus = if (manualCalibrationVerified) {
                     "Calibration verified: board and app agree the head is at e6, homed, with magnet off."
                 } else "Calibration report disagrees with telemetry; do not move."
+                alignmentMessage = if (manualCalibrationVerified) {
+                    "Calibration verified. Select a square and start alignment."
+                } else "Calibration proof failed; do not start alignment."
                 manualPending = ManualPending.NONE
                 manualPendingSelection = null
             }
@@ -799,6 +939,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         }
         if (!sensorFrameReady()) return false
         if (gameState.active) { alert("Game active", "Stop the game session before manual head or piece movement."); return false }
+        if (alignmentIsActive()) { alert("Alignment active", "Record or finish board alignment first."); return false }
         if (monitorState.telemetry?.motionFault == true) {
             alert("Motion fault", "A fault must be inspected and recovered locally before remote calibration or movement.")
             return false
@@ -891,6 +1032,154 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 }
                 manualUpdater?.invoke()
             }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun alignmentIsActive(): Boolean = alignmentState?.state in setOf("READY", "ACTIVE")
+
+    private fun alignmentResult(): GeometrySourceValues? {
+        val geometry = alignmentGeometry ?: return null
+        val first = alignmentPointA ?: return null
+        val second = alignmentPointB ?: return null
+        return calculateGeometry(first, second, geometry)
+    }
+
+    private fun alignmentSummary(): String {
+        val geometry = alignmentGeometry
+        fun point(value: AlignmentPoint?): String = value?.let {
+            "${it.square} X%+d Y%+d".format(it.offsetX, it.offsetY)
+        } ?: "—"
+        val result = runCatching { alignmentResult() }.getOrNull()
+        return buildString {
+            append(if (geometry == null) "Firmware geometry not read" else
+                "Current F${geometry.filePitch} R${geometry.rankPitch} B${geometry.blackPark} W${geometry.whitePark} M${geometry.microsteps}")
+            append("\nA ${point(alignmentPointA)}  •  B ${point(alignmentPointB)}")
+            if (result != null) append("\nNew F${result.filePitch} R${result.rankPitch} B${result.blackPark} W${result.whitePark}")
+            else append("\nTwo separated points produce the source values.")
+        }
+    }
+
+    private fun readAlignmentState() {
+        if (!monitorState.connected) {
+            alignmentMessage = "Connect to the board first."
+            return
+        }
+        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
+            alignmentMessage = "Firmware 4.5 or newer is required for alignment."
+            return
+        }
+        repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
+        alignmentMessage = "Reading geometry and interrupted-session status."
+    }
+
+    private fun startAlignmentChoice() {
+        if (alignmentPending.isNotEmpty()) { toast("Wait for the current operation"); return }
+        if (!manualCapabilityReady()) return
+        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
+            alert("Firmware update required", "Install firmware 4.5 or newer for board alignment.")
+            return
+        }
+        if (!manualCalibrationVerified) {
+            alert("Calibrate first", "Calibrate and wait for the e6 telemetry proof before alignment.")
+            return
+        }
+        if (alignmentGeometry == null) {
+            readAlignmentState()
+            toast("Reading firmware geometry; tap Start again when it appears")
+            return
+        }
+        if (alignmentSelectedSquare == null) { toast("Tap a square to measure first"); return }
+        AlertDialog.Builder(this).setTitle("Alignment method")
+            .setItems(arrayOf("Head only — magnet off", "Magnetic marker — magnet pulses")) { _, index ->
+                confirmAlignmentStart(index == 1)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun confirmAlignmentStart(magneticMarker: Boolean) {
+        val squareIndex = alignmentSelectedSquare ?: return
+        val square = ManualSelection.squareName(squareIndex)
+        val message = if (magneticMarker) {
+            "Move the head to $square, then place one marker directly over it after READY. " +
+                "Each nudge pulses the electromagnet. Remove every chess piece and keep the physical cutoff ready."
+        } else {
+            "Move the head to $square with the electromagnet off, then permit one-step X/Y nudges?"
+        }
+        AlertDialog.Builder(this).setTitle("Start board alignment").setMessage(message)
+            .setPositiveButton("Start") { _, _ ->
+                alignmentPending = "start"
+                alignmentMessage = "Moving to $square; keep hands clear."
+                repository.sendCommand(Protocol.alignmentCommand(square, magneticMarker)).onFailure {
+                    alignmentPending = ""
+                    alignmentMessage = it.message ?: "Alignment start failed"
+                }
+                manualUpdater?.invoke()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun nudgeAlignment(axis: Char, sign: Char) {
+        if (alignmentPending.isNotEmpty()) { toast("Wait for the previous step"); return }
+        if (!alignmentIsActive()) { toast("Start alignment first"); return }
+        alignmentPending = "nudge"
+        alignmentMessage = "Applying one $axis$sign step."
+        repository.sendCommand(Protocol.nudgeCommand(axis, sign)).onFailure {
+            alignmentPending = ""
+            alignmentMessage = it.message ?: "Nudge failed"
+        }
+        manualUpdater?.invoke()
+    }
+
+    private fun recordAlignmentPoint() {
+        if (alignmentPointA != null && alignmentPointB != null) {
+            showAlignmentResult()
+            return
+        }
+        val status = alignmentState
+        if (alignmentPending.isNotEmpty() || !alignmentIsActive() || status?.square == null) {
+            toast("Start and align a square before recording it")
+            return
+        }
+        val point = AlignmentPoint(status.square, status.offsetX, status.offsetY)
+        if (alignmentPointA == null) alignmentPointA = point
+        else {
+            val first = checkNotNull(alignmentPointA)
+            if (point.file == first.file || point.rank == first.rank) {
+                alert("Choose a separated point", "Point B must use a different file and rank. Far-apart points are most accurate.")
+                return
+            }
+            alignmentPointB = point
+        }
+        finishAlignment()
+    }
+
+    private fun finishAlignment() {
+        if (alignmentPending.isNotEmpty()) { toast("Wait for the previous step"); return }
+        if (!alignmentIsActive()) { toast("No active alignment session"); return }
+        alignmentPending = "end"
+        alignmentMessage = "Returning the offset; keep hands clear."
+        repository.sendCommand("ALIGN END").onFailure {
+            alignmentPending = ""
+            alignmentMessage = it.message ?: "Could not finish alignment"
+        }
+        manualUpdater?.invoke()
+    }
+
+    private fun showAlignmentResult() {
+        val result = runCatching { alignmentResult() }.getOrElse {
+            alert("Cannot calculate", it.message ?: "Invalid measurements")
+            return
+        }
+        if (result == null) { toast("Record two separated points first"); return }
+        val body = result.firmwareLines()
+        AlertDialog.Builder(this).setTitle("Values to edit in global.h").setMessage(body)
+            .setPositiveButton("Copy") { _, _ ->
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("board geometry", body))
+                toast("Firmware source values copied")
+            }.setNeutralButton("Clear points") { _, _ ->
+                alignmentPointA = null
+                alignmentPointB = null
+                alignmentMessage = "Measurements cleared. Select the first square."
+                manualUpdater?.invoke()
+            }.setNegativeButton("Close", null).show()
     }
 
     private fun runDiagnostics() {

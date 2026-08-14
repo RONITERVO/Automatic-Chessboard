@@ -17,6 +17,7 @@ import chess
 import chess.engine
 import chess.pgn
 
+from alignment import AlignmentPoint, GeometrySourceValues, calculate_geometry
 from camera_source import CameraWorker
 from model import (
     ManualSelection,
@@ -28,11 +29,17 @@ from model import (
     square_name,
 )
 from protocol import (
+    AlignmentStatus,
     CommandRisk,
+    GeometrySettings,
+    alignment_command,
     classify_command,
+    nudge_command,
+    parse_alignment,
     parse_board_hex,
     parse_drag_command,
     parse_event,
+    parse_geometry,
     parse_info,
     parse_telemetry,
     play_command,
@@ -47,7 +54,7 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.4.0"
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
@@ -284,6 +291,12 @@ class AutomaticChessboardApp:
         self.manual_pending = ""
         self.manual_pending_selection: ManualSelection | None = None
         self.calibration_reported_square: str | None = None
+        self.alignment_geometry: GeometrySettings | None = None
+        self.alignment_state: AlignmentStatus | None = None
+        self.alignment_selected_square: int | None = None
+        self.alignment_point_a: AlignmentPoint | None = None
+        self.alignment_point_b: AlignmentPoint | None = None
+        self.alignment_pending = ""
 
         self._configure_style()
         self._build_menu()
@@ -365,12 +378,14 @@ class AutomaticChessboardApp:
         self.monitor_tab = ttk.Frame(self.notebook, padding=8)
         self.play_tab = ttk.Frame(self.notebook, padding=10)
         self.manual_tab = ttk.Frame(self.notebook, padding=8)
+        self.alignment_tab = ttk.Frame(self.notebook, padding=8)
         self.diagnostics_tab = ttk.Frame(self.notebook, padding=10)
         self.camera_tab = ttk.Frame(self.notebook, padding=10)
         self.developer_tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.monitor_tab, text="Monitor")
         self.notebook.add(self.play_tab, text="Play")
         self.notebook.add(self.manual_tab, text="Move head / piece")
+        self.notebook.add(self.alignment_tab, text="Board alignment")
         self.notebook.add(self.diagnostics_tab, text="Diagnostics")
         self.notebook.add(self.camera_tab, text="Camera")
         self.notebook.add(self.developer_tab, text="Developer")
@@ -378,6 +393,7 @@ class AutomaticChessboardApp:
         self._build_monitor_tab()
         self._build_play_tab()
         self._build_manual_tab()
+        self._build_alignment_tab()
         self._build_diagnostics_tab()
         self._build_camera_tab()
         self._build_developer_tab()
@@ -565,6 +581,79 @@ class AutomaticChessboardApp:
         ttk.Button(actions, text="Move", command=self._manual_move).grid(
             row=0, column=2, sticky="ew", padx=(3, 0)
         )
+
+    def _build_alignment_tab(self) -> None:
+        self.alignment_tab.columnconfigure(0, weight=3)
+        self.alignment_tab.columnconfigure(1, weight=2)
+        self.alignment_tab.rowconfigure(0, weight=1)
+
+        self.alignment_board = ChessboardCanvas(self.alignment_tab)
+        self.alignment_board.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.alignment_board.set_interaction(frozenset(), self._alignment_square_clicked)
+
+        controls = ttk.Frame(self.alignment_tab, padding=8)
+        controls.grid(row=0, column=1, sticky="nsew")
+        controls.columnconfigure(0, weight=1)
+        controls.rowconfigure(5, weight=1)
+        ttk.Label(controls, text="Builder board alignment", style="Heading.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            controls,
+            text=("Calibrate, select any square, align its physical centre one step at a time, "
+                  "then record two widely separated points. Firmware values are never changed automatically."),
+            wraplength=430,
+        ).grid(row=1, column=0, sticky="ew", pady=(5, 8))
+
+        self.alignment_message = tk.StringVar(value="Connect firmware 4.5 or newer to begin.")
+        self.alignment_geometry_text = tk.StringVar(value="Current firmware geometry: not read")
+        self.alignment_points_text = tk.StringVar(value="Point A: —   Point B: —")
+        self.alignment_result_text = tk.StringVar(value="Result appears after two valid points.")
+        ttk.Label(controls, textvariable=self.alignment_message, wraplength=430,
+                  style="Heading.TLabel").grid(row=2, column=0, sticky="ew", pady=(3, 5))
+        ttk.Label(controls, textvariable=self.alignment_geometry_text, wraplength=430,
+                  style="Quiet.TLabel").grid(row=3, column=0, sticky="ew")
+        ttk.Label(controls, textvariable=self.alignment_points_text, wraplength=430,
+                  style="Quiet.TLabel").grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.alignment_result_text, wraplength=430,
+                  font=("Consolas", 9)).grid(row=5, column=0, sticky="new", pady=(8, 0))
+
+        setup = ttk.Frame(controls)
+        setup.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        for column in range(4):
+            setup.columnconfigure(column, weight=1)
+        ttk.Button(setup, text="Read", command=self._alignment_read).grid(
+            row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(setup, text="Calibrate", command=self._alignment_calibrate).grid(
+            row=0, column=1, sticky="ew", padx=3)
+        ttk.Button(setup, text="Start (head)", command=lambda: self._alignment_start(False)).grid(
+            row=0, column=2, sticky="ew", padx=3)
+        ttk.Button(setup, text="Start (marker)", command=lambda: self._alignment_start(True)).grid(
+            row=0, column=3, sticky="ew", padx=(3, 0))
+
+        nudges = ttk.Frame(controls)
+        nudges.grid(row=7, column=0, sticky="ew", pady=(6, 0))
+        for column, (label, axis, sign) in enumerate((
+            ("X −1", "X", "-"), ("X +1", "X", "+"),
+            ("Y −1", "Y", "-"), ("Y +1", "Y", "+"),
+        )):
+            nudges.columnconfigure(column, weight=1)
+            ttk.Button(nudges, text=label,
+                       command=lambda a=axis, s=sign: self._alignment_nudge(a, s)).grid(
+                           row=0, column=column, sticky="ew", padx=(0 if column == 0 else 3, 0))
+
+        finish = ttk.Frame(controls)
+        finish.grid(row=8, column=0, sticky="ew", pady=(6, 0))
+        for column in range(4):
+            finish.columnconfigure(column, weight=1)
+        ttk.Button(finish, text="Record point", command=self._alignment_record).grid(
+            row=0, column=0, sticky="ew", padx=(0, 3))
+        ttk.Button(finish, text="Finish", command=self._alignment_finish).grid(
+            row=0, column=1, sticky="ew", padx=3)
+        ttk.Button(finish, text="Clear points", command=self._alignment_clear_points).grid(
+            row=0, column=2, sticky="ew", padx=3)
+        ttk.Button(finish, text="Copy result", command=self._alignment_copy_result).grid(
+            row=0, column=3, sticky="ew", padx=(3, 0))
 
     def _build_diagnostics_tab(self) -> None:
         self.diagnostics_tab.columnconfigure(0, weight=1)
@@ -784,6 +873,8 @@ class AutomaticChessboardApp:
             return "PONG"
         if verb == "BTTEST":
             return "BT"
+        if command.strip().upper() == "ALIGN STATUS":
+            return "ALIGN"
         return verb
 
     def _queue_safe_requests(self, *commands: str) -> None:
@@ -905,6 +996,11 @@ class AutomaticChessboardApp:
             self.model.telemetry_updated = None
             self.manual_selection = ManualSelection(self.manual_selection.mode)
             self.manual_status.set("Connection lost; calibrate again after reconnecting.")
+            self.alignment_state = None
+            self.alignment_pending = ""
+            self.alignment_message.set(
+                "Connection lost. Reconnect and Read status; firmware keeps interrupted alignment unhomed."
+            )
             self._reset_route_orchestration(clear_pending=True)
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
@@ -922,12 +1018,53 @@ class AutomaticChessboardApp:
                 self.model.firmware = parse_info(event)
             except ValueError as error:
                 self.model.last_error = str(error)
+            else:
+                if "ALIGN" in self.model.firmware.capabilities:
+                    self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
+        elif event.kind == "GEOMETRY":
+            try:
+                self.alignment_geometry = parse_geometry(event)
+            except ValueError as error:
+                self.model.last_error = str(error)
+                self.alignment_message.set(str(error))
+            else:
+                self.alignment_message.set("Firmware geometry read. Calibrate and select a measurement square.")
+        elif event.kind == "ALIGN":
+            try:
+                state = parse_alignment(event)
+            except ValueError as error:
+                self.model.last_error = str(error)
+                self.alignment_message.set(str(error))
+            else:
+                self.alignment_state = state
+                self.alignment_pending = ""
+                self.motion_expected = False
+                if state.state == "READY":
+                    self.manual_calibration_verified = False
+                    self.alignment_message.set(
+                        (f"Ready at {state.square}. Place the marker directly above the head, then nudge."
+                         if state.magnetic_marker else
+                         f"Ready at {state.square}. Nudge the head to the physical square centre.")
+                    )
+                elif state.state == "ACTIVE":
+                    self.manual_calibration_verified = False
+                    self.alignment_message.set(
+                        f"{state.square}: X{state.offset_x:+d}, Y{state.offset_y:+d}. "
+                        "Record when centred or continue one step at a time."
+                    )
+                elif state.state == "ENDED":
+                    self.manual_calibration_verified = False
+                    self.alignment_message.set(
+                        "Alignment returned safely. Calibration is required before the next point or game."
+                    )
+                else:
+                    self.alignment_message.set("No active alignment session.")
         elif event.kind == "TELEM":
             try:
                 self.model.telemetry = parse_telemetry(event)
                 self.model.telemetry_updated = time.monotonic()
                 self.motion_expected = (
-                    self.model.telemetry.sequence in (3, 8, 19, 21, 22)
+                    self.model.telemetry.sequence in (3, 19, 20)
                     or self.route_snapshot_pending or self.route_planning
                     or self.active_route_plan is not None
                 )
@@ -978,6 +1115,7 @@ class AutomaticChessboardApp:
         elif event.kind == "CALIBRATING":
             self.motion_expected = True
             self.manual_status.set("Calibrating; keep the mechanism clear.")
+            self.alignment_message.set("Calibrating; keep the mechanism clear.")
         elif event.kind == "CALIBRATED":
             self.motion_expected = False
             if self.manual_pending == "calibration":
@@ -985,7 +1123,13 @@ class AutomaticChessboardApp:
                 self.manual_status.set(
                     f"Calibration ended at {self.calibration_reported_square or 'unknown'}; checking fresh telemetry."
                 )
+                self.alignment_message.set(
+                    f"Calibration ended at {self.calibration_reported_square or 'unknown'}; checking telemetry."
+                )
                 self._queue_safe_requests("TELEM", "BOARD")
+        elif event.kind == "ALIGNING":
+            self.motion_expected = True
+            self.alignment_message.set("Moving to the selected square; keep hands clear.")
         elif event.kind == "PLAN" and event.args:
             if self.active_route_plan is not None and self.route_waiting_for == "PLAN":
                 if event.args[0] == "READY":
@@ -1070,6 +1214,9 @@ class AutomaticChessboardApp:
             self.motion_expected = False
             self.session_active = False
             self.game_status.set("REMOTE HALT REQUESTED — inspect the board locally")
+            self.alignment_state = None
+            self.alignment_pending = ""
+            self.alignment_message.set("Alignment halted. Inspect locally and recalibrate before movement.")
         elif event.kind == "ERR":
             self.model.last_error = " ".join(event.args)
             self.motion_expected = False
@@ -1079,11 +1226,16 @@ class AutomaticChessboardApp:
             if self.manual_pending:
                 self._clear_manual_pending()
                 self.manual_status.set(f"Board rejected the operation: {' '.join(event.args)}")
+            if self.alignment_pending:
+                self.alignment_pending = ""
+                self.alignment_message.set(f"Board rejected alignment: {' '.join(event.args)}")
         elif event.kind == "STOPPED":
             self.session_active = False
             self.motion_expected = False
             self._reset_route_orchestration(clear_pending=True)
             self.game_status.set("Remote game stopped; standalone mode remains available.")
+            self.alignment_state = None
+            self.alignment_pending = ""
         self._render()
         self._refresh_visual_state()
         self.root.after_idle(self._dispatch_safe_request)
@@ -1136,6 +1288,7 @@ class AutomaticChessboardApp:
             self.state_values["sensors"].set(f"{count} occupied · {missing} missing · {unexpected} extra")
         self.mechanism_canvas.set_telemetry(telemetry)
         self._refresh_manual_control()
+        self._refresh_alignment_control()
 
     def _refresh_manual_control(self) -> None:
         if not hasattr(self, "manual_board"):
@@ -1199,6 +1352,11 @@ class AutomaticChessboardApp:
             return False
         if self.session_active:
             messagebox.showwarning("Game active", "Stop the game before manual movement.", parent=self.root)
+            return False
+        if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
+            messagebox.showwarning(
+                "Alignment active", "Record or finish the board-alignment session first.", parent=self.root
+            )
             return False
         telemetry = self.model.telemetry
         if telemetry and telemetry.motion_fault:
@@ -1322,6 +1480,11 @@ class AutomaticChessboardApp:
                 if self.manual_calibration_verified else
                 "Calibration report disagrees with telemetry; do not move."
             )
+            self.alignment_message.set(
+                "Calibration verified. Select a square and start alignment."
+                if self.manual_calibration_verified else
+                "Calibration proof failed; do not start alignment."
+            )
             self._clear_manual_pending()
         elif self.manual_pending == "head":
             target = self.manual_pending_selection.target if self.manual_pending_selection else None
@@ -1381,6 +1544,222 @@ class AutomaticChessboardApp:
     def _clear_manual_pending(self) -> None:
         self.manual_pending = ""
         self.manual_pending_selection = None
+
+    def _refresh_alignment_control(self) -> None:
+        if not hasattr(self, "alignment_board"):
+            return
+        telemetry = self.model.telemetry
+        carriage = None if not telemetry else (telemetry.trolley_x, telemetry.trolley_y)
+        self.alignment_board.set_state(
+            self.board, self.model.sensor_squares, self.human_color == chess.BLACK, carriage
+        )
+        active = bool(self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"})
+        selected = self.alignment_selected_square
+        if active and self.alignment_state and self.alignment_state.square:
+            selected = chess.parse_square(self.alignment_state.square)
+        highlight = frozenset(() if selected is None else (selected,))
+        self.alignment_board.set_interaction(
+            highlight, None if active or self.alignment_pending else self._alignment_square_clicked
+        )
+
+        geometry = self.alignment_geometry
+        self.alignment_geometry_text.set(
+            "Current firmware geometry: not read"
+            if geometry is None else
+            (f"Compiled steps: file {geometry.file_pitch}, rank {geometry.rank_pitch}, "
+             f"black park {geometry.black_park}, white park {geometry.white_park}; "
+             f"microsteps {geometry.microsteps}")
+        )
+        def point_text(value: AlignmentPoint | None) -> str:
+            return "—" if value is None else (
+                f"{value.square} X{value.offset_x:+d} Y{value.offset_y:+d}"
+            )
+        self.alignment_points_text.set(
+            f"Point A: {point_text(self.alignment_point_a)}   "
+            f"Point B: {point_text(self.alignment_point_b)}"
+        )
+        try:
+            result = self._alignment_result()
+        except ValueError as error:
+            self.alignment_result_text.set(str(error))
+        else:
+            self.alignment_result_text.set(
+                "Result appears after two valid points." if result is None else result.firmware_lines()
+            )
+
+    def _alignment_result(self) -> GeometrySourceValues | None:
+        if not self.alignment_geometry or not self.alignment_point_a or not self.alignment_point_b:
+            return None
+        return calculate_geometry(
+            self.alignment_point_a, self.alignment_point_b, self.alignment_geometry
+        )
+
+    def _alignment_square_clicked(self, square: int) -> None:
+        if self.alignment_pending or (self.alignment_state and
+                                      self.alignment_state.state in {"READY", "ACTIVE"}):
+            self.alignment_message.set("Finish the current alignment session before selecting another square.")
+            return
+        self.alignment_selected_square = square
+        self.alignment_message.set(
+            f"Selected {square_name(square)}. Calibrate, then start head-only or marker alignment."
+        )
+        self._refresh_alignment_control()
+
+    def _alignment_read(self) -> None:
+        if not self.transport or not self.transport.is_connected:
+            messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
+            return
+        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
+        if "ALIGN" not in capabilities:
+            messagebox.showerror(
+                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
+                parent=self.root,
+            )
+            return
+        self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
+        self.alignment_message.set("Reading firmware geometry and any interrupted alignment session.")
+
+    def _alignment_calibrate(self) -> None:
+        if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
+            messagebox.showwarning(
+                "Finish alignment", "Record or finish the active alignment before calibrating.", parent=self.root
+            )
+            return
+        self._manual_calibrate()
+        if self.manual_pending == "calibration":
+            self.alignment_message.set("Calibration command sent; keep hands clear.")
+
+    def _alignment_start(self, magnetic_marker: bool) -> None:
+        if self.alignment_pending:
+            self.alignment_message.set("Wait for the board to acknowledge the current operation.")
+            return
+        if not self._manual_capability_ready():
+            return
+        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
+        if "ALIGN" not in capabilities:
+            messagebox.showerror(
+                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
+                parent=self.root,
+            )
+            return
+        if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
+            messagebox.showwarning("Already aligning", "Finish the active alignment first.", parent=self.root)
+            return
+        if not self.manual_calibration_verified:
+            messagebox.showwarning(
+                "Calibrate first", "Calibrate and wait for the e6 telemetry proof before alignment.",
+                parent=self.root,
+            )
+            return
+        if self.alignment_geometry is None:
+            self._alignment_read()
+            messagebox.showinfo(
+                "Reading geometry", "Wait for the current firmware values, then start again.", parent=self.root
+            )
+            return
+        if self.alignment_selected_square is None:
+            messagebox.showinfo("Choose a square", "Click any square to measure.", parent=self.root)
+            return
+        square = square_name(self.alignment_selected_square)
+        detail = (
+            f"Move the head to {square} with the magnet off, then permit one-step alignment nudges?"
+            if not magnetic_marker else
+            f"Move the head to {square}? After READY, place one marker magnet over the head. "
+            "Each nudge will pulse the electromagnet. Remove every chess piece, keep the cutoff ready, "
+            "and use only a marker that cannot strike nearby hardware."
+        )
+        if not messagebox.askokcancel("Start board alignment", detail, parent=self.root):
+            return
+        command = alignment_command(square, magnetic_marker=magnetic_marker)
+        self.alignment_pending = "start"
+        self.motion_expected = True
+        self.alignment_message.set(f"Moving to {square}; keep hands clear.")
+        if not self._send(command):
+            self.alignment_pending = ""
+            self.motion_expected = False
+
+    def _alignment_nudge(self, axis: str, sign: str) -> None:
+        state = self.alignment_state
+        if self.alignment_pending:
+            self.alignment_message.set("Wait for the previous step acknowledgement.")
+            return
+        if not state or state.state not in {"READY", "ACTIVE"}:
+            messagebox.showinfo("No active alignment", "Start alignment at a selected square first.", parent=self.root)
+            return
+        self.alignment_pending = "nudge"
+        self.motion_expected = True
+        self.alignment_message.set(f"Applying one {axis}{sign} step.")
+        if not self._send(nudge_command(axis, sign)):
+            self.alignment_pending = ""
+            self.motion_expected = False
+
+    def _alignment_record(self) -> None:
+        state = self.alignment_state
+        if self.alignment_pending or not state or state.state not in {"READY", "ACTIVE"} or not state.square:
+            messagebox.showinfo("No measurement", "Start and align a square before recording it.", parent=self.root)
+            return
+        point = AlignmentPoint(state.square, state.offset_x, state.offset_y)
+        if self.alignment_point_a is None:
+            self.alignment_point_a = point
+        elif self.alignment_point_b is None:
+            if (point.file == self.alignment_point_a.file or
+                    point.rank == self.alignment_point_a.rank):
+                messagebox.showerror(
+                    "Choose a separated point",
+                    "Point B must use a different file and a different rank. Widely separated points are most accurate.",
+                    parent=self.root,
+                )
+                return
+            self.alignment_point_b = point
+        elif messagebox.askyesno(
+            "Replace measurements?",
+            "Both points are already recorded. Replace Point A with this measurement and clear Point B?",
+            parent=self.root,
+        ):
+            self.alignment_point_a = point
+            self.alignment_point_b = None
+        else:
+            return
+        self._refresh_alignment_control()
+        self._alignment_finish()
+
+    def _alignment_finish(self) -> None:
+        state = self.alignment_state
+        if self.alignment_pending:
+            self.alignment_message.set("Wait for the previous step acknowledgement.")
+            return
+        if not state or state.state not in {"READY", "ACTIVE"}:
+            messagebox.showinfo("No active alignment", "There is no offset to return from.", parent=self.root)
+            return
+        self.alignment_pending = "end"
+        self.motion_expected = True
+        self.alignment_message.set("Returning the alignment offset; keep hands clear.")
+        if not self._send("ALIGN END"):
+            self.alignment_pending = ""
+            self.motion_expected = False
+
+    def _alignment_clear_points(self) -> None:
+        if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
+            messagebox.showwarning("Alignment active", "Finish the current session first.", parent=self.root)
+            return
+        self.alignment_point_a = None
+        self.alignment_point_b = None
+        self.alignment_message.set("Measurements cleared. Select the first square.")
+        self._refresh_alignment_control()
+
+    def _alignment_copy_result(self) -> None:
+        try:
+            result = self._alignment_result()
+        except ValueError as error:
+            messagebox.showerror("Cannot calculate", str(error), parent=self.root)
+            return
+        if result is None:
+            messagebox.showinfo("Two points required", "Record two valid separated points first.", parent=self.root)
+            return
+        body = result.firmware_lines()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(body)
+        self.alignment_message.set("Copied source values. Edit global.h, upload, calibrate, and verify four corners.")
 
     def _choose_engine(self) -> None:
         selected = filedialog.askopenfilename(

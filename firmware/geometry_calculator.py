@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calculate global.h geometry constants from two local service reports."""
+"""Calculate global.h source constants from two app or terminal alignment reports."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def calculate(
     rank_pitch: int,
     black_park: int,
     white_park: int,
+    microsteps: int = 1,
 ) -> tuple[int, int, int, int]:
     file_a, rank_a, x_a, y_a = first
     file_b, rank_b, x_b, y_b = second
@@ -41,12 +42,15 @@ def calculate(
     rank_change = rounded_divide(y_b - y_a, rank_b - rank_a)
     origin_x = x_a - (file_a - 5) * file_change
     origin_y = y_a - (rank_a - 6) * rank_change
-    return (
+    actual_values = (
         file_pitch + file_change,
         rank_pitch + rank_change,
         black_park - origin_y,
         white_park + origin_x,
     )
+    if microsteps <= 0:
+        raise ValueError("microsteps must be positive")
+    return tuple(rounded_divide(value, microsteps) for value in actual_values)
 
 
 def main() -> int:
@@ -57,11 +61,15 @@ def main() -> int:
     parser.add_argument("--rank-pitch", type=int, default=188)
     parser.add_argument("--black-park", type=int, default=354)
     parser.add_argument("--white-park", type=int, default=871)
+    parser.add_argument(
+        "--microsteps", type=int, default=1,
+        help="compiled MOTOR_MICROSTEPS; current values and measured offsets are actual steps",
+    )
     args = parser.parse_args()
     try:
         values = calculate(
             args.first, args.second, args.file_pitch, args.rank_pitch,
-            args.black_park, args.white_park,
+            args.black_park, args.white_park, args.microsteps,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -70,7 +78,7 @@ def main() -> int:
         "CALIBRATION_PARK_BLACK_STEPS", "CALIBRATION_PARK_WHITE_STEPS",
     )
     for name, value in zip(names, values):
-        print(f"{name} = {value}")
+        print(f"{name} = {value}U * MOTOR_MICROSTEPS")
     print("Upload, calibrate, then verify at least four widely separated squares.")
     return 0
 

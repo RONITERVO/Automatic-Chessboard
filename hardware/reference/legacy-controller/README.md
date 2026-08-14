@@ -7,7 +7,7 @@ it.**
 
 These KiCad files are preserved because their long component layout matches
 the physical working board and can help explain how the modules were arranged.
-They predate current firmware 4.4.0 wiring and are not the electrical source of
+They predate current firmware 4.5.0 wiring and are not the electrical source of
 truth or a verified fabrication release.
 
 ## Required rework for the current prototype

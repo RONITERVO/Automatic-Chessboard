@@ -274,6 +274,7 @@ class SimulatorTransport:
         self._physical_squares: set[int] = set(self._board.piece_map())
         self._pending_human = None
         self._human_white = True
+        self._remote_mode = False
         self._sequence = 1
         self._fault = False
         self._homed = False
@@ -284,6 +285,10 @@ class SimulatorTransport:
         self._plan_expected: frozenset[int] | None = None
         self._plan_capture: int | None = None
         self._plan_dirty = False
+        self._alignment_square: str | None = None
+        self._alignment_marker = False
+        self._alignment_x = 0
+        self._alignment_y = 0
 
     @property
     def is_connected(self) -> bool:
@@ -304,7 +309,7 @@ class SimulatorTransport:
 
     def _telemetry(self) -> str:
         uptime = int(time.monotonic() - self._started)
-        return (f"TELEM ACB2 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)} "
+        return (f"TELEM ACB2 {self._sequence} {int(self._homed)} {int(self._remote_mode)} "
                 f"{int(self._fault)} 0 {self._trolley_x} {self._trolley_y} 1 1 1023 900 {uptime}")
 
     def _clear_plan(self) -> None:
@@ -326,21 +331,27 @@ class SimulatorTransport:
             self._homed = False
             self._trolley_x, self._trolley_y = 0, 0
             self._sequence = 10
+            self._remote_mode = False
             self._clear_plan()
+            self._clear_alignment()
             self._emit("ESTOP REMOTE")
         elif upper in ("PING", "HELLO"):
             self._emit("PONG ACB1")
         elif upper == "INFO":
             self._emit(
-                "INFO ACB2 4.4.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
-                "SENSORFRAME,PLANROUTE"
+                "INFO ACB2 4.5.0-SIM BOARD,TELEM,REMOTE,ESTOP,BTTEST,CALIBRATE,MANUAL,"
+                "SENSORFRAME,PLANROUTE,ALIGN"
             )
         elif upper == "STATUS":
-            self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._sequence >= 15)}")
+            self._emit(f"STATUS ACB1 {self._sequence} {int(self._homed)} {int(self._remote_mode)}")
         elif upper == "TELEM":
             self._emit(self._telemetry())
         elif upper == "BOARD":
             self._emit(f"BOARD {self._board_hex()}")
+        elif upper == "GEOMETRY":
+            self._emit("GEOMETRY ACB1 188 188 354 871 1")
+        elif upper == "ALIGN STATUS":
+            self._emit(self._alignment_status())
         elif upper == "BTTEST":
             self._emit("BT SIMULATED")
         elif upper == "CALIBRATE":
@@ -361,13 +372,14 @@ class SimulatorTransport:
                 self._physical_squares = set(self._board.piece_map())
                 self._clear_plan()
                 self._human_white = upper.endswith("W")
+                self._remote_mode = True
                 self._homed = True
                 self._trolley_x, self._trolley_y = 5, 6
-                self._sequence = 15
+                self._sequence = 13
                 self._emit(f"OK START {'W' if self._human_white else 'B'}")
                 self._emit("SETUP PRESS A", 0.15)
                 self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.5)
-                self._sequence = 16 if self._human_white else 17
+                self._sequence = 14 if self._human_white else 15
                 self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.65)
         elif upper.startswith("SIMMOVE "):
             try:
@@ -384,19 +396,19 @@ class SimulatorTransport:
         elif upper == "ACCEPT" and self._pending_human:
             self._board.push(self._pending_human)
             self._pending_human = None
-            self._sequence = 17
+            self._sequence = 15
             self._emit("OK ACCEPT")
             self._emit("TURN COMPUTER", 0.1)
         elif upper == "REJECT":
             self._pending_human = None
             self._physical_squares = set(self._board.piece_map())
-            self._sequence = 18
+            self._sequence = 16
             self._emit("OK REJECT")
         elif upper.startswith("PLAN "):
             try:
                 if self._fault:
                     raise RuntimeError("FAULT")
-                if not self._homed or self._sequence != 17 or self._plan_move is not None:
+                if not self._homed or self._sequence != 15 or self._plan_move is not None:
                     raise RuntimeError("NOT READY")
                 request = parse_plan_command(text)
                 move = chess.Move.from_uci(request.uci)
@@ -431,7 +443,7 @@ class SimulatorTransport:
                 self._plan_expected = frozenset(after.piece_map())
                 self._plan_capture = capture
                 self._plan_dirty = capture is not None
-                self._sequence = 22
+                self._sequence = 20
                 if capture is not None:
                     self._physical_squares.remove(capture)
                 self._emit("PLAN READY", 0.12 if capture is not None else 0.04)
@@ -467,7 +479,7 @@ class SimulatorTransport:
                 current = frozenset(self._physical_squares)
                 if current == self._plan_initial:
                     self._clear_plan()
-                    self._sequence = 17
+                    self._sequence = 15
                     self._emit("PLAN CANCELLED")
                 elif current != self._plan_expected:
                     raise RuntimeError("PLAN INCOMPLETE")
@@ -475,7 +487,7 @@ class SimulatorTransport:
                     move = self._plan_move
                     self._board.push(move)
                     self._clear_plan()
-                    self._sequence = 16
+                    self._sequence = 14
                     label = move.uci()[:4]
                     self._emit(f"DONE {label}")
                     if move.promotion:
@@ -495,7 +507,7 @@ class SimulatorTransport:
                 def finish() -> None:
                     self._board.push(move)
                     self._physical_squares = set(self._board.piece_map())
-                    self._sequence = 16
+                    self._sequence = 14
                     self.on_line(f"DONE {uci}")
 
                 timer = threading.Timer(0.5, finish)
@@ -515,6 +527,46 @@ class SimulatorTransport:
                 self._emit(f"MOVING HEAD {square}")
                 self._trolley_x, self._trolley_y = ord(square[0]) - 96, int(square[1])
                 self._emit(f"MOVED HEAD {square}", 0.25)
+        elif upper.startswith("ALIGN ") and len(text) == 10:
+            square, mode = text[6:8].lower(), text[9].upper()
+            if self._fault:
+                self._emit("ERR FAULT")
+            elif self._sequence != 1 or not self._homed or mode not in ("H", "M"):
+                self._emit("ERR ALIGN")
+            elif len(square) != 2 or square[0] not in "abcdefgh" or square[1] not in "12345678":
+                self._emit("ERR COMMAND")
+            else:
+                self._emit(f"ALIGNING {square}")
+                self._trolley_x, self._trolley_y = ord(square[0]) - 96, int(square[1])
+                self._homed = False
+                self._sequence = 12
+                self._alignment_square = square
+                self._alignment_marker = mode == "M"
+                self._alignment_x = self._alignment_y = 0
+                self._emit(f"ALIGN READY {square} {mode} 0 0", 0.25)
+        elif upper.startswith("NUDGE ") and len(text) == 8:
+            axis, sign = text[6].upper(), text[7]
+            if self._sequence != 12 or self._alignment_square is None or axis not in "XY" or sign not in "+-":
+                self._emit("ERR ALIGN")
+            else:
+                delta = 1 if sign == "+" else -1
+                value = (self._alignment_x if axis == "X" else self._alignment_y) + delta
+                if not -60 <= value <= 60:
+                    self._emit("ERR LIMIT")
+                else:
+                    if axis == "X":
+                        self._alignment_x = value
+                    else:
+                        self._alignment_y = value
+                    self._emit(self._alignment_status())
+        elif upper == "ALIGN END":
+            if self._sequence != 12 or self._alignment_square is None:
+                self._emit("ERR ALIGN")
+            else:
+                self._clear_alignment()
+                self._sequence = 1
+                self._homed = False
+                self._emit("ALIGN ENDED")
         elif upper.startswith("PIECE "):
             move = text.split(maxsplit=1)[1].lower()
             try:
@@ -542,6 +594,8 @@ class SimulatorTransport:
                 self._emit(f"ERR {error}")
         elif upper == "STOP":
             self._clear_plan()
+            self._clear_alignment()
+            self._remote_mode = False
             self._sequence = 1
             self._emit("STOPPED")
         elif upper.startswith("GAMEOVER"):
@@ -553,3 +607,15 @@ class SimulatorTransport:
     def close(self) -> None:
         self._connected = False
         self.on_status("Simulator disconnected")
+
+    def _alignment_status(self) -> str:
+        if self._sequence != 12 or self._alignment_square is None:
+            return "ALIGN IDLE"
+        mode = "M" if self._alignment_marker else "H"
+        return (f"ALIGN ACTIVE {self._alignment_square} {mode} "
+                f"{self._alignment_x} {self._alignment_y}")
+
+    def _clear_alignment(self) -> None:
+        self._alignment_square = None
+        self._alignment_marker = False
+        self._alignment_x = self._alignment_y = 0

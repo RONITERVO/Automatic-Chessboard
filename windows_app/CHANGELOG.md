@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a recoverable firmware-4.5 board-alignment workflow with user-selected
+  squares, one-step X/Y controls, optional magnetic-marker mode, reconnect
+  recovery, two-point geometry calculation, and copyable `global.h` values.
+- Corrected displayed and simulated telemetry-state numbers to the firmware's
+  stable 0-20 state contract.
 - Aligned direct manual movement and the simulator with firmware 4.4's
   file/rank/diagonal-only carry contract. Turning moves remain available through
   the collision-safe square-centre route planner.

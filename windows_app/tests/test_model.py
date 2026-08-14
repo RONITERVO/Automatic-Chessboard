@@ -6,6 +6,7 @@ import chess
 from model import (
     ManualSelection,
     MonitorModel,
+    SEQUENCE_NAMES,
     calibration_matches,
     expected_occupancy,
     piece_move_matches,
@@ -62,6 +63,12 @@ class MonitorModelTests(unittest.TestCase):
         self.assertIsNone(model.telemetry_age_seconds())
         model.telemetry_updated = monotonic() - 6.0
         self.assertGreater(model.telemetry_age_seconds(), 5.0)
+
+    def test_current_firmware_state_names_are_stable(self):
+        self.assertEqual(SEQUENCE_NAMES[12], "Board alignment")
+        self.assertEqual(SEQUENCE_NAMES[19], "Direct app movement")
+        self.assertEqual(SEQUENCE_NAMES[20], "Verified route transaction")
+        self.assertNotIn(22, SEQUENCE_NAMES)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.4.0.
+ * Automatic Chessboard firmware 4.5.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.4.0"
+#define FIRMWARE_VERSION "4.5.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -53,8 +53,6 @@ unsigned long magnet_on_since = 0;
 char mov[5] = {0, 0, 0, 0, 0};
 byte sequence = start_up;
 byte after_calibration = setup_check;
-byte service_item = SERVICE_CALIBRATE;
-byte service_file = CALIBRATION_PARK_FILE;
 
 hd44780_I2Cexp lcd;
 // Both profiles fan replies from hardware TX/D1 to USB and HC-08 RXD. The
@@ -215,9 +213,7 @@ void loop() {
         requestCalibration(setup_check);
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        service_item = SERVICE_CALIBRATE;
-        sequence = service_menu;
-        showServiceMenu();
+        requestCalibration(main_menu);
       }
       break;
 
@@ -242,7 +238,7 @@ void loop() {
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
         else if (sequence == remote_setup_check) showRemoteSetupCheck();
-        else showServiceMenu();
+        else showMainMenu();
       }
       else {
         sequence = fault_screen;
@@ -320,19 +316,11 @@ void loop() {
 
     case fault_screen:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        requestCalibration(service_menu);
+        requestCalibration(main_menu);
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
         returnToMainMenu();
       }
-      break;
-
-    case service_menu:
-      serviceMenuLoop();
-      break;
-
-    case service_geometry_nudge:
-      serviceGeometryNudgeLoop();
       break;
 
     case remote_setup_check:

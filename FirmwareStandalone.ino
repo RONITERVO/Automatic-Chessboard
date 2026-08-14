@@ -27,6 +27,7 @@ void returnToMainMenu() {
   setMagnet(false);
   remote_mode = false;
   remote_human_move_pending = false;
+  resetMoveTracker();
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -35,7 +36,7 @@ void returnToMainMenu() {
 void showMainMenu() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("A:GAME B:SERVICE"));
+  lcd.print(F("A:GAME B:CAL"));
   lcd.setCursor(0, 1);
   lcd.print(F("HUMAN vs AI"));
 }

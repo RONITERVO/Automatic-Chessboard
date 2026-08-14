@@ -18,6 +18,7 @@ next steps. Raw protocol data remains available in the Developer tab.
 | Physical board view | Which squares currently contain a magnetic piece | Reed switches detect occupancy, not piece identity |
 | Logical chess view | Expected piece type and legal position from `python-chess` | It can differ from reality after a missed or manual correction |
 | Direct movement | Click one square for head-only motion, or an occupied source and empty destination for a magnet-carried piece | Direct carries must share a file, rank, or diagonal; requires firmware 3.31, in-app calibration, fresh sensors, and e6 telemetry verification |
+| Board alignment | Measure any two chosen squares one Cartesian step at a time and copy exact `global.h` values | Requires firmware 4.5; changes take effect only after editing, rebuilding, uploading, and recalibrating |
 | Collision-safe automatic routing | Windows can evacuate and restore blockers, stage the main piece, and recursively free trapped pieces | Requires firmware 4.1; bounded search can report that no verified plan was found |
 | Carriage view | The Nano's calculated and persisted square | There is no encoder; missed motor steps cannot be measured directly |
 | Magnet indicator | Whether firmware commanded the magnet on | There is no current sensor proving that the coil energized |
@@ -146,6 +147,22 @@ earlier retain the legacy direct/knight `PLAY` path as a compatibility fallback.
 The guided routine checks the connection, firmware identity, telemetry, all 64
 sensors, control inputs, Stockfish, and optional camera dependencies. A support
 bundle can then be saved for a GitHub issue.
+
+### Board alignment
+
+Use this separate tab only after ordinary commissioning and a successful app
+calibration. Choose any square and start the recommended head-only session,
+then nudge X/Y one step until the head is visually centered and record it.
+Repeat at a far-away square with a different file and rank. The app reports the
+four exact source coefficients to copy into `global.h`; it accounts for
+`MOTOR_MICROSTEPS` and never changes firmware or EEPROM itself.
+
+Magnetic-marker mode is optional and has an additional confirmation. It pulses
+the magnet only during a nudge; head-only mode never energizes it. Finishing
+reverses the measurement offset but intentionally leaves the carriage unhomed,
+so upload/reconnect/power loss can never bypass calibration. Reconnect restores
+an active measurement through `ALIGN STATUS`. Verify at least four separated
+squares after rebuilding, uploading, and calibrating the new firmware.
 
 ### Camera
 
