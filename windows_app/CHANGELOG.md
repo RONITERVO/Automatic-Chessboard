@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added standalone turning-piece routing in firmware 5.0.1. A Micro-Max knight,
+  or any AI piece whose direct line is blocked, now follows a shortest empty
+  orthogonal square-centre route. Manual placement remains the fallback only
+  when no such route connects the source and destination.
 - Released the coordinated 5.0 protocol: exact `HELLO 5.0.0` gating, fixed
   current feature contract, and no `PLAY`, `PING`, `STATUS`, or old-firmware
   fallback paths. Apps and Nano must be updated together.
@@ -10,7 +14,6 @@
   only when no exit is reachable.
 - Added capture routing through arbitrary empty square-centre paths to any
   `a1`-`a8` bin exit,
-  carried through arbitrary empty square-centre paths to any `a1`-`a8` bin exit,
   so reachable detours beat moving an unrelated piece. The Nano tracks every
   verified capture drag.
 - Added firmware-4.7 deferred capture removal. The route search can now park

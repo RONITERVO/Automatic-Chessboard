@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from route_transaction_model import capture_exit_path, square_index
+from route_transaction_model import capture_exit_path, empty_orthogonal_path, square_index
 
 def indexes(*names):
     return {square_index(name) for name in names}
@@ -99,8 +99,38 @@ class CaptureExitModelTests(unittest.TestCase):
         occupied = {(2, 4), (3, 4)}
         self.assertTrue(carried_path_clear(occupied, (2, 4), (3, 3), (3, 4)))
 
-    def test_knight_never_auto_resumes(self):
-        self.assertFalse(carried_path_clear({(2, 1)}, (2, 1), (3, 3)))
+    def test_knight_uses_shortest_empty_orthogonal_route(self):
+        occupied = indexes("f3", "e3")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4")
+        )
+        self.assertEqual(
+            path, tuple(map(square_index, ("f3", "f4", "e4", "d4")))
+        )
+
+    def test_knight_routes_around_unrelated_pieces(self):
+        occupied = indexes("f3", "e3", "f4", "e4")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4")
+        )
+        self.assertIsNotNone(path)
+        self.assertEqual(path[0], square_index("f3"))
+        self.assertEqual(path[-1], square_index("d4"))
+        self.assertTrue(all(square not in occupied - {square_index("f3")} for square in path))
+
+    def test_knight_falls_back_only_when_source_is_trapped(self):
+        occupied = indexes("f3", "e3", "g3", "f2", "f4")
+        self.assertIsNone(
+            empty_orthogonal_path(occupied, square_index("f3"), square_index("d4"))
+        )
+
+    def test_capture_target_can_be_ignored_during_knight_preflight(self):
+        occupied = indexes("f3", "e3", "d4")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4"), square_index("d4")
+        )
+        self.assertIsNotNone(path)
+        self.assertEqual(path[-1], square_index("d4"))
 
 
 if __name__ == "__main__":

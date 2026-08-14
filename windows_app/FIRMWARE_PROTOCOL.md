@@ -11,10 +11,10 @@ Each transport must establish its own match before sending a control or motion
 command:
 
 ```text
-> HELLO 5.0.0
-< HELLO 5.0.0
+> HELLO 5.0.1
+< HELLO 5.0.1
 > INFO
-< INFO ACB3 5.0.0 NANO
+< INFO ACB3 5.0.1 NANO
 ```
 
 The MKS build reports `MKS`; simulators report `SIM`. A different `HELLO`

@@ -61,7 +61,7 @@ When motors, piece magnets, or trustworthy reed readings are unavailable, run:
 The workflow compiles the Nano firmware, enforces its memory budgets, exhaustively
 tests the motionless `PLAN` / `DRAG` / `COMMIT` occupancy model, runs Windows and
 Android planner/protocol/simulator tests, builds both apps, and optionally samples
-the real Nano over USB. The COM probe is allowlisted to `HELLO 5.0.0`, `INFO`,
+the real Nano over USB. The COM probe is allowlisted to `HELLO 5.0.1`, `INFO`,
 `TELEM`, and `BOARD`; it validates BOARD framing but does not require any particular
 occupancy. It never uploads firmware or requests calibration, motor steps, magnet
 power, or a chess move.
@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 5.0.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 5.0.1 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
@@ -111,6 +111,11 @@ all eight exits are genuinely disconnected. En passant, promotion
 occupancy, and standard castling are included. Version 5.0 deliberately removes
 the legacy `PLAY`, `PING`, and `STATUS` paths: both companion and Nano must run
 the same release before any control or motion command is accepted.
+
+For local Micro-Max play, firmware 5.0.1 automatically carries knights and
+blocked direct moves through the shortest available sequence of empty,
+orthogonally adjacent square centres. It retains manual placement only when no
+empty route connects the move endpoints.
 
 Boards with missing, intermittent, or deliberately unused reed switches can use
 the explicit **Move by tapping app** mode in either companion. Both human and

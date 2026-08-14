@@ -50,7 +50,7 @@ must remain independently testable.
 
 1. Run `..\firmware\test.ps1` and record flash/SRAM results.
 2. Compile and upload with motors unpowered when practical.
-3. Verify `HELLO 5.0.0`, `INFO`, `TELEM`, and `BOARD` over USB.
+3. Verify `HELLO 5.0.1`, `INFO`, `TELEM`, and `BOARD` over USB.
 4. Verify the same commands over BLE.
 5. Run guided diagnostics and validate both limit inputs by hand.
 6. Test remote halt at very low-risk service motion with someone beside power.

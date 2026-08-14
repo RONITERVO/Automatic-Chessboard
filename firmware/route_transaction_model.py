@@ -33,16 +33,20 @@ def square_name(square: int) -> str:
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
 
 
-def capture_exit_path(occupied: Iterable[int], capture: int) -> tuple[int, ...] | None:
-    """Shortest empty orthogonal square-centre path to any a-file bin exit."""
+def empty_orthogonal_path(
+    occupied: Iterable[int], source: int, target: int | None, ignored: int | None = None,
+) -> tuple[int, ...] | None:
+    """Firmware-equivalent shortest route to a target or any a-file exit."""
 
-    if capture not in range(64):
-        raise ValueError("capture square outside board")
-    blocked = frozenset(occupied) - {capture}
-    parents: dict[int, int | None] = {capture: None}
-    queue = [capture]
+    if source not in range(64) or (target is not None and target not in range(64)):
+        raise ValueError("route square outside board")
+    blocked = frozenset(occupied) - {source}
+    if ignored is not None:
+        blocked -= {ignored}
+    parents: dict[int, int | None] = {source: None}
+    queue = [source]
     for current in queue:
-        if current % 8 == 0:
+        if (target is None and current % 8 == 0) or current == target:
             reversed_path: list[int] = []
             cursor: int | None = current
             while cursor is not None:
@@ -53,17 +57,23 @@ def capture_exit_path(occupied: Iterable[int], capture: int) -> tuple[int, ...] 
         neighbours = []
         if file_index > 0:
             neighbours.append(current - 1)
-        if file_index < 7:
-            neighbours.append(current + 1)
         if rank_index > 0:
             neighbours.append(current - 8)
         if rank_index < 7:
             neighbours.append(current + 8)
+        if file_index < 7:
+            neighbours.append(current + 1)
         for neighbour in neighbours:
             if neighbour not in blocked and neighbour not in parents:
                 parents[neighbour] = current
                 queue.append(neighbour)
     return None
+
+
+def capture_exit_path(occupied: Iterable[int], capture: int) -> tuple[int, ...] | None:
+    """Shortest empty orthogonal square-centre path to any a-file bin exit."""
+
+    return empty_orthogonal_path(occupied, capture, None)
 
 
 def capture_has_exit(occupied: Iterable[int], capture: int) -> bool:

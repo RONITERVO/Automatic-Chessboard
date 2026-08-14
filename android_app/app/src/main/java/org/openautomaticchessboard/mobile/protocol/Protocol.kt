@@ -60,7 +60,7 @@ data class PlanRouteRequest(
 enum class CommandRisk { READ_ONLY, CONTROL, MOTION, EMERGENCY, UNKNOWN }
 
 object Protocol {
-    const val SOFTWARE_VERSION = "5.0.0"
+    const val SOFTWARE_VERSION = "5.0.1"
     const val PROTOCOL_VERSION = "ACB3"
     const val SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
     const val CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"

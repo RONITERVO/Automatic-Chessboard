@@ -33,7 +33,7 @@ and final-frame proof.
 
 This separation keeps the Nano maintainable and makes future planners replaceable
 without weakening the hardware guardrails. Version 5.0 has one route-transaction
-contract and no direct-move fallback. An exact `HELLO 5.0.0` handshake gates all
+contract and no direct-move fallback. An exact `HELLO 5.0.1` handshake gates all
 control and motion commands.
 
 ## Routing model

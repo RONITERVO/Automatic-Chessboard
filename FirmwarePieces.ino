@@ -2,31 +2,34 @@
 
 // ---------------------------- AI physical movement -----------------------
 
-// Find a shortest empty orthogonal route from the captured piece to any a-file
-// square. The caller's path buffer doubles as the BFS queue; the only other
-// workspace is one 64-byte parent table on the stack, so no global SRAM or
-// EEPROM is consumed. West-first ordering makes equally short routes prefer
-// the bin while still routing around arbitrary occupied shapes.
-byte findCapturePath(byte source, byte *path) {
+// Find a shortest empty orthogonal route either to one target square or, when
+// target is NO_SQUARE, to any a-file bin exit. The caller's path buffer doubles
+// as the BFS queue; the only other workspace is one 64-byte parent table on the
+// stack, so no global SRAM or EEPROM is consumed. West-first ordering makes
+// equally short capture routes prefer the bin.
+byte findEmptyPath(byte source, byte goal, byte ignored, byte *path) {
   byte parent[64];
   memset(parent, NO_SQUARE, sizeof(parent));
   byte head = 0;
   byte tail = 1;
   path[0] = source;
   parent[source] = source;
-  byte target = NO_SQUARE;
+  byte reached = NO_SQUARE;
 
   while (head < tail) {
     byte current = path[head++];
-    if (!(current & 7)) {
-      target = current;
+    if ((goal == NO_SQUARE && !(current & 7)) || current == goal) {
+      reached = current;
       break;
     }
     byte file = current & 7;
     byte rank = current >> 3;
     for (byte direction = 0; direction < 4; direction++) {
       byte next;
-      if (direction == 0) next = current - 1;
+      if (direction == 0) {
+        if (!file) continue;
+        next = current - 1;
+      }
       else if (direction == 1) {
         if (!rank) continue;
         next = current - 8;
@@ -40,18 +43,19 @@ byte findCapturePath(byte source, byte *path) {
         next = current + 1;
       }
       if (parent[next] != NO_SQUARE ||
-          boardSquareOccupied(reed_sensor_record, 7 - (next >> 3), next & 7))
+          (next != ignored &&
+           boardSquareOccupied(reed_sensor_record, 7 - (next >> 3), next & 7)))
         continue;
       parent[next] = current;
       path[tail++] = next;
     }
   }
-  if (target == NO_SQUARE) return 0;
+  if (reached == NO_SQUARE) return 0;
 
   byte length = 0;
   do {
-    path[length++] = target;
-    target = parent[target];
+    path[length++] = reached;
+    reached = parent[reached];
   } while (path[length - 1] != source);
   for (byte left = 0, right = length - 1; left < right; left++, right--) {
     byte swap = path[left];
@@ -61,9 +65,28 @@ byte findCapturePath(byte source, byte *path) {
   return length;
 }
 
+byte findCapturePath(byte source, byte *path) {
+  return findEmptyPath(source, NO_SQUARE, NO_SQUARE, path);
+}
+
+byte findCarriedPath(byte from_file, byte from_rank,
+                     byte to_file, byte to_rank, byte ignored,
+                     byte *path) {
+  byte source = (from_rank - 1) * 8 + from_file - 1;
+  byte target = (to_rank - 1) * 8 + to_file - 1;
+  return findEmptyPath(source, target, ignored, path);
+}
+
 boolean captureRouteClear(byte file, byte rank) {
   byte path[64];
   return findCapturePath((rank - 1) * 8 + file - 1, path) != 0;
+}
+
+boolean carriedRouteClear(byte from_file, byte from_rank,
+                          byte to_file, byte to_rank, byte ignored) {
+  byte path[64];
+  return findCarriedPath(from_file, from_rank, to_file, to_rank,
+                         ignored, path) != 0;
 }
 
 // This preflight is used before ordinary motion and again after a manual
@@ -98,18 +121,10 @@ boolean __attribute__((noinline)) carriedPathClear(
   return true;
 }
 
-boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
-  byte path[64];
-  byte path_length = findCapturePath((rank - 1) * 8 + file - 1, path);
+boolean followHeldPiecePath(byte *path, byte path_length) {
   if (!path_length) return false;
-  if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
-  if (use_magnet) {
-    lcd.clear();
-    lcd.print(F("REMOVING CAPTURE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("TO LEFT BIN"));
-    setMagnet(true);
-  }
+  byte file = (path[0] & 7) + 1;
+  byte rank = (path[0] >> 3) + 1;
   byte segment_start = 0;
   while (segment_start + 1 < path_length) {
     int direction = (int)path[segment_start + 1] - path[segment_start];
@@ -124,6 +139,33 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     rank = (destination >> 3) + 1;
     segment_start = segment_end;
   }
+  return true;
+}
+
+boolean moveHeldPieceByEmptyRoute(byte from_file, byte from_rank,
+                                  byte to_file, byte to_rank, byte ignored) {
+  byte path[64];
+  byte path_length = findCarriedPath(from_file, from_rank, to_file, to_rank,
+                                     ignored, path);
+  return followHeldPiecePath(path, path_length);
+}
+
+boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
+  byte path[64];
+  byte path_length = findCapturePath((rank - 1) * 8 + file - 1, path);
+  if (!path_length) return false;
+  if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
+  if (use_magnet) {
+    lcd.clear();
+    lcd.print(F("REMOVING CAPTURE"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("TO LEFT BIN"));
+    setMagnet(true);
+  }
+  if (!followHeldPiecePath(path, path_length)) return false;
+  byte destination = path[path_length - 1];
+  file = (destination & 7) + 1;
+  rank = (destination >> 3) + 1;
   int end_x = (int)CAPTURE_SIDE_X_STEPS - (int)FILE_PITCH_STEPS;
   if (!pulseCoreXYLine(end_x, 0, SPEED_SLOW, true)) return false;
   // The corridor completes before release. setMagnet(false) keeps the head
@@ -199,13 +241,6 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
   boolean castling = move_flags == 'C' ||
                      (departure_x == 5 && departure_y == arrival_y &&
                       (departure_y == 1 || departure_y == 8) && displacement_x == 2);
-  // 'L' is the local Micro-Max fallback: record an unsupported knight as the
-  // expected position without moving, then let the normal sensor-check screen
-  // guide and verify the player's manual placement.
-  boolean manual_move = !castling &&
-      !queenAlignedSquares(departure_x, departure_y, arrival_x, arrival_y);
-  if (manual_move && move_flags != 'L') return false;
-
   byte arrival_row = 8 - arrival_y;
   byte arrival_column = arrival_x - 1;
   boolean destination_occupied = boardSquareOccupied(
@@ -222,12 +257,16 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
 
   byte capture_rank = destination_occupied ? arrival_y :
                       (en_passant ? departure_y : 0);
-  if (!manual_move && !castling &&
-      !carriedPathClear(departure_x, departure_y, arrival_x, arrival_y,
-                        capture_rank ? arrival_x : 0, capture_rank)) {
-    if (move_flags != 'L') return false;
-    manual_move = true;
-  }
+  byte ignored_square = capture_rank ?
+      (capture_rank - 1) * 8 + arrival_column : NO_SQUARE;
+  boolean direct_path = !castling &&
+      carriedPathClear(departure_x, departure_y, arrival_x, arrival_y,
+                       capture_rank ? arrival_x : 0, capture_rank);
+  boolean routed_path = !castling && !direct_path &&
+      carriedRouteClear(departure_x, departure_y, arrival_x, arrival_y,
+                        ignored_square);
+  boolean manual_move = !castling && !direct_path && !routed_path;
+  if (manual_move && move_flags != 'L') return false;
   if (!manual_move && capture_rank &&
       !captureRouteClear(arrival_x, capture_rank)) {
     if (move_flags != 'L') return false;
@@ -258,8 +297,13 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
     }
     else {
       setMagnet(true);
-      if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
-        return false;
+      if (direct_path) {
+        if (!moveHeldPieceSafely(departure_x, departure_y,
+                                 arrival_x, arrival_y)) return false;
+      }
+      else if (!moveHeldPieceByEmptyRoute(departure_x, departure_y,
+                                          arrival_x, arrival_y,
+                                          ignored_square)) return false;
     }
 
     setMagnet(false);

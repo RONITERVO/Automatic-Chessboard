@@ -41,22 +41,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(lines.feed(b"\nPING\n"), ["PING"])
 
     def test_event_fields(self):
-        event = parse_event("HELLO 5.0.0")
+        event = parse_event("HELLO 5.0.1")
         self.assertEqual(event.kind, "HELLO")
-        self.assertEqual(event.args, ("5.0.0",))
+        self.assertEqual(event.args, ("5.0.1",))
 
     def test_special_move_commands(self):
         self.assertEqual(start_game_command(True), "START W")
         self.assertEqual(start_game_command(False, app_board=True), "START B APP")
-        self.assertEqual(hello_command(), "HELLO 5.0.0")
+        self.assertEqual(hello_command(), "HELLO 5.0.1")
 
     def test_versioned_info_and_telemetry(self):
-        info = parse_info(parse_event("INFO ACB3 5.0.0 NANO"))
-        self.assertEqual(info.firmware, "5.0.0")
+        info = parse_info(parse_event("INFO ACB3 5.0.1 NANO"))
+        self.assertEqual(info.firmware, "5.0.1")
         self.assertTrue(info.compatible)
         self.assertIn("ESTOP", info.capabilities)
         self.assertEqual(
-            parse_info(parse_event("INFO ACB3 5.0.0 MKS_GEN_L_V1")).hardware,
+            parse_info(parse_event("INFO ACB3 5.0.1 MKS_GEN_L_V1")).hardware,
             "MKS_GEN_L_V1",
         )
         with self.assertRaises(ValueError):

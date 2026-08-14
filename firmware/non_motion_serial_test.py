@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-SOFTWARE_VERSION = "5.0.0"
+SOFTWARE_VERSION = "5.0.1"
 HELLO_COMMAND = f"HELLO {SOFTWARE_VERSION}"
 SAFE_COMMANDS = frozenset({HELLO_COMMAND, "INFO", "TELEM", "BOARD"})
 INFO_PATTERN = re.compile(r"^INFO ACB3 (\S+) (NANO|MKS_GEN_L_V1)$")

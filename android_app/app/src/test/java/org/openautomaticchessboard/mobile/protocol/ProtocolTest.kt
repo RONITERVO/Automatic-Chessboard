@@ -22,13 +22,13 @@ class ProtocolTest {
     }
 
     @Test fun parsesInfoTelemetryAndBoard() {
-        val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.0 NANO"))
-        assertEquals("5.0.0", info.firmware)
+        val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.1 NANO"))
+        assertEquals("5.0.1", info.firmware)
         assertTrue(info.compatible)
         assertTrue("ESTOP" in info.capabilities)
         assertEquals(
             "MKS_GEN_L_V1",
-            Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.0 MKS_GEN_L_V1")).hardware,
+            Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.1 MKS_GEN_L_V1")).hardware,
         )
         assertThrows(IllegalArgumentException::class.java) {
             Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 4.8.0 BOARD,TELEM"))
@@ -69,7 +69,7 @@ class ProtocolTest {
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
         assertEquals("START W", Protocol.startGameCommand(humanWhite = true))
         assertEquals("START B APP", Protocol.startGameCommand(humanWhite = false, appBoard = true))
-        assertEquals("HELLO 5.0.0", Protocol.helloCommand())
+        assertEquals("HELLO 5.0.1", Protocol.helloCommand())
         assertEquals("HEAD e6", Protocol.headCommand("e6"))
         assertEquals("PIECE e2e4", Protocol.pieceCommand("e2", "e4"))
         assertEquals("ALIGN h7 H", Protocol.alignmentCommand("h7"))

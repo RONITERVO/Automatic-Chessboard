@@ -42,8 +42,8 @@ class FakeSerial:
 
 class NonMotionSerialTestTests(unittest.TestCase):
     def test_parsers_accept_current_protocol(self):
-        firmware, hardware = parse_info("INFO ACB3 5.0.0 NANO")
-        self.assertEqual("5.0.0", firmware)
+        firmware, hardware = parse_info("INFO ACB3 5.0.1 NANO")
+        self.assertEqual("5.0.1", firmware)
         self.assertEqual("NANO", hardware)
         self.assertEqual("8180000000000181", parse_board("BOARD 8180000000000181"))
         self.assertEqual((0, 847), parse_telemetry(
@@ -53,7 +53,7 @@ class NonMotionSerialTestTests(unittest.TestCase):
     def test_probe_sends_only_allowlisted_read_only_commands(self):
         fake = FakeSerial({
             HELLO_COMMAND: [HELLO_COMMAND],
-            "INFO": ["INFO ACB3 5.0.0 NANO"],
+            "INFO": ["INFO ACB3 5.0.1 NANO"],
             "TELEM": ["TELEM ACB3 1 0 0 0 0 5 6 1 1 1023 900 10"],
             "BOARD": ["BOARD FFFF00000000FFFF"],
         })
@@ -91,7 +91,7 @@ class NonMotionSerialTestTests(unittest.TestCase):
 
         responses = {
             HELLO_COMMAND: [HELLO_COMMAND],
-            "INFO": ["INFO ACB3 5.0.0 NANO"],
+            "INFO": ["INFO ACB3 5.0.1 NANO"],
             "TELEM": ["TELEM ACB3 1 0 0 0 1 5 6 1 1 1023 900 10"],
             "BOARD": ["BOARD FFFF00000000FFFF"],
         }

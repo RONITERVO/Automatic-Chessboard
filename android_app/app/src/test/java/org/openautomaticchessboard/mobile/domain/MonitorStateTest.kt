@@ -48,7 +48,7 @@ class MonitorStateTest {
         val state = MonitorState(
             connected = true,
             lastSeenMs = now,
-            firmware = FirmwareInfo("ACB3", "5.0.0", "NANO", setOf("TELEM", "BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("TELEM", "BOARD")),
             telemetry = Telemetry(
                 protocol = "ACB2", sequence = 1, homed = false, remoteMode = false,
                 motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
@@ -66,7 +66,7 @@ class MonitorStateTest {
         val now = 20_000L
         val base = MonitorState(
             connected = true, lastSeenMs = now,
-            firmware = FirmwareInfo("ACB3", "5.0.0", "NANO", setOf("BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("BOARD")),
             sensorSquares = MonitorState.initialOccupancy,
             sensorUpdatedMs = 1_000L,
         )

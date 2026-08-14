@@ -6,10 +6,10 @@ and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
-## Release 5.0.0 behavior
+## Release 5.0.1 behavior
 
 Firmware and both companions now use one exact release contract. A companion
-must send `HELLO 5.0.0` on its USB or Bluetooth transport before any control or
+must send `HELLO 5.0.1` on its USB or Bluetooth transport before any control or
 motion command; the Nano answers only an exact match. `INFO`, `TELEM`, `BOARD`,
 `STOP`, and the byte-level `!` emergency halt remain available for diagnosis and
 recovery. The old `PLAY`, `PING`, and `STATUS` commands and capability-string
@@ -20,6 +20,13 @@ It chooses a shortest orthogonal route to any of the eight a-file exits and
 compresses it into straight, fast, full-step square-centre carries. This uses
 stack workspace only—no EEPROM and no global SRAM. If every exit is genuinely
 disconnected, the LCD requests the existing sensor-verified manual move.
+
+Standalone Micro-Max piece movement uses the same bounded graph. A clear move
+on one file, rank, or diagonal remains a direct carry. A knight or any piece
+whose direct corridor is blocked instead follows a shortest route through empty
+orthogonally adjacent square centres, compressed into straight full-step runs.
+No stationary piece is moved. The LCD requests manual placement only when the
+source and destination are genuinely disconnected.
 
 All supported builds assume the capture bin and carriage clearance extend along
 the complete left edge beside `a1` through `a8`.
@@ -82,7 +89,7 @@ and still requires calibration afterward. It never writes geometry to EEPROM.
 The Android and Windows apps turn two widely separated measurements into exact
 `global.h` source values.
 
-Firmware 4.4 makes queen-aligned stepping a firmware-wide invariant. Every raw
+Firmware 4.4 made queen-aligned stepping a firmware-wide invariant. Every raw
 CoreXY displacement is executed only as horizontal, vertical, or exact
 45-degree segments; an unequal X/Y request is decomposed instead of using an
 interpolated step ratio. Direct carried commands accept only square-centre
@@ -90,24 +97,16 @@ moves sharing a file, rank, or diagonal. Knights and other turning carries must
 use the connected `PLANROUTE` executor, which already stops and verifies at
 square centres between straight `DRAG` commands. Unsupported legacy/direct
 routes fail before capture removal, magnet pickup, or head movement.
-When the standalone Micro-Max opponent chooses a knight, the LCD instead asks
-the player to make the displayed AI move manually. Pressing A verifies the
-result from the reed switches and continues the current game; B exits to menu.
-The same fallback applies when a straight corridor is occupied or either shared
-corner of a diagonal step is occupied.
 
-Standalone capture removal no longer assumes one fixed boundary lane. A
-captured piece can travel vertically through empty square centres and then left
-along an empty rank to any position beside `a1`-`a8`; current/lower ranks are
-preferred. If no compact L route is clear, local play requests the complete move
-manually and verifies the resulting occupancy. `EDGEEXIT` companions additionally
-route around obstacles and can clear true disconnections before removal.
-Manual captures use two sensor-verified phases: `REMOVE` the captured square
-and press A, then automatically carry the AI piece only when the remaining
-route is queen-aligned and every square and diagonal corner is clear. Otherwise
-the player makes the displayed `MANUAL` move and presses A again. The empty
-intermediate target closes the ordinary-capture identity ambiguity that cannot
-be detected when a destination is occupied both before and after.
+Firmware 5.0.1 preserves that segment-level invariant while adding the compact
+standalone graph search described above. It never restores a continuous
+knight/S-curve or an unequal-ratio motor command.
+
+When no automatic capture route exists, the manual fallback still uses two
+sensor-verified phases: remove the captured piece and press A, then place the AI
+piece and press A again. The empty intermediate target closes the ordinary-
+capture identity ambiguity that cannot be detected when a destination is
+occupied both before and after.
 
 Firmware 4.3 added an explicit `mks-gen-l-v1` build profile for the integrated
 ATmega2560 board. It preserves the same deterministic runtime, standalone play,
@@ -231,7 +230,7 @@ castles, exact commit/cancel behavior, emergency halt, and injected stale or
 failed sensor transitions. No model code is compiled into the Nano.
 
 `non_motion_serial_test.py` samples a connected Nano using a hard allowlist of
-only `HELLO 5.0.0`, `INFO`, `TELEM`, and `BOARD`. It checks exact release identity,
+only `HELLO 5.0.1`, `INFO`, `TELEM`, and `BOARD`. It checks exact release identity,
 framing, magnet-off telemetry, and repeated serial stability. Reed
 occupancy is recorded but deliberately not judged. The probe cannot send an
 upload, calibration, movement, magnet, transaction, stop, or emergency command.
