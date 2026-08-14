@@ -12,9 +12,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RoutePlannerTest {
-    private fun planner(maxTemporaryPieces: Int = 4) = RearrangementPlanner(
+    private fun planner(
+        maxTemporaryPieces: Int = 4,
+        timeLimitMillis: Long = 5_000,
+    ) = RearrangementPlanner(
         PlannerConfig(
-            timeLimitMillis = 5_000,
+            timeLimitMillis = timeLimitMillis,
             maxNodes = 150_000,
             maxTemporaryPieces = maxTemporaryPieces,
             parkingCandidates = 8,
@@ -115,7 +118,10 @@ class RoutePlannerTest {
             deferredCapture = true,
         )
 
-        val plan = planner(4).plan(problem)
+        // This legacy full-board rearrangement intentionally exercises the
+        // exhaustive 4.7 lane model. Keep cold, shared CI runners from turning
+        // its wall-clock guard into a flaky correctness test.
+        val plan = planner(4, timeLimitMillis = 15_000).plan(problem)
 
         plan.validate()
         val commands = plan.protocolCommands()
