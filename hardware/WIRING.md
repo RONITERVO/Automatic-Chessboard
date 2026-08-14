@@ -81,9 +81,10 @@ to find the two low-resistance wire pairs. One pair goes to `1A/1B`; the other
 goes to `2A/2B`. Swapping both wires of one coil reverses that motor. Never mix
 one wire from each coil into a pair.
 
-The prototype leaves `MS1-3` and `ENABLE` open and works because the fitted
-carrier provides the expected low defaults. Explicit GND connections are used
-in the public design so clone-board input bias is not an assumption.
+An early prototype left `MS1-3` and `ENABLE` open and could appear to work
+because its carriers provided low defaults. Do not copy that wiring. Connect
+these pins explicitly as shown above so correct operation does not depend on
+weak internal bias resistors or an undocumented clone-board implementation.
 
 Install four independent 10 kohm pull-downs: one from each driver's `STEP` and
 `DIR` input to that carrier's logic GND. Place them near the carrier inputs;
@@ -91,6 +92,46 @@ they are shunt resistors, not series resistors, and `STEP` and `DIR` must not
 share one resistor. A driven 5 V HIGH sources only 0.5 mA through each
 pull-down. The working prototype uses all four resistors, which keep the
 otherwise floating A4988-compatible inputs LOW while the Nano starts or resets.
+
+### Motor wiring layout and interference control
+
+Stepper outputs switch substantial current at high frequency. A driver can be
+electrically correct on the bench yet lose holding torque or stop after it is
+installed beside long, parallel power and signal wiring. Treat physical cable
+routing as part of the circuit:
+
+- Twist `1A` with `1B` as one motor-coil pair and twist `2A` with `2B` as a
+  second pair. Do not twist one conductor from each coil together.
+- Run `STEP` beside a logic-GND return and `DIR` beside a logic-GND return.
+  Keep both routes short and keep their pull-down resistors at the carrier.
+- Twist each fan's positive and negative supply wires together. Route fan,
+  motor, electromagnet, and 24 V wiring separately from Nano, Bluetooth,
+  switch, reed-sensor, `STEP`, and `DIR` wiring.
+- Maximize separation between switched-power and logic bundles. There is no
+  universal minimum distance; validate the final enclosure layout. If bundles
+  must cross, cross once at approximately 90 degrees rather than running them
+  parallel.
+- Give each driver a short, low-resistance ground path to the common
+  distribution point. Do not make logic current return through a long motor or
+  fan ground wire. Keep the local `VMOT` capacitor at the carrier.
+- Add strain relief so installing a cover or moving a harness cannot bend a
+  connector, pull a crimp, or change a solder joint.
+
+Never add pull-down resistors to `1A`, `1B`, `2A`, or `2B`. They are driven
+H-bridge outputs, not floating logic inputs. Never connect a motor-output wire
+to logic GND, chassis, or cable shield. If shielded signal cable is required
+after routing has been corrected, terminate its shield at the controller end
+only and keep the shield isolated from every signal and motor conductor.
+
+Human proximity changing motor behavior is not normal. First verify the local
+`STEP`/`DIR` pull-downs and explicit control-pin levels, then separate cable
+groups. If repositioning a whole group fixes the fault, repeat the test with
+one group at a time. A failure that follows distance from another bundle points
+to coupled interference; a failure that follows bending or tension points to
+an open conductor, connector, solder joint, or PCB trace. Use a nonconductive
+temporary fixture for diagnosis, then replace it with secured plastic
+standoffs, clips, or a printed bracket. Paper or cardboard is not a permanent
+electronics mount.
 
 ### Current limit
 

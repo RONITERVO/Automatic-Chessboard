@@ -27,12 +27,18 @@ measurement.
 5. Confirm four separate 10 kohm resistors connect driver 1 and driver 2
    `STEP` and `DIR` individually to their logic GND pins. Confirm the signal
    inputs are not connected to each other.
-6. Confirm no short between protected +24 V and GND. A capacitor-charging
+6. Confirm each driver's `MS1`, `MS2`, `MS3`, and `ENABLE` pins connect
+   directly to logic GND, and its tied `RESET`/`SLEEP` pins connect to 5 V.
+7. Confirm no motor-output conductor (`1A`, `1B`, `2A`, or `2B`) connects to
+   logic GND, chassis, or a cable shield.
+8. Confirm no short between protected +24 V and GND. A capacitor-charging
    reading that rises is normal; a steady near-zero resistance is not.
-7. Confirm no short between 5 V and GND.
-8. Confirm every motor has two isolated coil pairs and no motor wire is shorted
+9. Confirm no short between 5 V and GND.
+10. Confirm every motor has two isolated coil pairs and no motor wire is shorted
    to the frame.
-9. Press each limit switch and verify it closes to GND.
+11. Confirm the two conductors of each motor coil are twisted as a pair and
+    switched-power bundles are separated from logic and sensor wiring.
+12. Press each limit switch and verify it closes to GND.
 
 ## Stage B: protected input and 5 V logic only
 
@@ -90,8 +96,16 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
    pairs; stop power before changing wires.
 6. Verify direction against the expected switch. Reverse one complete coil
    pair only if necessary.
-7. Repeat for driver 2.
-8. Record both VREF values and temperatures after 15 minutes of unloaded test.
+7. Stop issuing steps and verify the motor retains steady holding torque in
+   full-step mode. Weak torque at particular positions or complete loss of
+   holding torque is a stop condition, not an acceptable resonance effect.
+8. Repeat for driver 2.
+9. Record both VREF values and temperatures after 15 minutes of unloaded test.
+10. With power removed before every routing change, test the intended final
+    cable layout and then rerun both motors. If behavior changes with cable
+    position, isolate one motor, fan, magnet/power, or logic bundle at a time as
+    described in `WIRING.md`; do not proceed until the final secured layout is
+    repeatable.
 
 ## Stage F: calibration and endurance
 
@@ -110,5 +124,5 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
 
 Cut physical power immediately for uncontrolled motion, smoke, odor, a hot or
 swelling capacitor, a slipping belt that can tangle wiring, repeated Nano
-resets, a magnet that remains energized, or a limit switch that does not stop
-homing. Diagnose with 24 V removed.
+resets, lost motor holding torque, a magnet that remains energized, or a limit
+switch that does not stop homing. Diagnose with 24 V removed.

@@ -76,8 +76,12 @@ flyback diode. Confirm the diode stripe is on the +24 V side. Keep the magnet's
    put them in series or share one resistor between two signals.
 5. Add a 100 uF/50 V capacitor directly across each `VMOT`/GND pair.
 6. Identify each motor's two coil pairs with a meter.
-7. With power removed, connect coils A and B.
-8. Set a conservative VREF, then follow the current-limit procedure in
+7. Twist the two conductors of coil A together and twist the two conductors of
+   coil B together. With power removed, connect both coils.
+8. Route each `STEP` signal with a logic-GND return and each `DIR` signal with
+   a logic-GND return. Keep these logic routes short and separate from motor,
+   fan, electromagnet, and 24 V wiring as specified in `WIRING.md`.
+9. Set a conservative VREF, then follow the current-limit procedure in
    `WIRING.md`. The prototype's final value is 0.720 V only for its R100 boards
    and donor motors.
 
@@ -89,6 +93,11 @@ flyback diode. Confirm the diode stripe is on the +24 V side. Keep the magnet's
 - Ensure the cutoff remains accessible with the board closed.
 - Check continuity from every module ground to the GND bus.
 - Check that +24 V is not continuous to 5 V, Nano pins, or the frame.
+- Confirm motor, fan, magnet, and 24 V bundles do not run parallel against
+  `STEP`, `DIR`, switch, Bluetooth, or sensor wiring. Cross unlike bundles at
+  approximately 90 degrees where separation is impossible.
+- Confirm cable clips and strain relief do not put tension on driver headers,
+  crimps, solder joints, or the VREF adjusters.
 
 Do not install the harness into the moving frame until these checks pass.
 
