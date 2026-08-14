@@ -99,7 +99,7 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 4.3.0 keeps the standalone two-button/LCD and Micro-Max play
+Firmware 4.5.0 keeps the standalone two-button/LCD and Micro-Max play
 experience while adding a small transactional executor for host-planned
 collision-safe rearrangements. Windows can evacuate and restore blockers, stage
 the main piece, and recursively clear trapped pieces; the Nano accepts only
@@ -143,12 +143,12 @@ motor drivers. For an A4988, the common modes are:
 | 16 | HIGH | HIGH | HIGH |
 
 The current high-friction-drive profile remains in full-step mode
-(`MOTOR_MICROSTEPS = 1`). Its measured working values ramp slow movement from
-approximately 250 to 278 full steps per second and decelerate again before
-stopping. If the driver jumpers or wiring are changed later, change this
+(`MOTOR_MICROSTEPS = 1`). Its measured working value uses a fixed fast step
+interval; avoiding slow ramps prevents the prototype's strong low-speed
+resonance. If the driver jumpers or wiring are changed later, change this
 constant to the same value. The firmware then scales the steps per square,
-homing limit, ramp length, and step intervals to preserve the existing travel
-distance and approximate physical speeds.
+homing limit, and step intervals to preserve the existing travel distance and
+approximate physical speeds.
 
 Set the driver current limit from the motor's rated phase current and the sense
 resistors fitted to the particular driver board. For an A4988, consult that
@@ -208,8 +208,9 @@ firmware that has no valid position journal yet.
 
 Firmware 4.0 and later move the former fixed on-device AI self-play workload to the
 configurable [`firmware/endurance_test.py`](firmware/endurance_test.py) tool.
-This recovers scarce Nano memory while retaining real production straight and
-knight planning through the guarded, developer-only `PATH` protocol command.
+Firmware 4.4 uses that guarded, developer-only `PATH` command only for
+horizontal, vertical, and 45-degree square-centre paths; continuous knight or
+S-shaped travel is deliberately rejected.
 The magnet is forced off, results are logged on the computer, cycle count and
 reference frequency are configurable, and both homing step counts are compared
 against a measured baseline. See [`firmware/README.md`](firmware/README.md) for
@@ -222,16 +223,25 @@ driver with suitable diagnostic feedback.
 
 ## Builder geometry measurement
 
-Firmware 4.2 keeps board geometry as four compile-time constants, uses no
-geometry EEPROM, and does not depend on either app. After normal calibration,
-open **Service > Geometry**, select any square, place one visible magnetic
-marker there, and align it using precise, coordinated one-step file/rank
-movements. The LCD reports the selected square and signed X/Y correction
-without changing the installed geometry.
+Firmware 4.5 keeps board geometry as four compile-time constants, with no
+geometry EEPROM or runtime configuration. The Windows and Android companions
+provide the measurement interface so the Nano's local controls stay focused on
+play and calibration. After normal calibration, open **Board alignment** on
+Windows or **Move > Align board** on Android, select a square, and start the
+recommended head-only session. Use the four one-step controls until the head is
+visually centered, then record the point. A magnetic marker is optional and
+requires the separate safety confirmation.
 
-Measure two widely separated squares with different files and ranks. The
-formulas beside the constants in [`global.h`](global.h) give the new values, or
-run the optional offline calculator:
+Measure two widely separated squares with different files and ranks. The apps
+show the exact four source values to edit in [`global.h`](global.h), including
+correct handling of non-default microstepping. The session never writes EEPROM
+or changes installed geometry, and it reverses all nudges when finished. It
+marks the head position unknown before the first nudge, so calibration is
+mandatory even after disconnect or power loss.
+
+For terminal-only work, send `GEOMETRY`, then `ALIGN <square> H`, use `NUDGE
+X+|X-|Y+|Y-`, record the `ALIGN ACTIVE` offsets, and finish with `ALIGN END`.
+The optional offline calculator accepts the two recorded reports:
 
 ```powershell
 python ./firmware/geometry_calculator.py `
@@ -241,16 +251,40 @@ python ./firmware/geometry_calculator.py `
 Edit the four reported constants, upload, calibrate again, and verify at least
 four widely separated squares. This corrects translation and independent axis
 scale; a rotated, skewed, or nonuniform board must be aligned mechanically.
-The former duplicate local sensor screen was replaced to hold the Nano within
-its established flash budget; both apps and the `BOARD` command retain complete
-64-square sensor inspection.
+The removed local maintenance carousel and duplicate sensor screen reduce Nano
+flash and SRAM; both apps and the `BOARD` command retain complete diagnostics.
 
 ## Piece-retention travel planner
 
-The standalone and legacy `PLAY` planner uses the shortest straight path for
-normal legal moves. Knight moves use three exact straight segments through the
-open square-boundary lane. Capture removal and the rook part of castling use the
-same explicit clearance lanes.
+The standalone and legacy `PLAY` planner accepts direct carried moves only when
+their square centres share a file, rank, or diagonal. It does not attempt a
+continuous knight or S-shaped carry. Connected play represents those moves as
+separate verified square-centre drags. Capture removal and the rook part of
+legacy castling retain explicit horizontal/vertical clearance lanes to reach
+their necessary off-board or temporarily obstructed destinations.
+Standalone carries also preflight every traversed square; diagonal steps
+require both shared orthogonal corner squares to be empty. An unsafe direct
+carry becomes a manual, sensor-verified move before the magnet is energized.
+
+If the local Micro-Max opponent selects a knight move, the LCD shows the exact
+`MANUAL` instruction instead of attempting unsafe travel. Move that piece by
+hand and press A; the Nano verifies the reed-switch occupancy before continuing
+the same game. B returns to the menu.
+
+Before an automatic capture, the Nano searches for a verified route to the left
+bin. It may carry the captured piece vertically through empty square centres to
+a lower-boundary lane whose two adjacent rows are clear all the way left. It
+prefers the current or a lower rank and uses only the previously validated
+white-edge outside lane; it never tries the unvalidated outer black-side lane.
+If no route is clear, standalone play uses the same `MANUAL` instruction and
+sensor-verified continuation instead of risking a collision.
+Manual captures are deliberately two-stage: remove the displayed captured
+square and press A. If the remaining AI carry is queen-aligned and every
+traversed square and diagonal corner is clear, the Nano resumes that move
+automatically. Otherwise it displays the complete `MANUAL` move for the player
+to perform before pressing A again. This lets occupancy-only reed switches
+prove that the destination was actually emptied before the AI piece replaced
+it.
 
 For firmware 4.1 connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the
@@ -262,7 +296,9 @@ piece, and recursion limits prevent unbounded work; failure stops the move rathe
 than falling back to an unverified path.
 
 Every corridor ends on an exact whole-step destination, with no interpolation
-rounding to accumulate between moves. Hardware validation uses a `1000`
+rounding to accumulate between moves. Firmware 4.4 also removes unequal-ratio
+CoreXY interpolation below every caller: each displacement is one or more pure
+horizontal, vertical, or 45-degree segments. Hardware validation uses a `1000`
 microsecond half-period for start, carrying, and unloaded motion. Keeping these
 equal intentionally avoids the mechanism's strong low-speed resonance.
 

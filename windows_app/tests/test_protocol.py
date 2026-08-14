@@ -4,6 +4,7 @@ from protocol import (
     CommandRisk,
     LineBuffer,
     board_hex_from_squares,
+    alignment_command,
     classify_command,
     commit_plan_command,
     drag_command,
@@ -11,12 +12,16 @@ from protocol import (
     parse_board_hex,
     parse_drag_command,
     parse_event,
+    parse_alignment,
+    parse_geometry,
     parse_info,
     parse_plan_command,
     parse_telemetry,
     piece_command,
     plan_command,
     play_command,
+    queen_aligned,
+    nudge_command,
     split_route_runs,
 )
 
@@ -128,8 +133,35 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("PLAN e2e4---"), CommandRisk.MOTION)
         self.assertEqual(classify_command("DRAG e2e4"), CommandRisk.MOTION)
         self.assertEqual(classify_command("COMMIT"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("GEOMETRY"), CommandRisk.READ_ONLY)
+        self.assertEqual(classify_command("ALIGN STATUS"), CommandRisk.READ_ONLY)
+        self.assertEqual(classify_command("ALIGN a2 H"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("NUDGE X+"), CommandRisk.MOTION)
         self.assertEqual(head_command("e6"), "HEAD e6")
         self.assertEqual(piece_command("e2", "e4"), "PIECE e2e4")
+
+    def test_geometry_and_alignment_protocol(self):
+        geometry = parse_geometry(parse_event("GEOMETRY ACB1 188 189 354 871 1"))
+        self.assertEqual((geometry.file_pitch, geometry.rank_pitch), (188, 189))
+        self.assertEqual((geometry.black_park, geometry.white_park), (354, 871))
+        self.assertEqual(geometry.microsteps, 1)
+        active = parse_alignment(parse_event("ALIGN ACTIVE a2 M -3 7"))
+        self.assertEqual(active.square, "a2")
+        self.assertTrue(active.magnetic_marker)
+        self.assertEqual((active.offset_x, active.offset_y), (-3, 7))
+        self.assertEqual(parse_alignment(parse_event("ALIGN IDLE")).state, "IDLE")
+        self.assertEqual(alignment_command("H7"), "ALIGN h7 H")
+        self.assertEqual(alignment_command("h7", magnetic_marker=True), "ALIGN h7 M")
+        self.assertEqual(nudge_command("x", "+"), "NUDGE X+")
+        with self.assertRaises(ValueError):
+            parse_alignment(parse_event("ALIGN ACTIVE a2 M 61 0"))
+
+    def test_direct_carries_are_queen_aligned(self):
+        self.assertTrue(queen_aligned(0, 7))
+        self.assertTrue(queen_aligned(0, 56))
+        self.assertTrue(queen_aligned(0, 63))
+        self.assertFalse(queen_aligned(1, 18))
+        self.assertFalse(queen_aligned(0, 0))
 
 
 if __name__ == "__main__":

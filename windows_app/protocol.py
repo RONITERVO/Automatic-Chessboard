@@ -37,6 +37,25 @@ class Telemetry:
     uptime_seconds: int
 
 
+@dataclass(frozen=True)
+class GeometrySettings:
+    protocol: str
+    file_pitch: int
+    rank_pitch: int
+    black_park: int
+    white_park: int
+    microsteps: int
+
+
+@dataclass(frozen=True)
+class AlignmentStatus:
+    state: str
+    square: str | None = None
+    magnetic_marker: bool = False
+    offset_x: int = 0
+    offset_y: int = 0
+
+
 class CommandRisk(Enum):
     READ_ONLY = "Read-only"
     CONTROL = "Changes board state"
@@ -46,14 +65,14 @@ class CommandRisk(Enum):
 
 
 READ_ONLY_COMMANDS = frozenset({
-    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST",
+    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY",
 })
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
 MOTION_COMMANDS = frozenset({
     "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-    "PLAN", "DRAG", "COMMIT",
+    "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
 })
 
 
@@ -119,6 +138,39 @@ def parse_telemetry(event: BoardEvent) -> Telemetry:
     )
 
 
+def parse_geometry(event: BoardEvent) -> GeometrySettings:
+    if event.kind != "GEOMETRY" or len(event.args) != 6:
+        raise ValueError(f"Malformed GEOMETRY event: {event.raw!r}")
+    try:
+        values = tuple(int(value) for value in event.args[1:])
+    except ValueError as error:
+        raise ValueError(f"Malformed GEOMETRY event: {event.raw!r}") from error
+    if any(value <= 0 for value in values):
+        raise ValueError(f"Invalid GEOMETRY values: {event.raw!r}")
+    return GeometrySettings(event.args[0], *values)
+
+
+def parse_alignment(event: BoardEvent) -> AlignmentStatus:
+    if event.kind != "ALIGN" or not event.args:
+        raise ValueError(f"Malformed ALIGN event: {event.raw!r}")
+    state = event.args[0].upper()
+    if state in {"IDLE", "ENDED"} and len(event.args) == 1:
+        return AlignmentStatus(state)
+    if state not in {"READY", "ACTIVE"} or len(event.args) != 5:
+        raise ValueError(f"Malformed ALIGN event: {event.raw!r}")
+    square, mode = event.args[1].lower(), event.args[2].upper()
+    head_command(square)
+    if mode not in {"H", "M"}:
+        raise ValueError(f"Malformed ALIGN mode: {event.raw!r}")
+    try:
+        offset_x, offset_y = int(event.args[3]), int(event.args[4])
+    except ValueError as error:
+        raise ValueError(f"Malformed ALIGN offsets: {event.raw!r}") from error
+    if not -60 <= offset_x <= 60 or not -60 <= offset_y <= 60:
+        raise ValueError(f"ALIGN offsets outside firmware limits: {event.raw!r}")
+    return AlignmentStatus(state, square, mode == "M", offset_x, offset_y)
+
+
 def parse_board_hex(value: str) -> frozenset[int]:
     """Return occupied python-chess square indexes from 16 firmware hex digits."""
     compact = value.strip().upper()
@@ -147,6 +199,8 @@ def classify_command(line: str) -> CommandRisk:
     stripped = line.strip()
     if stripped.startswith("!"):
         return CommandRisk.EMERGENCY
+    if stripped.upper() == "ALIGN STATUS":
+        return CommandRisk.READ_ONLY
     command = stripped.split(maxsplit=1)[0].upper() if stripped else ""
     if command in READ_ONLY_COMMANDS:
         return CommandRisk.READ_ONLY
@@ -181,6 +235,19 @@ def head_command(square: str) -> str:
     return f"HEAD {square}"
 
 
+def alignment_command(square: str, *, magnetic_marker: bool = False) -> str:
+    normalized = square.lower()
+    head_command(normalized)
+    return f"ALIGN {normalized} {'M' if magnetic_marker else 'H'}"
+
+
+def nudge_command(axis: str, sign: str) -> str:
+    normalized_axis = axis.strip().upper()
+    if normalized_axis not in {"X", "Y"} or sign not in {"+", "-"}:
+        raise ValueError(f"Invalid alignment nudge: {axis!r}{sign!r}")
+    return f"NUDGE {normalized_axis}{sign}"
+
+
 def piece_command(source: str, target: str) -> str:
     head_command(source)
     head_command(target)
@@ -213,6 +280,18 @@ def _square_text(square: int) -> str:
     if square not in range(64):
         raise ValueError(f"Square is outside the board: {square!r}")
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
+
+
+def queen_aligned(source: int, target: int) -> bool:
+    """Return whether one direct carry is horizontal, vertical, or 45 degrees."""
+
+    _square_text(source)
+    _square_text(target)
+    file_delta = abs(source % 8 - target % 8)
+    rank_delta = abs(source // 8 - target // 8)
+    return source != target and (
+        file_delta == 0 or rank_delta == 0 or file_delta == rank_delta
+    )
 
 
 def _route_step(first: int, second: int) -> int:

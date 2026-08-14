@@ -317,6 +317,7 @@ class BoardRepository(private val recorder: EventRecorder) :
     private fun expectedResponse(command: String): String = when (command) {
         "PING", "HELLO" -> "PONG"
         "BTTEST" -> "BT"
+        "ALIGN STATUS" -> "ALIGN"
         else -> command.substringBefore(' ').uppercase()
     }
 
@@ -355,7 +356,7 @@ class BoardRepository(private val recorder: EventRecorder) :
                         "INFO" -> next.copy(firmware = Protocol.parseInfo(event), lastError = "")
                         "TELEM" -> {
                             val telemetry = Protocol.parseTelemetry(event)
-                            val moving = telemetry.sequence in setOf(3, 8, 19, 21, 22)
+                            val moving = telemetry.sequence in setOf(3, 19, 20)
                             motionStartedMs = if (moving) motionStartedMs ?: now else null
                             next.copy(telemetry = telemetry, motionExpected = moving, lastError = "")
                         }
@@ -366,11 +367,11 @@ class BoardRepository(private val recorder: EventRecorder) :
                             lastError = "",
                         ) else next
                         "READY", "PONG" -> next.copy(connectionText = "Board connected and responding")
-                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "ESTOP", "ERR", "STOPPED" -> {
+                        "SETUP", "SESSION", "TURN", "DONE", "MOVED", "CALIBRATED", "ALIGN", "ESTOP", "ERR", "STOPPED" -> {
                             motionStartedMs = null
                             next.copy(motionExpected = false)
                         }
-                        "MOVING", "CALIBRATING" -> {
+                        "MOVING", "CALIBRATING", "ALIGNING" -> {
                             motionStartedMs = motionStartedMs ?: now
                             next.copy(motionExpected = true)
                         }

@@ -42,42 +42,35 @@ extern char mov[5];
 
 // User interface states.
 enum {
-  start_up,
-  main_menu,
-  position_recovery,
-  calibration,
-  setup_check,
-  player_white,
-  player_black,
-  undo_required,
-  ai_sensor_check,
-  game_over_screen,
-  fault_screen,
-  service_menu,
-  service_geometry_nudge,
-  remote_setup_check,
-  remote_human,
-  remote_wait_host,
-  remote_undo_required,
-  remote_sensor_check,
-  remote_promotion_wait,
-  host_manual_motion,
-  remote_route_plan
+  // Values are part of STATUS/TELEM. Assign them explicitly so inserting a
+  // future internal state cannot silently relabel every companion display.
+  start_up = 0,
+  main_menu = 1,
+  position_recovery = 2,
+  calibration = 3,
+  setup_check = 4,
+  player_white = 5,
+  player_black = 6,
+  undo_required = 7,
+  ai_sensor_check = 8,
+  game_over_screen = 9,
+  fault_screen = 10,
+  reserved_service_menu = 11,
+  host_alignment = 12,
+  remote_setup_check = 13,
+  remote_human = 14,
+  remote_wait_host = 15,
+  remote_undo_required = 16,
+  remote_sensor_check = 17,
+  remote_promotion_wait = 18,
+  host_manual_motion = 19,
+  remote_route_plan = 20
 };
 extern byte sequence;
 extern byte after_calibration;
 
 enum {T_B, B_T, L_R, R_L, LR_BT, RL_TB, LR_TB, RL_BT};
 // T=Top, B=Bottom, L=Left, R=Right.
-
-enum {
-  SERVICE_CALIBRATE,
-  SERVICE_GEOMETRY,
-  SERVICE_EXIT,
-  SERVICE_COUNT
-};
-extern byte service_item;
-extern byte service_file;
 
 // Hardware profiles. The classic Nano build remains the default. Select the
 // MKS profile only through firmware/build.ps1 -HardwareProfile mks-gen-l-v1;
@@ -126,9 +119,10 @@ const byte MOTOR_BLACK_STEP = 5;
 const byte MOTOR_MICROSTEPS = 1;
 // ------------------------ Builder geometry ------------------------------
 // These four compile-time values are the complete board registration. They
-// consume no global SRAM and are never written to EEPROM. Service > GEOMETRY
-// reports signed X/Y corrections at any chosen square. Record the reports,
-// apply the formulas below, edit these values, upload, calibrate, and verify.
+// consume no global SRAM and are never written to EEPROM. Firmware 4.5+ apps
+// can read these values and guide a recoverable one-step alignment session at
+// any chosen square. Record two signed X/Y corrections, apply the formulas
+// below, edit these values, upload, calibrate, and verify.
 //
 // FILE/RANK_PITCH_STEPS are center-to-center travel along the printed grid.
 // Keep them separate: nominally square tiles can still need different step
@@ -136,7 +130,7 @@ const byte MOTOR_MICROSTEPS = 1;
 const unsigned int FILE_PITCH_STEPS = 188U * MOTOR_MICROSTEPS;
 const unsigned int RANK_PITCH_STEPS = 188U * MOTOR_MICROSTEPS;
 // The park values are raw motor steps from the repeatable two-switch corner to
-// the logical e6 center. Service > GEOMETRY reports their corrected values.
+// the logical e6 center. The app alignment result reports corrected values.
 const unsigned int CALIBRATION_PARK_BLACK_STEPS = 354U * MOTOR_MICROSTEPS;
 const unsigned int CALIBRATION_PARK_WHITE_STEPS = 871U * MOTOR_MICROSTEPS;
 // With two reports A and B, choose different files to measure file pitch and

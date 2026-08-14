@@ -108,7 +108,7 @@ class NonMotionSerialTestTests(unittest.TestCase):
 
         responses = {
             "PING": ["PONG ACB1"],
-            "INFO": ["INFO ACB2 4.3.0 BOARD,TELEM,REMOTE,SENSORFRAME,PLANROUTE"],
+            "INFO": ["INFO ACB2 4.4.0 BOARD,TELEM,REMOTE,SENSORFRAME,PLANROUTE"],
             "STATUS": ["STATUS ACB1 1 0 0"],
             "TELEM": ["TELEM ACB2 1 0 0 0 1 5 6 1 1 1023 900 10"],
             "BOARD": ["BOARD FFFF00000000FFFF"],

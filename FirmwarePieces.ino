@@ -2,7 +2,76 @@
 
 // ---------------------------- AI physical movement -----------------------
 
+// A capture may leave on the boundary below any rank. The carried piece first
+// travels vertically through empty square centres, then uses that boundary
+// only when every square touching the lane to its left is empty. The source
+// square is ignored because it becomes empty as the captured piece departs.
+boolean captureExitClear(byte file, byte source_rank, byte exit_rank) {
+  byte first_rank = min(source_rank, exit_rank);
+  byte last_rank = max(source_rank, exit_rank);
+  for (byte rank = first_rank; rank <= last_rank; rank++) {
+    if (rank != source_rank &&
+        boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1))
+      return false;
+  }
+
+  for (byte column = 0; column < file; column++) {
+    if (column < file - 1 &&
+        boardSquareOccupied(reed_sensor_record, 8 - exit_rank, column))
+      return false;
+    if (exit_rank > 1 &&
+        !(exit_rank - 1 == source_rank && column == file - 1) &&
+        boardSquareOccupied(reed_sensor_record, 9 - exit_rank, column))
+      return false;
+  }
+  return true;
+}
+
+byte findCaptureExitRank(byte file, byte source_rank) {
+  // Prefer the current or a lower rank: rank 1 uses the already validated
+  // outside-white-edge lane. Search upward only when no lower route is clear.
+  for (byte rank = source_rank; rank > 0; rank--)
+    if (captureExitClear(file, source_rank, rank)) return rank;
+  for (byte rank = source_rank + 1; rank <= 8; rank++)
+    if (captureExitClear(file, source_rank, rank)) return rank;
+  return 0;
+}
+
+// This preflight is used before ordinary motion and again after a manual
+// capture removal. Keep one out-of-line copy on the flash-constrained Nano.
+boolean __attribute__((noinline)) carriedPathClear(
+    byte from_file, byte from_rank, byte to_file, byte to_rank,
+    byte ignored_file, byte ignored_rank) {
+  if (!queenAlignedSquares(from_file, from_rank, to_file, to_rank)) return false;
+  signed char file_step = to_file == from_file ? 0 :
+                          (to_file > from_file ? 1 : -1);
+  signed char rank_step = to_rank == from_rank ? 0 :
+                          (to_rank > from_rank ? 1 : -1);
+  byte file = from_file;
+  byte rank = from_rank;
+  while (file != to_file || rank != to_rank) {
+    byte next_file = file + file_step;
+    byte next_rank = rank + rank_step;
+    if (!(next_file == ignored_file && next_rank == ignored_rank) &&
+        boardSquareOccupied(reed_sensor_record, 8 - next_rank,
+                            next_file - 1)) return false;
+    if (file_step && rank_step) {
+      if (!(next_file == ignored_file && rank == ignored_rank) &&
+          boardSquareOccupied(reed_sensor_record, 8 - rank,
+                              next_file - 1)) return false;
+      if (!(file == ignored_file && next_rank == ignored_rank) &&
+          boardSquareOccupied(reed_sensor_record, 8 - next_rank,
+                              file - 1)) return false;
+    }
+    file = next_file;
+    rank = next_rank;
+  }
+  return true;
+}
+
 boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
+  byte exit_rank = findCaptureExitRank(file, rank);
+  if (!exit_rank) return false;
   if (!moveTrolleyStraightTo(file, rank, SPEED_FAST)) return false;
   if (use_magnet) {
     lcd.clear();
@@ -11,6 +80,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
     lcd.print(F("TO LEFT BIN"));
     setMagnet(true);
   }
+  if (exit_rank != rank &&
+      !moveHeldPieceSafely(file, rank, file, exit_rank)) return false;
 
   int end_x = (int)CAPTURE_SIDE_X_STEPS -
               (int)file * (int)FILE_PITCH_STEPS;
@@ -26,8 +97,8 @@ boolean removeCapturedPiecePath(byte file, byte rank, boolean use_magnet) {
   // The off-board bin coordinate cannot be stored as a board square. If this
   // capture came from the corner-switch side, move down the bin lane before
   // starting the first calibration approach.
-  if (rank > CALIBRATION_PARK_RANK) {
-    int staging_steps = ((int)rank - CALIBRATION_PARK_RANK) *
+  if (exit_rank > CALIBRATION_PARK_RANK) {
+    int staging_steps = ((int)exit_rank - CALIBRATION_PARK_RANK) *
                         (int)RANK_PITCH_STEPS;
     if (!pulseCoreXYLine(0, -staging_steps, SPEED_FAST, false)) return false;
   }
@@ -87,6 +158,15 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
   byte arrival_y = move_text[3] - '0';
   byte displacement_x = abs((int)arrival_x - (int)departure_x);
   byte displacement_y = abs((int)arrival_y - (int)departure_y);
+  boolean castling = move_flags == 'C' ||
+                     (departure_x == 5 && departure_y == arrival_y &&
+                      (departure_y == 1 || departure_y == 8) && displacement_x == 2);
+  // 'L' is the local Micro-Max fallback: record an unsupported knight as the
+  // expected position without moving, then let the normal sensor-check screen
+  // guide and verify the player's manual placement.
+  boolean manual_move = !castling &&
+      !queenAlignedSquares(departure_x, departure_y, arrival_x, arrival_y);
+  if (manual_move && move_flags != 'L') return false;
 
   byte arrival_row = 8 - arrival_y;
   byte arrival_column = arrival_x - 1;
@@ -102,33 +182,54 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
                                             8 - departure_y,
                                             arrival_column));
 
-  if (destination_occupied) {
-    if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
+  byte capture_rank = destination_occupied ? arrival_y :
+                      (en_passant ? departure_y : 0);
+  if (!manual_move && !castling &&
+      !carriedPathClear(departure_x, departure_y, arrival_x, arrival_y,
+                        capture_rank ? arrival_x : 0, capture_rank)) {
+    if (move_flags != 'L') return false;
+    manual_move = true;
   }
-  else if (en_passant) {
-    if (!removeCapturedPiece(arrival_x, departure_y)) return false;
+  if (!manual_move && capture_rank &&
+      !findCaptureExitRank(arrival_x, capture_rank)) {
+    if (move_flags != 'L') return false;
+    manual_move = true;
+  }
+  if (manual_move && capture_rank) {
+    // Verify a manual capture in two observable phases. The target must first
+    // become empty; only then may the player place the AI piece there.
+    move_from = (8 - capture_rank) * 8 + arrival_column;
+    setBoardSquare(reed_sensor_status, 8 - capture_rank,
+                   arrival_column, false);
+    return true;
   }
 
-  if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
-    return false;
-  boolean castling = move_flags == 'C' ||
-                     (departure_x == 5 && departure_y == arrival_y &&
-                      (departure_y == 1 || departure_y == 8) && displacement_x == 2);
-  if (castling) {
-    if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
-      return false;
-  }
-  else {
-    setMagnet(true);
-    if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
-      return false;
-  }
+  if (!manual_move) {
+    if (destination_occupied) {
+      if (!removeCapturedPiece(arrival_x, arrival_y)) return false;
+    }
+    else if (en_passant) {
+      if (!removeCapturedPiece(arrival_x, departure_y)) return false;
+    }
 
-  setMagnet(false);
-  if (motion_fault) return false;
-  trolley_coordinate_X = arrival_x;
-  trolley_coordinate_Y = arrival_y;
-  rememberTrolleyPosition();
+    if (!moveTrolleyStraightTo(departure_x, departure_y, SPEED_FAST))
+      return false;
+    if (castling) {
+      if (!moveCastlingPieces(departure_x, departure_y, arrival_x, true))
+        return false;
+    }
+    else {
+      setMagnet(true);
+      if (!moveHeldPieceSafely(departure_x, departure_y, arrival_x, arrival_y))
+        return false;
+    }
+
+    setMagnet(false);
+    if (motion_fault) return false;
+    trolley_coordinate_X = arrival_x;
+    trolley_coordinate_Y = arrival_y;
+    rememberTrolleyPosition();
+  }
 
   byte departure_row = 8 - departure_y;
   byte departure_column = departure_x - 1;
@@ -154,5 +255,6 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
 }
 
 boolean blackPlayerMovement() {
-  return computerPlayerMovement(lastM, 0);
+  move_from = NO_SQUARE;
+  return computerPlayerMovement(lastM, 'L');
 }

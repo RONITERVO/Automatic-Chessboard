@@ -27,6 +27,7 @@ void returnToMainMenu() {
   setMagnet(false);
   remote_mode = false;
   remote_human_move_pending = false;
+  resetMoveTracker();
   AI_reset();
   sequence = main_menu;
   showMainMenu();
@@ -35,7 +36,7 @@ void returnToMainMenu() {
 void showMainMenu() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("A:GAME B:SERVICE"));
+  lcd.print(F("A:GAME B:CAL"));
   lcd.setCursor(0, 1);
   lcd.print(F("HUMAN vs AI"));
 }
@@ -86,9 +87,31 @@ void showCalibrationReferenceFault() {
 void showAiSensorMismatch() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("CHECK AI PIECE"));
+  if (move_from == NO_SQUARE) {
+    lcd.print(F("MANUAL "));
+    printMove(lastM);
+  }
+  else {
+    lcd.print(F("REMOVE "));
+    printSquare(move_from);
+  }
   lcd.setCursor(0, 1);
-  lcd.print(F("A=RETRY B=MENU"));
+  lcd.print(F("A=CHECK B=MENU"));
+}
+
+void prepareManualAiPlacement() {
+  byte from_file = lastM[0] - 'a' + 1;
+  byte from_rank = lastM[1] - '0';
+  byte to_file = lastM[2] - 'a' + 1;
+  byte to_rank = lastM[3] - '0';
+  move_from = NO_SQUARE;
+  if (carriedPathClear(from_file, from_rank, to_file, to_rank, 0, 0)) {
+    beginAiTurn();
+    return;
+  }
+  setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
+  setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
+  showAiSensorMismatch();
 }
 
 void showPendingMove() {
@@ -101,6 +124,16 @@ void showPendingMove() {
   printSquare(move_to);
   lcd.setCursor(0, 1);
   lcd.print(F("A=END TURN"));
+}
+
+void beginAiTurn() {
+  lcd.clear();
+  lcd.print(F("AI MOVE "));
+  printMove(lastM);
+  lcd.setCursor(0, 1);
+  lcd.print(F("KEEP HANDS CLEAR"));
+  delay(800);
+  sequence = player_black;
 }
 
 void beginHumanTurn() {
@@ -161,13 +194,7 @@ void finishHumanTurn() {
     return;
   }
 
-  lcd.clear();
-  lcd.print(F("AI MOVE "));
-  printMove(lastM);
-  lcd.setCursor(0, 1);
-  lcd.print(F("KEEP HANDS CLEAR"));
-  delay(800);
-  sequence = player_black;
+  beginAiTurn();
 }
 
 void printMove(const char *move_text) {

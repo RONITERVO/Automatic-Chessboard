@@ -53,6 +53,10 @@ class ProtocolTest {
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAN e2e4---"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("DRAG e2e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("COMMIT"))
+        assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("GEOMETRY"))
+        assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("ALIGN STATUS"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("ALIGN a2 H"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("NUDGE X+"))
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
@@ -61,6 +65,29 @@ class ProtocolTest {
         assertThrows(IllegalArgumentException::class.java) { Protocol.playCommand("z9z8") }
         assertEquals("HEAD e6", Protocol.headCommand("e6"))
         assertEquals("PIECE e2e4", Protocol.pieceCommand("e2", "e4"))
+        assertEquals("ALIGN h7 H", Protocol.alignmentCommand("h7"))
+        assertEquals("ALIGN h7 M", Protocol.alignmentCommand("H7", magneticMarker = true))
+        assertEquals("NUDGE X+", Protocol.nudgeCommand('x', '+'))
+    }
+
+    @Test fun parsesGeometryAndAlignmentStatus() {
+        val geometry = Protocol.parseGeometry(
+            Protocol.parseEvent("GEOMETRY ACB1 188 189 354 871 1"),
+        )
+        assertEquals(188, geometry.filePitch)
+        assertEquals(189, geometry.rankPitch)
+        assertEquals(354, geometry.blackPark)
+        assertEquals(871, geometry.whitePark)
+        assertEquals(1, geometry.microsteps)
+        val active = Protocol.parseAlignment(Protocol.parseEvent("ALIGN ACTIVE a2 M -3 7"))
+        assertEquals("a2", active.square)
+        assertTrue(active.magneticMarker)
+        assertEquals(-3, active.offsetX)
+        assertEquals(7, active.offsetY)
+        assertEquals("IDLE", Protocol.parseAlignment(Protocol.parseEvent("ALIGN IDLE")).state)
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.parseAlignment(Protocol.parseEvent("ALIGN ACTIVE a2 M 61 0"))
+        }
     }
 
     @Test fun buildsAndParsesRouteTransactions() {
@@ -105,5 +132,13 @@ class ProtocolTest {
         assertTrue(value.motionFault)
         assertFalse(value.buttonAReleased)
         assertEquals(-1, value.trolleyX)
+    }
+
+    @Test fun directCarriesAreQueenAligned() {
+        assertTrue(Protocol.queenAligned(0, 7))
+        assertTrue(Protocol.queenAligned(0, 56))
+        assertTrue(Protocol.queenAligned(0, 63))
+        assertFalse(Protocol.queenAligned(1, 18))
+        assertFalse(Protocol.queenAligned(0, 0))
     }
 }

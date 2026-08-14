@@ -22,6 +22,9 @@ class ManualControlTest {
         assertEquals(12, source.source)
         assertNull(source.choose(48, occupied).selection.target)
         assertEquals("PIECE e2e4", source.choose(28, occupied).selection.command())
+        val rejected = source.choose(29, occupied)
+        assertNull(rejected.selection.target)
+        assertTrue(rejected.message.contains("same file, rank, or diagonal"))
     }
 
     @Test fun verificationRequiresExactCalibrationAndPhysicalOccupancyTransition() {

@@ -7,7 +7,7 @@ from time import monotonic
 
 import chess
 
-from protocol import FirmwareInfo, Telemetry
+from protocol import FirmwareInfo, Telemetry, queen_aligned
 
 
 SEQUENCE_NAMES = {
@@ -22,17 +22,16 @@ SEQUENCE_NAMES = {
     8: "Checking computer move",
     9: "Game over",
     10: "Motion fault",
-    11: "Service menu",
-    12: "Sensor service",
-    13: "Service move: select file",
-    14: "Service move: select rank",
-    15: "Remote setup check",
-    16: "Remote human turn",
-    17: "Waiting for computer move",
-    18: "Remote move must be undone",
-    19: "Checking remote computer move",
-    20: "Waiting for promotion piece",
-    21: "Direct app movement",
+    11: "Reserved",
+    12: "Board alignment",
+    13: "Remote setup check",
+    14: "Remote human turn",
+    15: "Waiting for computer move",
+    16: "Remote move must be undone",
+    17: "Checking remote computer move",
+    18: "Waiting for promotion piece",
+    19: "Direct app movement",
+    20: "Verified route transaction",
 }
 
 SEQUENCE_GUIDANCE = {
@@ -43,13 +42,15 @@ SEQUENCE_GUIDANCE = {
     7: "Restore the previous physical position, then confirm on the board.",
     8: "The board is checking the piece moved by the carriage.",
     10: "Motion was stopped. Inspect the mechanism locally before clearing the fault.",
-    15: "Arrange starting pieces and press physical Button A.",
-    16: "Make the human move, then press physical Button A.",
-    17: "Windows may send the next legal computer move.",
-    18: "The reported move was invalid. Restore the pieces physically.",
-    19: "The board is checking the completed automatic move.",
-    20: "Replace the promoted pawn, then press physical Button A.",
-    21: "The companion requested direct movement. Keep hands clear.",
+    12: "The companion is measuring board alignment. Keep hands clear and follow its prompts.",
+    13: "Arrange starting pieces and press physical Button A.",
+    14: "Make the human move, then press physical Button A.",
+    15: "Windows may send the next legal computer move.",
+    16: "The reported move was invalid. Restore the pieces physically.",
+    17: "The board is checking the completed automatic move.",
+    18: "Replace the promoted pawn, then press physical Button A.",
+    19: "The companion requested direct movement. Keep hands clear.",
+    20: "The companion is executing a sensor-verified route. Keep hands clear.",
 }
 
 
@@ -94,6 +95,8 @@ class ManualSelection:
             return ManualSelection("piece"), "Source cleared; choose a piece"
         if occupied is not None and square in occupied:
             return self, f"Destination {square_name(square)} is occupied"
+        if not queen_aligned(self.source, square):
+            return self, "Choose a destination on the same file, rank, or diagonal"
         return ManualSelection("piece", self.source, square), (
             f"Move {square_name(self.source)} to {square_name(square)}"
         )
@@ -102,6 +105,8 @@ class ManualSelection:
         if self.mode == "head":
             return None if self.target is None else f"HEAD {square_name(self.target)}"
         if self.source is None or self.target is None:
+            return None
+        if not queen_aligned(self.source, self.target):
             return None
         return f"PIECE {square_name(self.source)}{square_name(self.target)}"
 

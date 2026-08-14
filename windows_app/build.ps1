@@ -38,8 +38,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed.' }
     & $venvPython -m ruff check .
     if ($LASTEXITCODE -ne 0) { throw 'Ruff checks failed.' }
-    & $venvPython -m compileall -q app.py camera_source.py model.py protocol.py `
-        routing.py support.py transports.py tests
+    & $venvPython -m compileall -q alignment.py app.py camera_source.py model.py `
+        protocol.py routing.py support.py transports.py tests
     if ($LASTEXITCODE -ne 0) { throw 'Python compilation checks failed.' }
     & $venvPython -m PyInstaller --noconfirm --clean --onedir --windowed `
         --name OpenAutomaticChessboard @extraArgs app.py

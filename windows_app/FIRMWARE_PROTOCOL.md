@@ -2,7 +2,7 @@
 
 Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
 baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.3.0 advertises `ACB2` monitoring while retaining the
+terminator. Firmware 4.5.0 advertises `ACB2` monitoring while retaining the
 legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
 
 ## Compatibility handshake
@@ -13,7 +13,7 @@ Send `PING`, then `INFO`:
 > PING
 < PONG ACB1
 > INFO
-< INFO ACB2 4.3.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG
+< INFO ACB2 4.5.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN
 ```
 
 Clients must use the capability list instead of assuming that every firmware
@@ -32,6 +32,10 @@ retains `PLAY` as a compatibility fallback for firmware 4.0 and earlier.
 - `SWTEST` -> idle-only guided press/release test for both shared limit inputs;
   it keeps the magnet off, performs no movement, rejects crossed activation,
   and reports the pressed A6 raw value
+- `GEOMETRY` -> `GEOMETRY ACB1 file_pitch rank_pitch black_park white_park
+  microsteps`; values are the actual compiled step counts
+- `ALIGN STATUS` -> `ALIGN IDLE` or the active square, marker mode, and signed
+  X/Y offsets; it never moves the mechanism
 
 `BOARD` contains two hexadecimal digits per normalized row, rank 8 through rank
 1. Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a
@@ -49,6 +53,15 @@ TELEM ACB2 sequence homed remote fault magnet x y a_released b_released b_raw fr
 - `b_raw` is the A6 ADC value, normally near 1023 when released and 0 when active.
 - `free_ram` is an instantaneous stack-to-heap estimate.
 - `uptime_s` wraps with the Nano's `millis()` counter.
+
+Firmware 4.5 state numbers are stable protocol data: `0` startup, `1` idle,
+`2` position recovery, `3` calibration, `4` setup check, `5`/`6` standalone
+human turns, `7` undo, `8` automatic-move sensor check, `9` game over, `10`
+fault, `11` reserved, `12` board alignment, `13` remote setup, `14` remote
+human, `15` remote waiting for host, `16` remote undo, `17` remote sensor
+check, `18` promotion replacement, `19` direct host motion, and `20` verified
+route transaction. Clients must show unknown future values rather than remap
+them heuristically.
 
 The fixed reported-to-physical rank mapping is `8->1, 7->2, 2->3, 1->4, 4->5,
 3->6, 6->7, 5->8`; files A-H are unchanged. This is part of the
@@ -147,16 +160,49 @@ is latched.
   and the destination empty. The head first reaches e2 with the magnet off,
   energizes it only for the carried segment, and verifies that e2 became empty
   and e4 occupied before emitting `MOVED PIECE e2e4`.
+- Firmware 4.4 accepts `PIECE` only when its square centres share a file, rank,
+  or diagonal. Turning and knight moves use `PLANROUTE`; direct unsupported
+  geometry returns `ERR BAD ROUTE` before the head or magnet moves.
 
 Possible rejections include `ERR CALIBRATE`, `ERR SOURCE EMPTY`,
 `ERR TARGET FULL`, `ERR SENSORS`, `ERR BUSY`, `ERR FAULT`, and `ERR MOTION`.
-Manual motion uses telemetry sequence 21 while active. `!` remains the immediate
+Manual motion uses telemetry sequence 19 while active. `!` remains the immediate
 best-effort remote halt during calibration and direct movement.
+
+## Board registration (firmware 4.5+)
+
+Registration is deliberately a measurement workflow, not a runtime setting.
+The firmware never writes geometry to EEPROM; builders edit the four constants
+in `global.h` and upload the resulting firmware.
+
+1. Calibrate and verify the normal `CALIBRATED e6` response.
+2. Send `GEOMETRY` and retain the current actual values and microstep factor.
+3. Send `ALIGN a2 H` for head-only measurement, or `ALIGN a2 M` only when a
+   magnetic marker is physically safe. The response is `ALIGN READY a2 H 0 0`.
+4. Send `NUDGE X+`, `NUDGE X-`, `NUDGE Y+`, or `NUDGE Y-`. Each command moves
+   one logical Cartesian step and responds with, for example, `ALIGN ACTIVE a2
+   H 3 -1`. Each axis is bounded to +/-60 steps.
+5. Record the centered point and repeat at a widely separated square whose file
+   and rank both differ.
+6. Send `ALIGN END`. The firmware reverses the accumulated nudge, keeps the
+   magnet off, responds `ALIGN ENDED`, and leaves the carriage unhomed.
+
+The position journal is marked unknown before the first nudge; a link loss,
+reset, or power loss therefore cannot make the offset position appear
+calibrated. `ALIGN STATUS` lets a reconnecting app recover the current session.
+`STOP` and `!` remain available, but both also require subsequent calibration.
+Head-only mode never energizes the magnet. Marker mode pulses it only while an
+individual nudge is moving and remains subject to the global magnet timeout.
+
+Calculate file and rank scale from two different files/ranks, translate either
+point back to the e6 origin, divide the final actual values by `microsteps`, and
+edit the source coefficients multiplying `MOTOR_MICROSTEPS`. Both official apps
+perform this calculation and display copyable lines.
 
 ## Developer motion tools
 
 `DEVPATH` advertises `PATH e2e4`, a developer-only, magnet-free command that
-exercises the production straight or knight piece planner without changing
+exercises the production queen-aligned piece planner without changing
 sensor state. It has the same calibration, fault, idle-state, and emergency-halt
 guards as direct movement and returns `MOVED PATH e2e4`. It is intended for the
 repository endurance tool, not normal game clients.
@@ -193,4 +239,6 @@ Use at most one outstanding request. Alternate `TELEM` and `BOARD` every 1-10
 seconds while idle. Pause normal polling during any route transaction or after
 `MOVING`, and resume only after its terminal `MOVED HEAD`, `MOVED PIECE`,
 `MOVED PATH`, `MOVED JOG`, `DONE`, `PLAN CANCELLED`, `ERR`, `STOPPED`, or
-`ESTOP`. Precise motor loops intentionally delay ordinary responses.
+`ESTOP`. During alignment, allow only serialized `NUDGE`, `ALIGN STATUS`,
+`ALIGN END`, `STOP`, and `!` traffic. Precise motor loops intentionally delay
+ordinary responses.

@@ -24,6 +24,23 @@ data class Telemetry(
     val uptimeSeconds: Long,
 )
 
+data class GeometrySettings(
+    val protocol: String,
+    val filePitch: Int,
+    val rankPitch: Int,
+    val blackPark: Int,
+    val whitePark: Int,
+    val microsteps: Int,
+)
+
+data class AlignmentStatus(
+    val state: String,
+    val square: String? = null,
+    val magneticMarker: Boolean = false,
+    val offsetX: Int = 0,
+    val offsetY: Int = 0,
+)
+
 data class DragRoute(
     val source: Int,
     val target: Int,
@@ -42,11 +59,11 @@ object Protocol {
     const val SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
     const val CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
-    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST")
+    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
     private val motion = setOf(
         "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-        "PLAN", "DRAG", "COMMIT",
+        "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
     )
 
     fun parseEvent(line: String): BoardEvent {
@@ -74,6 +91,36 @@ object Protocol {
         )
     }
 
+    fun parseGeometry(event: BoardEvent): GeometrySettings {
+        require(event.kind == "GEOMETRY" && event.args.size == 6) { "Malformed GEOMETRY: ${event.raw}" }
+        val values = event.args.drop(1).map(String::toIntOrNull)
+        require(values.all { it != null && it > 0 }) { "Malformed GEOMETRY: ${event.raw}" }
+        val numeric = values.filterNotNull()
+        return GeometrySettings(event.args[0], numeric[0], numeric[1], numeric[2], numeric[3], numeric[4])
+    }
+
+    fun parseAlignment(event: BoardEvent): AlignmentStatus {
+        require(event.kind == "ALIGN" && event.args.isNotEmpty()) { "Malformed ALIGN: ${event.raw}" }
+        val state = event.args[0].uppercase()
+        if (state in setOf("IDLE", "ENDED")) {
+            require(event.args.size == 1) { "Malformed ALIGN: ${event.raw}" }
+            return AlignmentStatus(state)
+        }
+        require(state in setOf("READY", "ACTIVE") && event.args.size == 5) {
+            "Malformed ALIGN: ${event.raw}"
+        }
+        val square = event.args[1].lowercase()
+        squareIndex(square)
+        val mode = event.args[2].uppercase()
+        require(mode == "H" || mode == "M") { "Malformed ALIGN mode: ${event.raw}" }
+        val x = event.args[3].toIntOrNull()
+        val y = event.args[4].toIntOrNull()
+        require(x != null && y != null && x in -60..60 && y in -60..60) {
+            "Malformed ALIGN offsets: ${event.raw}"
+        }
+        return AlignmentStatus(state, square, mode == "M", x, y)
+    }
+
     /** Square indexes use a1=0 through h8=63, matching chesslib's Square ordinal. */
     fun parseBoardHex(value: String): Set<Int> {
         val compact = value.trim().uppercase()
@@ -99,6 +146,7 @@ object Protocol {
     fun classifyCommand(line: String): CommandRisk {
         val stripped = line.trim()
         if (stripped.startsWith("!")) return CommandRisk.EMERGENCY
+        if (stripped.equals("ALIGN STATUS", ignoreCase = true)) return CommandRisk.READ_ONLY
         val command = stripped.substringBefore(' ').uppercase()
         return when (command) {
             in readOnly -> CommandRisk.READ_ONLY
@@ -119,6 +167,19 @@ object Protocol {
         return "HEAD $square"
     }
 
+    fun alignmentCommand(square: String, magneticMarker: Boolean = false): String {
+        val normalized = square.lowercase()
+        headCommand(normalized)
+        return "ALIGN $normalized ${if (magneticMarker) "M" else "H"}"
+    }
+
+    fun nudgeCommand(axis: Char, sign: Char): String {
+        val normalizedAxis = axis.uppercaseChar()
+        require(normalizedAxis == 'X' || normalizedAxis == 'Y') { "Invalid nudge axis: $axis" }
+        require(sign == '+' || sign == '-') { "Invalid nudge sign: $sign" }
+        return "NUDGE $normalizedAxis$sign"
+    }
+
     fun pieceCommand(from: String, to: String): String {
         require(from != to && from.matches(Regex("[a-h][1-8]")) && to.matches(Regex("[a-h][1-8]"))) {
             "Invalid manual piece move: $from$to"
@@ -135,6 +196,15 @@ object Protocol {
     fun squareName(square: Int): String {
         require(square in 0..63) { "Square is outside the board: $square" }
         return "${'a' + square % 8}${square / 8 + 1}"
+    }
+
+    fun queenAligned(source: Int, target: Int): Boolean {
+        squareName(source)
+        squareName(target)
+        val fileDelta = kotlin.math.abs(source % 8 - target % 8)
+        val rankDelta = kotlin.math.abs(source / 8 - target / 8)
+        return source != target &&
+            (fileDelta == 0 || rankDelta == 0 || fileDelta == rankDelta)
     }
 
     fun splitRouteRuns(path: List<Int>): List<List<Int>> {

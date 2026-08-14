@@ -64,11 +64,11 @@ data class MonitorState(
             0 to "Starting", 1 to "Main menu / idle", 2 to "Position recovery", 3 to "Calibrating",
             4 to "Checking start position", 5 to "Human playing White", 6 to "Human playing Black",
             7 to "Waiting for undo", 8 to "Checking computer move", 9 to "Game over",
-            10 to "Motion fault", 11 to "Service menu", 12 to "Sensor service",
-            13 to "Service: select file", 14 to "Service: select rank", 15 to "Remote setup check",
-            16 to "Remote human turn", 17 to "Waiting for computer move", 18 to "Remote undo required",
-            19 to "Checking remote move", 20 to "Waiting for promotion piece",
-            21 to "Direct app movement", 22 to "Verified route transaction",
+            10 to "Motion fault", 11 to "Reserved", 12 to "Board alignment",
+            13 to "Remote setup check", 14 to "Remote human turn", 15 to "Waiting for computer move",
+            16 to "Remote undo required", 17 to "Checking remote move",
+            18 to "Waiting for promotion piece", 19 to "Direct app movement",
+            20 to "Verified route transaction",
         )
         private val sequenceGuidance = mapOf(
             1 to "Board is idle and ready for safe diagnostics or a new game.",
@@ -77,13 +77,14 @@ data class MonitorState(
             4 to "Arrange all pieces in their starting squares and follow the LCD.",
             7 to "Restore the prior physical position, then confirm on the board.",
             10 to "Motion stopped. Inspect locally before fault recovery.",
-            15 to "Arrange starting pieces and press physical Button A.",
-            16 to "Make your move, then press physical Button A.",
-            17 to "The phone may send the next legal computer move.",
-            18 to "Invalid move: restore the physical position.",
-            20 to "Replace the promoted pawn, then press physical Button A.",
-            21 to "The app requested direct movement. Keep hands clear.",
-            22 to "The phone is executing a sensor-verified route. Keep hands clear.",
+            12 to "The app is measuring board alignment. Keep hands clear and follow its prompts.",
+            13 to "Arrange starting pieces and press physical Button A.",
+            14 to "Make your move, then press physical Button A.",
+            15 to "The phone may send the next legal computer move.",
+            16 to "Invalid move: restore the physical position.",
+            18 to "Replace the promoted pawn, then press physical Button A.",
+            19 to "The app requested direct movement. Keep hands clear.",
+            20 to "The phone is executing a sensor-verified route. Keep hands clear.",
         )
     }
 }

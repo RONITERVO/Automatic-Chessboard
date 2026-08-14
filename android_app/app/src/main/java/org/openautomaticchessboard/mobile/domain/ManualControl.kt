@@ -1,6 +1,7 @@
 package org.openautomaticchessboard.mobile.domain
 
 import org.openautomaticchessboard.mobile.protocol.Telemetry
+import org.openautomaticchessboard.mobile.protocol.Protocol
 
 enum class ManualMoveMode { HEAD_ONLY, MOVE_PIECE }
 
@@ -24,6 +25,10 @@ data class ManualSelection(
                 source == null -> SelectionResult(copy(source = square, target = null), "Piece selected at ${squareName(square)}; choose an empty destination")
                 square == source -> SelectionResult(copy(source = null, target = null), "Source cleared; choose a piece")
                 occupied != null && square in occupied -> SelectionResult(this, "Destination ${squareName(square)} is occupied")
+                !Protocol.queenAligned(source, square) -> SelectionResult(
+                    this,
+                    "Choose a destination on the same file, rank, or diagonal",
+                )
                 else -> SelectionResult(copy(target = square), "Move ${squareName(source)} to ${squareName(square)}")
             }
         }
@@ -32,7 +37,9 @@ data class ManualSelection(
     fun command(): String? = when (mode) {
         ManualMoveMode.HEAD_ONLY -> target?.let { "HEAD ${squareName(it)}" }
         ManualMoveMode.MOVE_PIECE -> if (source != null && target != null) {
-            "PIECE ${squareName(source)}${squareName(target)}"
+            if (Protocol.queenAligned(source, target)) {
+                "PIECE ${squareName(source)}${squareName(target)}"
+            } else null
         } else null
     }
 

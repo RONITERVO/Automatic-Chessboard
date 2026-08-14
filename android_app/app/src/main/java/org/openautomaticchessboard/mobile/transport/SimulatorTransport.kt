@@ -15,10 +15,15 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
     private var trolleyY = 6
     private var homed = false
     private var fault = false
+    private var remoteMode = false
     private var sequence = 1
     private var plan: PlanRouteRequest? = null
     private var planInitial: Set<Int>? = null
     private var planExpected: Set<Int>? = null
+    private var alignmentSquare: String? = null
+    private var alignmentMarker = false
+    private var alignmentX = 0
+    private var alignmentY = 0
 
     override fun start() {
         isConnected = true
@@ -33,24 +38,36 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 fault = true
                 homed = false
                 clearPlan()
+                clearAlignment()
                 trolleyX = 0
                 trolleyY = 0
                 sequence = 10
+                remoteMode = false
                 emit("ESTOP REMOTE", 30)
             }
             "PING", "HELLO" -> emit("PONG ACB1", 30)
-            "INFO" -> emit("INFO ACB2 4.3.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE", 30)
-            "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0}", 30)
-            "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (sequence >= 15) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
+            "INFO" -> emit("INFO ACB2 4.5.0-SIM BOARD,TELEM,REMOTE,ESTOP,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,ALIGN", 30)
+            "STATUS" -> emit("STATUS ACB1 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0}", 30)
+            "TELEM" -> emit("TELEM ACB2 $sequence ${if (homed) 1 else 0} ${if (remoteMode) 1 else 0} ${if (fault) 1 else 0} 0 $trolleyX $trolleyY 1 1 1023 1536 42", 30)
             "BOARD" -> emit("BOARD ${Protocol.boardHexFromSquares(occupied)}", 30)
+            "GEOMETRY" -> emit("GEOMETRY ACB1 188 188 354 871 1", 30)
+            "ALIGN STATUS" -> emit(alignmentStatus(), 30)
             "BTTEST" -> emit("BT SKIP SIMULATOR", 30)
             "STOP" -> {
                 clearPlan()
+                clearAlignment()
+                remoteMode = false
                 sequence = 1
                 emit("STOPPED", 30)
             }
-            "REJECT" -> emit("UNDO REQUIRED", 30)
-            "ACCEPT" -> emit("TURN COMPUTER", 30)
+            "REJECT" -> {
+                sequence = 16
+                emit("UNDO REQUIRED", 30)
+            }
+            "ACCEPT" -> {
+                sequence = 15
+                emit("TURN COMPUTER", 30)
+            }
             "CALIBRATE" -> {
                 if (fault) emit("ERR FAULT", 30) else {
                     sequence = 3
@@ -67,10 +84,11 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     occupied.addAll(MonitorStateDefaults.START_SQUARES)
                     clearPlan()
                     val humanSide = command.substringAfter(' ').take(1)
+                    remoteMode = true
                     homed = true
                     trolleyX = 5
                     trolleyY = 6
-                    sequence = if (humanSide == "W") 16 else 17
+                    sequence = if (humanSide == "W") 14 else 15
                     emit("SETUP PRESS A", 30)
                     emit("SESSION $humanSide", 60)
                     emit(if (humanSide == "W") "TURN HUMAN" else "TURN COMPUTER", 120)
@@ -80,6 +98,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     val move = fields.getOrNull(1).orEmpty()
                     emit("MOVING $move", 50)
                     applyMove(move, fields.getOrNull(2))
+                    sequence = 14
                     emit("DONE $move", 250)
                 }
                 command.startsWith("PLAN ") -> beginPlan(command)
@@ -93,6 +112,48 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                         emit("MOVED HEAD $square", 220)
                     }
                 }
+                command.matches(Regex("ALIGN [a-h][1-8] [HM]")) -> {
+                    val square = command.substring(6, 8)
+                    val mode = command.last()
+                    when {
+                        fault -> emit("ERR FAULT", 30)
+                        sequence != 1 || !homed -> emit("ERR ALIGN", 30)
+                        else -> {
+                            emit("ALIGNING $square", 30)
+                            trolleyX = square[0] - 'a' + 1
+                            trolleyY = square[1] - '0'
+                            homed = false
+                            sequence = 12
+                            alignmentSquare = square
+                            alignmentMarker = mode == 'M'
+                            alignmentX = 0
+                            alignmentY = 0
+                            emit("ALIGN READY $square $mode 0 0", 220)
+                        }
+                    }
+                }
+                command.matches(Regex("NUDGE [XY][+-]")) -> {
+                    val axis = command[6]
+                    val delta = if (command[7] == '+') 1 else -1
+                    if (sequence != 12 || alignmentSquare == null) emit("ERR ALIGN", 30)
+                    else {
+                        val proposed = (if (axis == 'X') alignmentX else alignmentY) + delta
+                        if (proposed !in -60..60) emit("ERR LIMIT", 30)
+                        else {
+                            if (axis == 'X') alignmentX = proposed else alignmentY = proposed
+                            emit(alignmentStatus(), 30)
+                        }
+                    }
+                }
+                command == "ALIGN END" -> {
+                    if (sequence != 12 || alignmentSquare == null) emit("ERR ALIGN", 30)
+                    else {
+                        clearAlignment()
+                        sequence = 1
+                        homed = false
+                        emit("ALIGN ENDED", 30)
+                    }
+                }
                 command.matches(Regex("PIECE [a-h][1-8][a-h][1-8]")) -> {
                     val move = command.substringAfter(' ')
                     val from = square(move, 0); val to = square(move, 2)
@@ -101,6 +162,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                         !homed -> emit("ERR CALIBRATE", 30)
                         from !in occupied -> emit("ERR SOURCE EMPTY", 30)
                         to in occupied -> emit("ERR TARGET FULL", 30)
+                        !Protocol.queenAligned(from, to) -> emit("ERR BAD ROUTE", 30)
                         else -> {
                             emit("MOVING PIECE $move", 30)
                             occupied.remove(from); occupied.add(to)
@@ -126,7 +188,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
 
     private fun beginPlan(command: String) {
         if (fault) { emit("ERR FAULT", 30); return }
-        if (!homed || sequence != 17 || plan != null) { emit("ERR NOT READY", 30); return }
+        if (!homed || sequence != 15 || plan != null) { emit("ERR NOT READY", 30); return }
         runCatching {
             val request = Protocol.parsePlanCommand(command)
             val from = Protocol.squareIndex(request.uci.take(2))
@@ -150,7 +212,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             planInitial = initial
             planExpected = expected
             request.captureSquare?.let(occupied::remove)
-            sequence = 22
+            sequence = 20
             emit("PLAN READY", if (request.captureSquare == null) 30 else 180)
         }.onFailure { emit("ERR BAD PLAN", 30) }
     }
@@ -183,12 +245,12 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             when (occupied.toSet()) {
                 planInitial -> {
                     clearPlan()
-                    sequence = 17
+                    sequence = 15
                     emit("PLAN CANCELLED", 30)
                 }
                 planExpected -> {
                     clearPlan()
-                    sequence = 16
+                    sequence = 14
                     emit("DONE ${request.uci.take(4)}", 30)
                     if (request.mode in "qrbn") emit("PROMOTE ${request.mode}", 80)
                 }
@@ -201,6 +263,19 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
         plan = null
         planInitial = null
         planExpected = null
+    }
+
+    private fun alignmentStatus(): String {
+        val square = alignmentSquare ?: return "ALIGN IDLE"
+        if (sequence != 12) return "ALIGN IDLE"
+        return "ALIGN ACTIVE $square ${if (alignmentMarker) "M" else "H"} $alignmentX $alignmentY"
+    }
+
+    private fun clearAlignment() {
+        alignmentSquare = null
+        alignmentMarker = false
+        alignmentX = 0
+        alignmentY = 0
     }
 
     private fun applyMove(uci: String, flag: String?) {

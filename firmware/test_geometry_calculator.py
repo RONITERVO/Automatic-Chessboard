@@ -27,6 +27,17 @@ class GeometryCalculatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             calculate((1, 2, 0, 0), (8, 2, 0, 0), 188, 188, 354, 871)
 
+    def test_converts_actual_steps_back_to_source_values(self):
+        values = calculate(
+            (1, 2, 2, 0), (8, 7, 30, -10),
+            376, 376, 708, 1742, microsteps=2,
+        )
+        self.assertEqual(values, (190, 187, 358, 880))
+
+    def test_rejects_invalid_microsteps(self):
+        with self.assertRaises(ValueError):
+            calculate((1, 2, 0, 0), (8, 7, 0, 0), 188, 188, 354, 871, microsteps=0)
+
 
 if __name__ == "__main__":
     unittest.main()

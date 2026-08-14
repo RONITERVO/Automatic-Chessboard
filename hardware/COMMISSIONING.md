@@ -50,13 +50,15 @@ Leave driver `VMOT`, motors, and magnet 24 V disconnected.
 4. Connect the Windows app by BLE or, with external power removed, by USB.
 5. Run **Diagnostics -> Run safe diagnostics**. Connecting and diagnostics must
    cause no motor or magnet activity.
-6. Verify the monitor reports firmware 4.3.0 and fresh telemetry.
+6. Verify the monitor reports firmware 4.5.0 and fresh telemetry.
 
 For a differently sized or positioned playing field, finish normal switch and
-motion commissioning first, then use **Service > Geometry** as documented in
-`firmware/README.md`. It requires only a visible magnetic marker; reed sensors,
-a calibration sheet, a camera, and either companion app are optional. Rebuild
-and upload the reported constants, calibrate, then verify separated squares.
+motion commissioning first, then use **Board alignment** on Windows or **Move >
+Align board** on Android as documented in `firmware/README.md`. Head-only visual
+alignment is the default; a visible magnetic marker is optional. Reed sensors,
+a calibration sheet, and a camera are not required. Rebuild and upload the
+reported constants, calibrate, then verify separated squares. Terminal-only
+builders can use the documented `GEOMETRY`, `ALIGN`, and `NUDGE` commands.
 
 ## Stage C: switches and 64 sensors
 
@@ -116,8 +118,16 @@ Keep motor VMOT disconnected and secure the carriage away from steel objects.
    it, then the second approach finds the A6/black switch.
 5. Confirm the carriage parks at e6 without striking an end stop.
 6. Close the surface and test empty-board sensor stability.
-7. Test one piece on short straight moves, then diagonal and knight paths.
-8. Optionally run the connected magnet-free endurance test documented in
+7. Test one piece on direct horizontal, vertical, and diagonal moves. Test a
+   knight through connected Play and verify it becomes separate straight
+   square-centre drags; no continuous knight or S-shaped carry is permitted.
+   Place a stationary piece on either shared corner of a diagonal and verify
+   standalone play requests a manual move without energizing the magnet.
+8. Test an automatic capture first with its direct lower-left boundary lane
+   empty, then with that lane blocked but a vertically reachable lane clear.
+   Verify a fully blocked exit requests the displayed move manually and causes
+   no capture motion.
+9. Optionally run the connected magnet-free endurance test documented in
    `../firmware/README.md`, with an empty board and someone beside the cutoff.
 
 ## Stop conditions

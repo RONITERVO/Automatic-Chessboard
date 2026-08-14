@@ -72,4 +72,17 @@ class MonitorStateTest {
         assertEquals("Sensor data stale", base.health(now).first)
         assertEquals(HealthLevel.WARN, base.copy(sensorUpdatedMs = now, lastError = "sample error").health(now).second)
     }
+
+    @Test fun currentFirmwareStatesHaveStableNames() {
+        fun state(sequence: Int) = MonitorState(
+            telemetry = Telemetry(
+                "ACB2", sequence, true, false, false, false, 5, 6,
+                true, true, 1023, 800, 1,
+            ),
+        ).sequenceName()
+        assertEquals("Board alignment", state(12))
+        assertEquals("Direct app movement", state(19))
+        assertEquals("Verified route transaction", state(20))
+        assertEquals("Unknown state 22", state(22))
+    }
 }
