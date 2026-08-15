@@ -1,7 +1,16 @@
 import time
 import unittest
 
-from transports import SimulatorTransport
+from protocol import hello_command
+from transports import SimulatorTransport as _SimulatorTransport
+
+
+class SimulatorTransport(_SimulatorTransport):
+    """Exercise the simulator as a matching current companion."""
+
+    def start(self):
+        super().start()
+        self.send(hello_command())
 
 
 class SimulatorTests(unittest.TestCase):
@@ -13,6 +22,49 @@ class SimulatorTests(unittest.TestCase):
                 return
             time.sleep(0.01)
         self.fail(f"Timed out waiting for simulator output: {lines}")
+
+    def test_version_mismatch_blocks_motion_but_not_inspection_or_stop(self):
+        lines = []
+        transport = _SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("HELLO 4.8.0")
+        transport.send("CALIBRATE")
+        transport.send("INFO")
+        transport.send("STOP")
+        self.wait_for(
+            lines,
+            lambda values: values.count("ERR VERSION") >= 2 and
+            "INFO ACB3 5.0.1 SIM" in values and "STOPPED" in values,
+        )
+        self.assertNotIn("CALIBRATED e6", lines)
+        transport.close()
+
+    def test_handshake_is_case_sensitive_like_firmware(self):
+        lines = []
+        transport = _SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("hello 5.0.1")
+        transport.send("CALIBRATE")
+        self.wait_for(lines, lambda values: values.count("ERR VERSION") >= 2)
+        self.assertNotIn("CALIBRATED e6", lines)
+        transport.close()
+
+    def test_remove_fails_closed_when_faulted_or_unhomed(self):
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport._plan_move = object()
+        transport._plan_capture = 35
+        transport._physical_squares.add(35)
+        transport._homed = False
+        transport.send("REMOVE")
+        self.wait_for(lines, lambda values: "ERR CALIBRATE" in values)
+        transport._homed = True
+        transport._fault = True
+        transport.send("REMOVE")
+        self.wait_for(lines, lambda values: "ERR FAULT" in values)
+        self.assertIn(35, transport._physical_squares)
+        transport.close()
 
     def test_safe_monitor_commands(self):
         lines = []
@@ -27,11 +79,37 @@ class SimulatorTests(unittest.TestCase):
         transport.send("BOARD")
         self.wait_for(lines, lambda values: all(
             any(value.startswith(prefix) for value in values)
-            for prefix in ("INFO ACB2", "TELEM ACB2", "BOARD ")
+            for prefix in ("INFO ACB3", "TELEM ACB3", "BOARD ")
         ))
-        info = next(value for value in lines if value.startswith("INFO ACB2"))
-        self.assertIn("SENSORFRAME", info)
-        self.assertIn("PLANROUTE", info)
+        info = next(value for value in lines if value.startswith("INFO ACB3"))
+        self.assertEqual(info, "INFO ACB3 5.0.1 SIM")
+        transport.close()
+
+    def test_app_board_mode_routes_both_sides_without_reed_events(self):
+        from protocol import commit_plan_command, drag_command, parse_board_hex, plan_command
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport.send("START W APP")
+        self.wait_for(lines, lambda values: "SESSION W" in values and "TURN HUMAN" in values)
+        self.assertNotIn("SETUP PRESS A", lines)
+
+        for uci, path in (("e2e4", (12, 20, 28)), ("e7e5", (52, 44, 36))):
+            transport.send(plan_command(uci))
+            self.wait_for(lines, lambda values: values.count("PLAN READY") >= (1 if uci == "e2e4" else 2))
+            transport.send(drag_command(path))
+            self.wait_for(lines, lambda values: f"MOVED PIECE {uci}" in values)
+            transport.send(commit_plan_command())
+            self.wait_for(lines, lambda values: f"DONE {uci}" in values)
+
+        transport.send("BOARD")
+        self.wait_for(lines, lambda values: any(value.startswith("BOARD ") for value in values))
+        occupied = parse_board_hex(next(value for value in reversed(lines) if value.startswith("BOARD ")).split()[1])
+        self.assertNotIn(12, occupied)
+        self.assertIn(28, occupied)
+        self.assertNotIn(52, occupied)
+        self.assertIn(36, occupied)
         transport.close()
 
     def test_emergency_halt(self):
@@ -50,9 +128,9 @@ class SimulatorTests(unittest.TestCase):
         transport.send("PIECE e2e4")
         transport.send("TELEM")
         self.wait_for(lines, lambda values: values.count("ERR FAULT") >= 3 and
-                      any(value.startswith("TELEM ACB2") for value in values))
+                      any(value.startswith("TELEM ACB3") for value in values))
         self.assertGreaterEqual(lines.count("ERR FAULT"), 3)
-        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         fields = telemetry.split()
         self.assertEqual(fields[2:9], ["10", "0", "0", "1", "0", "0", "0"])
         transport.close()
@@ -119,7 +197,7 @@ class SimulatorTests(unittest.TestCase):
 
     def test_capture_cannot_be_committed_before_main_piece_arrives(self):
         import chess
-        from protocol import commit_plan_command, plan_command
+        from protocol import commit_plan_command, plan_command, remove_command
 
         lines = []
         transport = SimulatorTransport(lines.append, lambda _status: None)
@@ -136,6 +214,8 @@ class SimulatorTests(unittest.TestCase):
         transport.send(plan_command("e4d5", chess.D5))
         self.wait_for(lines, lambda values: "PLAN READY" in values)
         self.assertIn("PLAN READY", lines)
+        transport.send(remove_command(chess.D5))
+        self.wait_for(lines, lambda values: "REMOVED" in values)
         transport.send(commit_plan_command())
         self.wait_for(lines, lambda values: "ERR PLAN INCOMPLETE" in values)
         self.assertIn("ERR PLAN INCOMPLETE", lines)
@@ -168,18 +248,18 @@ class SimulatorTests(unittest.TestCase):
         transport.send("START B")
         self.wait_for(lines, lambda values: "TURN COMPUTER" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB3") for value in values))
         active = parse_telemetry(parse_event(
-            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         ))
         self.assertEqual(active.sequence, 15)
         self.assertTrue(active.remote_mode)
         transport.send("STOP")
         self.wait_for(lines, lambda values: "STOPPED" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: sum(value.startswith("TELEM ACB2") for value in values) >= 2)
+        self.wait_for(lines, lambda values: sum(value.startswith("TELEM ACB3") for value in values) >= 2)
         idle = parse_telemetry(parse_event(
-            next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+            next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         ))
         self.assertEqual(idle.sequence, 1)
         self.assertFalse(idle.remote_mode)
@@ -208,8 +288,8 @@ class SimulatorTests(unittest.TestCase):
         transport.send("ALIGN END")
         self.wait_for(lines, lambda values: "ALIGN ENDED" in values)
         transport.send("TELEM")
-        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB2") for value in values))
-        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB2"))
+        self.wait_for(lines, lambda values: any(value.startswith("TELEM ACB3") for value in values))
+        telemetry = next(value for value in reversed(lines) if value.startswith("TELEM ACB3"))
         self.assertEqual(telemetry.split()[3], "0")
         transport.close()
 
@@ -241,7 +321,9 @@ class SimulatorTests(unittest.TestCase):
                 board = chess.Board(fen)
                 move = chess.Move.from_uci(uci)
                 self.assertIn(move, board.legal_moves)
-                plan = planner.plan(planning_problem_from_chess(board, move))
+                plan = planner.plan(planning_problem_from_chess(
+                    board, move, deferred_capture=True,
+                ))
                 lines = []
                 transport = SimulatorTransport(lines.append, lambda _status: None)
                 transport.start()
@@ -256,6 +338,7 @@ class SimulatorTests(unittest.TestCase):
                     expected = (
                         "PLAN READY" if command.startswith("PLAN ") else
                         f"MOVED PIECE {command.split()[1]}" if command.startswith("DRAG ") else
+                        "REMOVED" if command == "REMOVE" else
                         acknowledgement if command == "COMMIT" else
                         "BOARD "
                     )
@@ -273,6 +356,48 @@ class SimulatorTests(unittest.TestCase):
                     self.assertIn("PROMOTE q", lines)
                 self.assertEqual(set(transport._board.piece_map()), transport._physical_squares)
                 transport.close()
+
+    def test_blocked_knight_capture_is_cleared_removed_and_completed(self):
+        import chess
+        from routing import PlannerConfig, RearrangementPlanner, planning_problem_from_chess
+
+        board = chess.Board()
+        for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
+            board.push_uci(uci)
+        move = chess.Move.from_uci("c6e5")
+        plan = RearrangementPlanner(
+            PlannerConfig(time_limit_s=5.0, max_nodes=500_000)
+        ).plan(planning_problem_from_chess(
+            board, move, deferred_capture=True, edge_capture_exit=True,
+        ))
+
+        self.assertEqual(plan.temporary_piece_count, 0)
+        self.assertNotIn("DRAG a4a5", plan.protocol_commands())
+
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+        transport._board = board.copy(stack=False)
+        transport._physical_squares = set(board.piece_map())
+        transport._sequence = 15
+        transport._remote_mode = True
+        transport._homed = True
+        for command in plan.protocol_commands():
+            baseline = len(lines)
+            transport.send(command)
+            expected = (
+                "PLAN READY" if command.startswith("PLAN ") else
+                f"MOVED PIECE {command.split()[1]}" if command.startswith("DRAG ") else
+                "REMOVED" if command == "REMOVE" else
+                "DONE c6e5" if command == "COMMIT" else "BOARD "
+            )
+            self.wait_for(lines, lambda values, expected=expected, baseline=baseline: any(
+                value == expected or value.startswith(expected) for value in values[baseline:]
+            ))
+
+        self.assertFalse(any(line.startswith("ERR ") for line in lines), lines)
+        self.assertEqual(set(transport._board.piece_map()), transport._physical_squares)
+        transport.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 4.5.0.
+ * Automatic Chessboard firmware 5.0.1.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "4.5.0"
+#define FIRMWARE_VERSION "5.0.1"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -49,6 +49,7 @@ byte trolley_coordinate_Y = CALIBRATION_PARK_RANK;
 boolean trolley_homed = false;
 boolean motion_fault = false;
 boolean magnet_state = false;
+int minimum_free_ram = 32767;
 unsigned long magnet_on_since = 0;
 char mov[5] = {0, 0, 0, 0, 0};
 byte sequence = start_up;
@@ -69,11 +70,15 @@ const byte HOST_INPUT_SIZE = 32;
 struct HostInputBuffer {
   char data[HOST_INPUT_SIZE];
   byte length;
-  boolean overflowed;
+  byte flags;
 };
-HostInputBuffer usb_host_input = {{0}, 0, false};
-HostInputBuffer bluetooth_host_input = {{0}, 0, false};
-boolean remote_mode = false;
+const byte HOST_INPUT_OVERFLOWED = 1;
+const byte HOST_VERSION_AGREED = 2;
+HostInputBuffer usb_host_input = {{0}, 0, 0};
+HostInputBuffer bluetooth_host_input = {{0}, 0, 0};
+// 0=standalone, 1=reed-verified companion, 2=app-authoritative companion.
+// A byte replaces the former boolean without increasing global SRAM.
+byte remote_mode = 0;
 boolean remote_human_white = true;
 boolean remote_human_move_pending = false;
 volatile boolean remote_stop_requested = false;
@@ -195,7 +200,8 @@ void setup() {
 #endif
   sequence = main_menu;
   showMainMenu();
-  Serial.println(F("READY ACB1"));
+  Serial.print(F("READY "));
+  Serial.println(F(FIRMWARE_VERSION));
 }
 
 void loop() {
@@ -237,7 +243,10 @@ void loop() {
         delay(1000);
         sequence = after_calibration;
         if (sequence == setup_check) showSetupCheck();
-        else if (sequence == remote_setup_check) showRemoteSetupCheck();
+        else if (sequence == remote_setup_check) {
+          if (remote_mode == 2) beginRemoteSession();
+          else showRemoteSetupCheck();
+        }
         else showMainMenu();
       }
       else {
@@ -378,7 +387,8 @@ void loop() {
     case remote_promotion_wait:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
         Serial.println(F("PROMOTION OK"));
-        beginRemoteHumanTurn();
+        if (remote_mode == 2) waitForRemoteApp();
+        else beginRemoteHumanTurn();
       }
       else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
         stopRemoteSession();

@@ -9,6 +9,7 @@ from protocol import (
     commit_plan_command,
     drag_command,
     head_command,
+    hello_command,
     parse_board_hex,
     parse_drag_command,
     parse_event,
@@ -19,10 +20,11 @@ from protocol import (
     parse_telemetry,
     piece_command,
     plan_command,
-    play_command,
     queen_aligned,
+    remove_command,
     nudge_command,
     split_route_runs,
+    start_game_command,
 )
 
 
@@ -39,21 +41,33 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(lines.feed(b"\nPING\n"), ["PING"])
 
     def test_event_fields(self):
-        event = parse_event("STATUS ACB1 17 1 1")
-        self.assertEqual(event.kind, "STATUS")
-        self.assertEqual(event.args, ("ACB1", "17", "1", "1"))
+        event = parse_event("HELLO 5.0.1")
+        self.assertEqual(event.kind, "HELLO")
+        self.assertEqual(event.args, ("5.0.1",))
 
     def test_special_move_commands(self):
-        self.assertEqual(play_command("e1g1", castling=True), "PLAY e1g1 C")
-        self.assertEqual(play_command("e5d6", en_passant=True), "PLAY e5d6 E")
-        self.assertEqual(play_command("e7e8q"), "PLAY e7e8q")
+        self.assertEqual(start_game_command(True), "START W")
+        self.assertEqual(start_game_command(False, app_board=True), "START B APP")
+        self.assertEqual(hello_command(), "HELLO 5.0.1")
 
     def test_versioned_info_and_telemetry(self):
-        info = parse_info(parse_event("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP,BTTEST"))
-        self.assertEqual(info.firmware, "3.29")
+        info = parse_info(parse_event("INFO ACB3 5.0.1 NANO"))
+        self.assertEqual(info.firmware, "5.0.1")
+        self.assertTrue(info.compatible)
         self.assertIn("ESTOP", info.capabilities)
+        mks = parse_info(parse_event("INFO ACB3 5.0.1 MKS_GEN_L_V1"))
+        self.assertEqual(mks.protocol, "ACB3")
+        self.assertEqual(mks.firmware, "5.0.1")
+        self.assertEqual(mks.hardware, "MKS_GEN_L_V1")
+        self.assertTrue(mks.compatible)
+        legacy = parse_info(parse_event("INFO ACB2 4.8.0 NANO"))
+        self.assertEqual(legacy.protocol, "ACB2")
+        self.assertEqual(legacy.firmware, "4.8.0")
+        self.assertFalse(legacy.compatible)
+        with self.assertRaises(ValueError):
+            parse_info(parse_event("INFO ACB3 5.0.1 UNKNOWN"))
         telemetry = parse_telemetry(
-            parse_event("TELEM ACB2 17 1 1 0 0 5 6 1 1 1023 847 65")
+            parse_event("TELEM ACB3 17 1 1 0 0 5 6 1 1 1023 847 65")
         )
         self.assertEqual(telemetry.sequence, 17)
         self.assertTrue(telemetry.homed)
@@ -98,6 +112,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(king_castle, "PLAN e1g1k--")
         self.assertEqual(queen_castle, "PLAN e8c8c--")
         self.assertEqual(parse_plan_command(king_castle).castling_side, "kingside")
+        self.assertEqual(remove_command(35), "REMOVE")
         self.assertEqual(commit_plan_command(), "COMMIT")
 
     def test_planroute_rejects_wrap_bad_endpoint_and_malformed_header(self):
@@ -121,7 +136,7 @@ class ProtocolTests(unittest.TestCase):
     def test_command_risk(self):
         self.assertEqual(classify_command("TELEM"), CommandRisk.READ_ONLY)
         self.assertEqual(classify_command("SWTEST"), CommandRisk.READ_ONLY)
-        self.assertEqual(classify_command("PLAY e2e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("PLAY e2e4"), CommandRisk.UNKNOWN)
         self.assertEqual(classify_command("ACCEPT"), CommandRisk.MOTION)
         self.assertEqual(classify_command("!"), CommandRisk.EMERGENCY)
         self.assertEqual(classify_command("CALIBRATE"), CommandRisk.MOTION)
@@ -132,6 +147,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(classify_command("JOG W+"), CommandRisk.MOTION)
         self.assertEqual(classify_command("PLAN e2e4---"), CommandRisk.MOTION)
         self.assertEqual(classify_command("DRAG e2e4"), CommandRisk.MOTION)
+        self.assertEqual(classify_command("REMOVE"), CommandRisk.MOTION)
         self.assertEqual(classify_command("COMMIT"), CommandRisk.MOTION)
         self.assertEqual(classify_command("GEOMETRY"), CommandRisk.READ_ONLY)
         self.assertEqual(classify_command("ALIGN STATUS"), CommandRisk.READ_ONLY)

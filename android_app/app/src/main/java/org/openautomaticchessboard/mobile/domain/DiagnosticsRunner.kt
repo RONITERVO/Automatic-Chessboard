@@ -54,10 +54,10 @@ class DiagnosticsRunner(
     )
 
     private fun firmwareResult(state: MonitorState, responsesComplete: Boolean) = DiagnosticResult(
-        "firmware", "Firmware identity", if (state.firmware != null) "Pass" else "Fail",
+        "firmware", "Firmware identity", if (state.firmware?.compatible == true) "Pass" else "Fail",
         state.firmware?.let { "Firmware ${it.firmware}, ${it.protocol}" }
             ?: if (responsesComplete) "No INFO response" else "INFO request timed out",
-        state.firmware != null,
+        state.firmware?.compatible == true,
     )
 
     private fun telemetryResult(state: MonitorState, responsesComplete: Boolean) = DiagnosticResult(

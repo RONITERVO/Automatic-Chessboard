@@ -1,6 +1,6 @@
 """Read-only Nano/USB protocol probe that cannot request physical motion.
 
-Only PING, INFO, STATUS, TELEM, and BOARD are permitted by the command gate.
+Only the exact release handshake, INFO, TELEM, and BOARD are permitted by the command gate.
 BOARD payload shape is checked, but its occupancy is intentionally not judged:
 this test remains useful when reed switches or chess-piece magnets are absent.
 Opening a Nano port can reset some boards even with DTR held inactive; firmware
@@ -15,8 +15,10 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-SAFE_COMMANDS = frozenset({"PING", "INFO", "STATUS", "TELEM", "BOARD"})
-INFO_PATTERN = re.compile(r"^INFO ACB2 (\S+) ([A-Z0-9_,]+)$")
+SOFTWARE_VERSION = "5.0.1"
+HELLO_COMMAND = f"HELLO {SOFTWARE_VERSION}"
+SAFE_COMMANDS = frozenset({HELLO_COMMAND, "INFO", "TELEM", "BOARD"})
+INFO_PATTERN = re.compile(r"^INFO ACB3 (\S+) (NANO|MKS_GEN_L_V1)$")
 BOARD_PATTERN = re.compile(r"^BOARD ([0-9A-Fa-f]{16})$")
 
 
@@ -31,17 +33,17 @@ class SerialLike(Protocol):
 @dataclass(frozen=True)
 class ProbeResult:
     firmware: str
-    capabilities: frozenset[str]
+    hardware: str
     samples: int
     board_frames: frozenset[str]
     minimum_free_ram: int
 
 
-def parse_info(line: str) -> tuple[str, frozenset[str]]:
+def parse_info(line: str) -> tuple[str, str]:
     match = INFO_PATTERN.fullmatch(line.strip())
     if not match:
         raise ValueError(f"Malformed INFO response: {line!r}")
-    return match.group(1), frozenset(filter(None, match.group(2).split(",")))
+    return match.group(1), match.group(2)
 
 
 def parse_board(line: str) -> str:
@@ -53,7 +55,7 @@ def parse_board(line: str) -> str:
 
 def parse_telemetry(line: str) -> tuple[int, int]:
     fields = line.strip().split()
-    if len(fields) != 14 or fields[:2] != ["TELEM", "ACB2"]:
+    if len(fields) != 14 or fields[:2] != ["TELEM", "ACB3"]:
         raise ValueError(f"Malformed TELEM response: {line!r}")
     try:
         numbers = [int(value) for value in fields[2:]]
@@ -64,23 +66,6 @@ def parse_telemetry(line: str) -> tuple[int, int]:
     if magnet_on not in (0, 1) or free_ram < 0:
         raise ValueError(f"Out-of-range TELEM response: {line!r}")
     return magnet_on, free_ram
-
-
-def parse_status(line: str) -> None:
-    fields = line.strip().split()
-    if len(fields) != 5 or fields[:2] != ["STATUS", "ACB1"]:
-        raise ValueError(f"Malformed STATUS response: {line!r}")
-    try:
-        [int(value) for value in fields[2:]]
-    except ValueError as error:
-        raise ValueError(f"Malformed STATUS response: {line!r}") from error
-
-
-def firmware_version_tuple(value: str) -> tuple[int, int, int]:
-    match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", value)
-    if not match:
-        raise ValueError(f"Unrecognised firmware version: {value!r}")
-    return tuple(int(part or 0) for part in match.groups())
 
 
 class ReadOnlyNanoProbe:
@@ -106,25 +91,19 @@ class ReadOnlyNanoProbe:
                 return line
         raise TimeoutError(f"Timed out waiting for {prefix!r} after {command!r}")
 
-    def run(self, samples: int = 20, require_planroute: bool = True) -> ProbeResult:
+    def run(self, samples: int = 20) -> ProbeResult:
         if samples < 1:
             raise ValueError("samples must be positive")
-        if self.command("PING", "PONG ") != "PONG ACB1":
-            raise ValueError("Unexpected PING response")
-        firmware, capabilities = parse_info(self.command("INFO", "INFO "))
-        required = {"BOARD", "TELEM", "SENSORFRAME"}
-        if require_planroute:
-            required.add("PLANROUTE")
-        missing = required - capabilities
-        if missing:
+        hello = self.command(HELLO_COMMAND, "HELLO ")
+        if hello != HELLO_COMMAND:
             raise RuntimeError(
-                f"Firmware {firmware} is missing required capabilities: {sorted(missing)}"
+                f"Unexpected HELLO response {hello!r}; expected {HELLO_COMMAND!r}"
             )
-        minimum_version = (4, 1, 0) if require_planroute else (4, 0, 0)
-        if firmware_version_tuple(firmware) < minimum_version:
-            required_text = ".".join(str(value) for value in minimum_version)
-            raise RuntimeError(f"Firmware {firmware} is older than required {required_text}")
-        parse_status(self.command("STATUS", "STATUS "))
+        firmware, hardware = parse_info(self.command("INFO", "INFO "))
+        if firmware != SOFTWARE_VERSION:
+            raise RuntimeError(
+                f"Probe {SOFTWARE_VERSION} and firmware {firmware} do not match"
+            )
 
         frames: set[str] = set()
         minimum_free_ram: int | None = None
@@ -136,7 +115,7 @@ class ReadOnlyNanoProbe:
             minimum_free_ram = free_ram if minimum_free_ram is None else min(minimum_free_ram, free_ram)
         return ProbeResult(
             firmware=firmware,
-            capabilities=capabilities,
+            hardware=hardware,
             samples=samples,
             board_frames=frozenset(frames),
             minimum_free_ram=minimum_free_ram or 0,
@@ -170,11 +149,6 @@ def main() -> int:
         action="store_true",
         help="allow the USB serial adapter's ordinary DTR reset; still sends only read-only commands",
     )
-    parser.add_argument(
-        "--accept-legacy",
-        action="store_true",
-        help="diagnose firmware 4.0 without PLANROUTE; never use this to pass release validation",
-    )
     args = parser.parse_args()
     if args.settle_seconds < 0:
         parser.error("--settle-seconds cannot be negative")
@@ -182,10 +156,7 @@ def main() -> int:
     connection = open_serial(args.port, allow_reset=args.allow_reset)
     try:
         time.sleep(args.settle_seconds)
-        result = ReadOnlyNanoProbe(connection).run(
-            args.samples,
-            require_planroute=not args.accept_legacy,
-        )
+        result = ReadOnlyNanoProbe(connection).run(args.samples)
     finally:
         connection.close()
     print(

@@ -36,6 +36,7 @@ data class MonitorState(
             sensorSquares != null && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
                 "Physical/logical position differs" to HealthLevel.WARN
             firmware == null -> "Firmware identity unavailable" to HealthLevel.WARN
+            !firmware.compatible -> "App/firmware version mismatch" to HealthLevel.BAD
             "TELEM" in firmware.capabilities && telemetry == null -> "Waiting for telemetry" to HealthLevel.WARN
             "BOARD" in firmware.capabilities && sensorSquares == null -> "Waiting for sensors" to HealthLevel.WARN
             "BOARD" in firmware.capabilities && sensorAge != null && sensorAge > 12 ->

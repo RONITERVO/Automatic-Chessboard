@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+SOFTWARE_VERSION = "5.0.1"
+PROTOCOL_VERSION = "ACB3"
+CURRENT_CAPABILITIES = frozenset({
+    "BOARD", "TELEM", "REMOTE", "ESTOP", "BTTEST", "SWTEST", "CALIBRATE",
+    "MANUAL", "SENSORFRAME", "PLANROUTE", "REMOVE", "EDGEEXIT", "APPBOARD",
+    "DEVPATH", "DEVJOG", "ALIGN",
+})
+
 
 @dataclass(frozen=True)
 class BoardEvent:
@@ -17,7 +25,12 @@ class BoardEvent:
 class FirmwareInfo:
     protocol: str
     firmware: str
+    hardware: str
     capabilities: frozenset[str]
+
+    @property
+    def compatible(self) -> bool:
+        return self.protocol == PROTOCOL_VERSION and self.firmware == SOFTWARE_VERSION
 
 
 @dataclass(frozen=True)
@@ -65,14 +78,14 @@ class CommandRisk(Enum):
 
 
 READ_ONLY_COMMANDS = frozenset({
-    "PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY",
+    "HELLO", "INFO", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY",
 })
 CONTROL_COMMANDS = frozenset({"STOP", "REJECT", "GAMEOVER"})
 # ACCEPT can cause the companion to request the following engine move, so it is
 # guarded with commands that move directly rather than treated as harmless state.
 MOTION_COMMANDS = frozenset({
-    "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-    "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
+    "START", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
+    "PLAN", "DRAG", "REMOVE", "COMMIT", "ALIGN", "NUDGE",
 })
 
 
@@ -109,12 +122,17 @@ def parse_event(line: str) -> BoardEvent:
 
 
 def parse_info(event: BoardEvent) -> FirmwareInfo:
-    if event.kind != "INFO" or len(event.args) < 2:
+    if event.kind != "INFO" or len(event.args) != 3:
         raise ValueError(f"Not an INFO event: {event.raw!r}")
-    capabilities = frozenset(
-        item.strip().upper() for item in " ".join(event.args[2:]).split(",") if item.strip()
+    if event.args[2] not in {"NANO", "MKS_GEN_L_V1", "SIM"}:
+        raise ValueError(f"Unknown INFO hardware profile: {event.raw!r}")
+    return FirmwareInfo(
+        event.args[0], event.args[1], event.args[2], CURRENT_CAPABILITIES
     )
-    return FirmwareInfo(event.args[0], event.args[1], capabilities)
+
+
+def hello_command() -> str:
+    return f"HELLO {SOFTWARE_VERSION}"
 
 
 def parse_telemetry(event: BoardEvent) -> Telemetry:
@@ -222,11 +240,8 @@ def _normalize_uci(uci: str) -> str:
     return text
 
 
-def play_command(uci: str, *, castling: bool = False,
-                 en_passant: bool = False) -> str:
-    normalized = _normalize_uci(uci)
-    flag = "C" if castling else "E" if en_passant else ""
-    return f"PLAY {normalized}{' ' + flag if flag else ''}"
+def start_game_command(human_white: bool, *, app_board: bool = False) -> str:
+    return f"START {'W' if human_white else 'B'}{' APP' if app_board else ''}"
 
 
 def head_command(square: str) -> str:
@@ -327,6 +342,13 @@ def drag_command(path: tuple[int, ...] | list[int]) -> str:
         raise ValueError("One DRAG command must be a single straight run")
     run = runs[0]
     return f"DRAG {_square_text(run[0])}{_square_text(run[-1])}"
+
+
+def remove_command(capture_square: int | None) -> str:
+    if capture_square is None:
+        raise ValueError("REMOVE requires a captured square")
+    _square_text(capture_square)
+    return "REMOVE"
 
 
 def parse_drag_command(line: str) -> DragRoute:

@@ -1,32 +1,12 @@
+import pathlib
+import sys
 import unittest
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from route_transaction_model import capture_exit_path, empty_orthogonal_path, square_index
 
-def exit_clear(occupied, file, source_rank, exit_rank):
-    first_rank, last_rank = sorted((source_rank, exit_rank))
-    for rank in range(first_rank, last_rank + 1):
-        if rank != source_rank and (file, rank) in occupied:
-            return False
-
-    for column in range(1, file + 1):
-        if column < file and (column, exit_rank) in occupied:
-            return False
-        if (
-            exit_rank > 1
-            and (column, exit_rank - 1) != (file, source_rank)
-            and (column, exit_rank - 1) in occupied
-        ):
-            return False
-    return True
-
-
-def find_exit_rank(occupied, file, source_rank):
-    for rank in range(source_rank, 0, -1):
-        if exit_clear(occupied, file, source_rank, rank):
-            return rank
-    for rank in range(source_rank + 1, 9):
-        if exit_clear(occupied, file, source_rank, rank):
-            return rank
-    return 0
+def indexes(*names):
+    return {square_index(name) for name in names}
 
 
 def manual_capture_states(occupied, source, target, captured):
@@ -56,32 +36,33 @@ def carried_path_clear(occupied, source, target, ignored=None):
 
 
 class CaptureExitModelTests(unittest.TestCase):
-    def test_uses_current_lane_when_clear(self):
-        self.assertEqual(find_exit_rank({(4, 4)}, 4, 4), 4)
+    def test_uses_direct_rank_when_clear(self):
+        path = capture_exit_path(indexes("e4"), square_index("e4"))
+        self.assertEqual(path, tuple(map(square_index, ("e4", "d4", "c4", "b4", "a4"))))
 
-    def test_moves_down_to_bypass_a_blocked_lane(self):
-        occupied = {(4, 4), (2, 4)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 3)
+    def test_finds_shortest_route_around_unrelated_pieces(self):
+        occupied = indexes("e5", "d5", "c5", "b5", "d4", "c4", "b4")
+        path = capture_exit_path(occupied, square_index("e5"))
+        self.assertIsNotNone(path)
+        self.assertEqual(path[0], square_index("e5"))
+        self.assertEqual(path[-1] % 8, 0)
+        self.assertTrue(all(square not in occupied - {square_index("e5")} for square in path))
+        self.assertTrue(all(abs(second - first) in (1, 8) for first, second in zip(path, path[1:])))
 
-    def test_checks_both_rows_touching_the_boundary_lane(self):
-        occupied = {(4, 4), (2, 3)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 2)
+    def test_uses_any_free_a_file_exit(self):
+        occupied = indexes("e5", "a1", "a2", "a3", "a4", "a5", "a7", "a8")
+        path = capture_exit_path(occupied, square_index("e5"))
+        self.assertEqual(path[-1], square_index("a6"))
 
-    def test_moves_up_only_when_lower_routes_are_blocked(self):
-        occupied = {(4, 4), (2, 4), (4, 3)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 6)
+    def test_returns_no_route_only_when_capture_is_trapped(self):
+        occupied = indexes("e5", "d5", "f5", "e4", "e6")
+        self.assertIsNone(capture_exit_path(occupied, square_index("e5")))
 
-    def test_source_is_ignored_after_vertical_departure(self):
-        occupied = {(4, 4), (4, 3)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 5)
-
-    def test_returns_no_route_when_both_vertical_directions_are_blocked(self):
-        occupied = {(4, 4), (2, 4), (4, 3), (4, 5)}
-        self.assertEqual(find_exit_rank(occupied, 4, 4), 0)
-
-    def test_rank_one_uses_only_the_validated_outer_white_lane(self):
-        occupied = {(5, 1), (1, 2), (2, 2), (3, 2), (4, 2)}
-        self.assertEqual(find_exit_rank(occupied, 5, 1), 1)
+    def test_a_file_capture_is_already_at_bin_exit(self):
+        self.assertEqual(
+            capture_exit_path(indexes("a4"), square_index("a4")),
+            (square_index("a4"),),
+        )
 
     def test_manual_ordinary_capture_has_an_empty_intermediate_target(self):
         removal, placement = manual_capture_states(
@@ -118,8 +99,48 @@ class CaptureExitModelTests(unittest.TestCase):
         occupied = {(2, 4), (3, 4)}
         self.assertTrue(carried_path_clear(occupied, (2, 4), (3, 3), (3, 4)))
 
-    def test_knight_never_auto_resumes(self):
-        self.assertFalse(carried_path_clear({(2, 1)}, (2, 1), (3, 3)))
+    def test_knight_uses_shortest_empty_orthogonal_route(self):
+        occupied = indexes("f3", "e3")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4")
+        )
+        self.assertEqual(
+            path, tuple(map(square_index, ("f3", "f4", "e4", "d4")))
+        )
+
+    def test_knight_routes_around_unrelated_pieces(self):
+        occupied = indexes("f3", "e3", "f4", "e4")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4")
+        )
+        self.assertIsNotNone(path)
+        self.assertEqual(path[0], square_index("f3"))
+        self.assertEqual(path[-1], square_index("d4"))
+        self.assertTrue(all(square not in occupied - {square_index("f3")} for square in path))
+
+    def test_knight_falls_back_only_when_source_is_trapped(self):
+        occupied = indexes("f3", "e3", "g3", "f2", "f4")
+        self.assertIsNone(
+            empty_orthogonal_path(occupied, square_index("f3"), square_index("d4"))
+        )
+
+    def test_capture_target_can_be_ignored_during_knight_preflight(self):
+        occupied = indexes("f3", "e3", "d4")
+        path = empty_orthogonal_path(
+            occupied, square_index("f3"), square_index("d4"), square_index("d4")
+        )
+        self.assertIsNotNone(path)
+        self.assertEqual(path[-1], square_index("d4"))
+
+    def test_manual_capture_removal_allows_automatic_knight_retry(self):
+        before = indexes("f3", "e3", "d4")
+        after_removal = before - indexes("d4")
+        path = empty_orthogonal_path(
+            after_removal, square_index("f3"), square_index("d4")
+        )
+        self.assertEqual(
+            path, tuple(map(square_index, ("f3", "f4", "e4", "d4")))
+        )
 
 
 if __name__ == "__main__":

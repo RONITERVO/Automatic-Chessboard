@@ -33,6 +33,53 @@ def square_name(square: int) -> str:
     return f"{chr(ord('a') + square % 8)}{square // 8 + 1}"
 
 
+def empty_orthogonal_path(
+    occupied: Iterable[int], source: int, target: int | None, ignored: int | None = None,
+) -> tuple[int, ...] | None:
+    """Firmware-equivalent shortest route to a target or any a-file exit."""
+
+    if source not in range(64) or (target is not None and target not in range(64)):
+        raise ValueError("route square outside board")
+    blocked = frozenset(occupied) - {source}
+    if ignored is not None:
+        blocked -= {ignored}
+    parents: dict[int, int | None] = {source: None}
+    queue = [source]
+    for current in queue:
+        if (target is None and current % 8 == 0) or current == target:
+            reversed_path: list[int] = []
+            cursor: int | None = current
+            while cursor is not None:
+                reversed_path.append(cursor)
+                cursor = parents[cursor]
+            return tuple(reversed(reversed_path))
+        file_index, rank_index = current % 8, current // 8
+        neighbours = []
+        if file_index > 0:
+            neighbours.append(current - 1)
+        if rank_index > 0:
+            neighbours.append(current - 8)
+        if rank_index < 7:
+            neighbours.append(current + 8)
+        if file_index < 7:
+            neighbours.append(current + 1)
+        for neighbour in neighbours:
+            if neighbour not in blocked and neighbour not in parents:
+                parents[neighbour] = current
+                queue.append(neighbour)
+    return None
+
+
+def capture_exit_path(occupied: Iterable[int], capture: int) -> tuple[int, ...] | None:
+    """Shortest empty orthogonal square-centre path to any a-file bin exit."""
+
+    return empty_orthogonal_path(occupied, capture, None)
+
+
+def capture_has_exit(occupied: Iterable[int], capture: int) -> bool:
+    return capture_exit_path(occupied, capture) is not None
+
+
 @dataclass(frozen=True)
 class PlanRequest:
     source: int
@@ -131,6 +178,8 @@ class MotionlessRouteExecutor:
         self.turn_start: frozenset[int] | None = None
         self.final_expected: frozenset[int] | None = None
         self.plan: PlanRequest | None = None
+        self.capture_pending = False
+        self.capture_square: int | None = None
         self.fault = False
 
     @property
@@ -140,7 +189,7 @@ class MotionlessRouteExecutor:
     def set_observed(self, occupied: Iterable[int]) -> None:
         self.observed = frozenset(occupied)
 
-    def begin(self, command: str, observed_after_capture: Iterable[int] | None = None) -> str:
+    def begin(self, command: str) -> str:
         if self.active or self.fault:
             raise RouteProtocolError("NOT READY")
         if self.observed != self.expected:
@@ -152,19 +201,26 @@ class MotionlessRouteExecutor:
         self.plan = request
         self.turn_start = self.observed
         self.final_expected = request.final_occupancy(self.turn_start)
-        if request.capture is not None:
-            next_expected = set(self.expected)
-            next_expected.remove(request.capture)
-            self.expected = frozenset(next_expected)
-            self.observed = (
-                self.expected
-                if observed_after_capture is None
-                else frozenset(observed_after_capture)
-            )
-            if self.observed != self.expected:
-                self._latch_sensor_fault()
-                raise RouteProtocolError("SENSORS")
+        self.capture_pending = request.capture is not None
+        self.capture_square = request.capture
         return "PLAN READY"
+
+    def remove_capture(self, observed_after: Iterable[int] | None = None) -> str:
+        capture = self.capture_square
+        if not self.capture_pending or capture is None:
+            raise RouteProtocolError("CAPTURE")
+        if self.observed != self.expected or not capture_has_exit(self.observed, capture):
+            raise RouteProtocolError("CAPTURE")
+        next_expected = set(self.expected)
+        next_expected.remove(capture)
+        self.expected = frozenset(next_expected)
+        self.observed = self.expected if observed_after is None else frozenset(observed_after)
+        if self.observed != self.expected:
+            self._latch_sensor_fault()
+            raise RouteProtocolError("SENSORS")
+        self.capture_pending = False
+        self.capture_square = None
+        return "REMOVED"
 
     def drag(self, command: str, observed_after: Iterable[int] | None = None) -> str:
         if not self.active:
@@ -188,6 +244,8 @@ class MotionlessRouteExecutor:
         if self.observed != self.expected:
             self._latch_sensor_fault()
             raise RouteProtocolError("SENSORS")
+        if request.source == self.capture_square:
+            self.capture_square = request.target
         return f"MOVED PIECE {square_name(request.source)}{square_name(request.target)}"
 
     def commit(self) -> str:
@@ -198,7 +256,7 @@ class MotionlessRouteExecutor:
         if self.observed == self.turn_start:
             self._clear_plan()
             return "PLAN CANCELLED"
-        if self.observed != self.final_expected:
+        if self.capture_pending or self.observed != self.final_expected:
             raise RouteProtocolError("PLAN INCOMPLETE")
         uci = self.plan.uci
         self._clear_plan()
@@ -217,6 +275,8 @@ class MotionlessRouteExecutor:
         self.plan = None
         self.turn_start = None
         self.final_expected = None
+        self.capture_pending = False
+        self.capture_square = None
 
     def _latch_sensor_fault(self) -> None:
         self.fault = True

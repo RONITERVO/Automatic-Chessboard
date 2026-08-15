@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Added standalone turning-piece routing in firmware 5.0.1. A Micro-Max knight,
+  or any AI piece whose direct line is blocked, now follows a shortest empty
+  orthogonal square-centre route. Manual placement remains the fallback only
+  when no such route connects the source and destination.
+- After a user-confirmed manual capture removal, standalone play now reruns the
+  same route search and moves the AI piece automatically whenever reachable.
+- Released the coordinated 5.0 protocol: exact `HELLO 5.0.0` gating, fixed
+  current feature contract, and no `PLAY`, `PING`, `STATUS`, or old-firmware
+  fallback paths. Apps and Nano must be updated together.
+- Added full-board standalone capture routing. The Nano now finds a shortest
+  empty orthogonal path to any `a1`-`a8` bin exit and requests manual completion
+  only when no exit is reachable.
+- Added capture routing through arbitrary empty square-centre paths to any
+  `a1`-`a8` bin exit,
+  so reachable detours beat moving an unrelated piece. The Nano tracks every
+  verified capture drag.
+- Added firmware-4.7 deferred capture removal. The route search can now park
+  blockers before `REMOVE`, prove the capture frame, complete the main move,
+  and restore every temporary piece in one transaction.
+- Added firmware-4.6 app-controlled play for absent or unreliable reed switches.
+  Human and Stockfish moves share the collision-safe route planner, and every
+  completed move requires whole-board visual confirmation before play continues.
+- Added an interactive Play board, explicit sensor/app authority selection,
+  virtual-board simulator coverage, and stop-on-mismatch/disconnect recovery.
 - Added a recoverable firmware-4.5 board-alignment workflow with user-selected
   squares, one-step X/Y controls, optional magnetic-marker mode, reconnect
   recovery, two-point geometry calculation, and copyable `global.h` values.

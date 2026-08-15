@@ -50,7 +50,7 @@ must remain independently testable.
 
 1. Run `..\firmware\test.ps1` and record flash/SRAM results.
 2. Compile and upload with motors unpowered when practical.
-3. Verify `PING`, `INFO`, `TELEM`, and `BOARD` over USB.
+3. Verify `HELLO 5.0.1`, `INFO`, `TELEM`, and `BOARD` over USB.
 4. Verify the same commands over BLE.
 5. Run guided diagnostics and validate both limit inputs by hand.
 6. Test remote halt at very low-risk service motion with someone beside power.
@@ -67,12 +67,12 @@ For configurable motion repeatability testing, use
 magnet forced off and periodically compares measured homing steps. It requires
 an explicit port and `--confirm-motion`; it is never part of safe diagnostics.
 
-## Adding telemetry or protocol capabilities
+## Changing the protocol
 
 Keep Nano strings in flash with `F()`, avoid dynamic `String`, and retain enough
-SRAM for Micro-Max recursion. Add a capability name, parser test, simulator
-behaviour or documented hardware-only boundary, visual presentation, protocol
-documentation, and backward-compatible fallback.
+SRAM for Micro-Max recursion. Change the coordinated software version, both
+typed parsers, both simulators, diagnostics, protocol documentation, and tests
+in one release. Version 5.0 has no backward-compatibility motion fallback.
 
 ## Release build
 

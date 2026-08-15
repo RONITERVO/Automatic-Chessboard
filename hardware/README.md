@@ -1,6 +1,6 @@
 # Hardware build guide
 
-This folder is the electrical build contract for firmware **4.5.0**. It is
+This folder is the electrical build contract for firmware **5.0.1**. It is
 intended to be detailed enough for a school lab or first-time builder without
 pretending that the prototype PCB is a manufacturing-ready product.
 
@@ -39,7 +39,7 @@ repository root after changing hardware pins, firmware pins, or the sensor map.
 
 | Artifact | Status | Use |
 | --- | --- | --- |
-| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.5.0 Nano hardware from these |
+| `WIRING.md`, diagrams, and CSV tables | Current | Build firmware 4.6.0 Nano hardware from these |
 | `MKS_GEN_L_V1.md` and `mks-gen-l-v1-connections.csv` | Current alternative | Replace Nano, external drivers, and TIP120 with an MKS Gen L V1.0 |
 | Firmware constants in `global.h` | Current | Pin and motion configuration |
 | Commissioning checklist | Current | Required before first movement |
@@ -104,4 +104,5 @@ interfaces expected by the firmware. It does not define a certified product,
 mains-voltage wiring, a sellable PCB, or a production enclosure. Builders may
 change the frame, rails, belts, tiles, and capture bin if the electrical pin
 contract, 37.5 mm square pitch, homing behavior, and motion calibration remain
-consistent.
+consistent. Firmware 5.0 also assumes the bin and carriage have unobstructed
+release clearance along the complete left edge beside `a1` through `a8`.

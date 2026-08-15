@@ -5,8 +5,12 @@ data class BoardEvent(val kind: String, val args: List<String>, val raw: String)
 data class FirmwareInfo(
     val protocol: String,
     val firmware: String,
+    val hardware: String,
     val capabilities: Set<String>,
-)
+) {
+    val compatible: Boolean
+        get() = protocol == Protocol.PROTOCOL_VERSION && firmware == Protocol.SOFTWARE_VERSION
+}
 
 data class Telemetry(
     val protocol: String,
@@ -56,14 +60,21 @@ data class PlanRouteRequest(
 enum class CommandRisk { READ_ONLY, CONTROL, MOTION, EMERGENCY, UNKNOWN }
 
 object Protocol {
+    const val SOFTWARE_VERSION = "5.0.1"
+    const val PROTOCOL_VERSION = "ACB3"
     const val SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
     const val CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
+    val CURRENT_CAPABILITIES = setOf(
+        "BOARD", "TELEM", "REMOTE", "ESTOP", "BTTEST", "SWTEST", "CALIBRATE",
+        "MANUAL", "SENSORFRAME", "PLANROUTE", "REMOVE", "EDGEEXIT", "APPBOARD",
+        "DEVPATH", "DEVJOG", "ALIGN",
+    )
 
-    private val readOnly = setOf("PING", "HELLO", "INFO", "STATUS", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY")
+    private val readOnly = setOf("HELLO", "INFO", "TELEM", "BOARD", "BTTEST", "SWTEST", "GEOMETRY")
     private val control = setOf("STOP", "REJECT", "GAMEOVER")
     private val motion = setOf(
-        "START", "PLAY", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
-        "PLAN", "DRAG", "COMMIT", "ALIGN", "NUDGE",
+        "START", "ACCEPT", "CALIBRATE", "HEAD", "PIECE", "PATH", "JOG",
+        "PLAN", "DRAG", "REMOVE", "COMMIT", "ALIGN", "NUDGE",
     )
 
     fun parseEvent(line: String): BoardEvent {
@@ -73,10 +84,11 @@ object Protocol {
     }
 
     fun parseInfo(event: BoardEvent): FirmwareInfo {
-        require(event.kind == "INFO" && event.args.size >= 2) { "Malformed INFO: ${event.raw}" }
-        val capabilities = event.args.drop(2).joinToString(" ").split(',')
-            .map { it.trim().uppercase() }.filter { it.isNotBlank() }.toSet()
-        return FirmwareInfo(event.args[0], event.args[1], capabilities)
+        require(event.kind == "INFO" && event.args.size == 3) { "Malformed INFO: ${event.raw}" }
+        require(event.args[2] in setOf("NANO", "MKS_GEN_L_V1", "SIM")) {
+            "Unknown INFO hardware: ${event.raw}"
+        }
+        return FirmwareInfo(event.args[0], event.args[1], event.args[2], CURRENT_CAPABILITIES)
     }
 
     fun parseTelemetry(event: BoardEvent): Telemetry {
@@ -156,11 +168,10 @@ object Protocol {
         }
     }
 
-    fun playCommand(uci: String, castling: Boolean = false, enPassant: Boolean = false): String {
-        require(uci.matches(Regex("[a-h][1-8][a-h][1-8][qrbn]?"))) { "Invalid UCI move: $uci" }
-        val flag = if (castling) " C" else if (enPassant) " E" else ""
-        return "PLAY $uci$flag"
-    }
+    fun helloCommand(): String = "HELLO $SOFTWARE_VERSION"
+
+    fun startGameCommand(humanWhite: Boolean, appBoard: Boolean = false): String =
+        "START ${if (humanWhite) "W" else "B"}${if (appBoard) " APP" else ""}"
 
     fun headCommand(square: String): String {
         require(square.matches(Regex("[a-h][1-8]"))) { "Invalid square: $square" }
@@ -227,6 +238,12 @@ object Protocol {
         require(runs.size == 1) { "One DRAG command must be a single straight run" }
         val run = runs.single()
         return "DRAG ${squareName(run.first())}${squareName(run.last())}"
+    }
+
+    fun removeCommand(captureSquare: Int?): String {
+        require(captureSquare != null) { "REMOVE requires a captured square" }
+        squareName(captureSquare)
+        return "REMOVE"
     }
 
     fun parseDragCommand(line: String): DragRoute {

@@ -203,6 +203,8 @@ class MonitorModel:
             return "Physical/logical position differs", "warn"
         if self.firmware is None:
             return "Connected — firmware identity unavailable", "warn"
+        if not self.firmware.compatible:
+            return "App/firmware version mismatch", "bad"
         if "TELEM" in self.firmware.capabilities and self.telemetry is None:
             return "Waiting for live telemetry", "warn"
         if "BOARD" in self.firmware.capabilities and self.sensor_squares is None:

@@ -1,11 +1,11 @@
-"""Connect to an HC-08 and run a non-motion PING over BLE."""
+"""Connect to an HC-08 and run the non-motion 5.0 handshake over BLE."""
 
 import argparse
 import asyncio
 
 from bleak import BleakClient, BleakScanner
 
-from protocol import LineBuffer
+from protocol import LineBuffer, hello_command
 from transports import HC08_CHARACTERISTIC_UUID
 
 
@@ -47,11 +47,8 @@ async def diagnose(identifier: str, wait_seconds: float) -> int:
         await asyncio.sleep(1.0)
         print("LISTENING - press Nano RESET now", flush=True)
         deadline = asyncio.get_running_loop().time() + wait_seconds
-        payloads = (b"PING\n", b"PING\r\n", b"PING", b"\n")
-        index = 0
+        payload = (hello_command() + "\n").encode("ascii")
         while asyncio.get_running_loop().time() < deadline:
-            payload = payloads[index % len(payloads)]
-            index += 1
             await client.write_gatt_char(
                 HC08_CHARACTERISTIC_UUID, payload, response=False
             )
@@ -62,8 +59,8 @@ async def diagnose(identifier: str, wait_seconds: float) -> int:
         print(f"RAW\t{bytes(raw_received)!r}")
     for line in received:
         print(f"REPLY\t{line}")
-    if not any(line.startswith("PONG ACB1") for line in received):
-        print("NO_PONG")
+    if hello_command() not in received:
+        print("NO_MATCHING_HELLO")
         return 2
     return 0
 

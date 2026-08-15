@@ -159,6 +159,75 @@ class RearrangementPlannerTests(unittest.TestCase):
         with self.assertRaises(PlanningError):
             self.planner().plan(problem)
 
+    def test_deferred_capture_clears_bin_lane_before_removal(self):
+        board = chess.Board()
+        for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
+            board.push_uci(uci)
+        move = chess.Move.from_uci("c6e5")
+        problem = planning_problem_from_chess(
+            board,
+            move,
+            physical_occupancy=frozenset(board.piece_map()),
+            deferred_capture=True,
+        )
+
+        plan = self.planner(time_limit_s=15.0, max_nodes=500_000).plan(problem)
+
+        self.assert_valid(plan)
+        commands = plan.protocol_commands()
+        remove_index = commands.index("REMOVE")
+        self.assertTrue(any(command.startswith("DRAG ") for command in commands[2:remove_index]))
+        self.assertEqual(commands[remove_index + 1], "BOARD")
+        self.assertEqual(plan.capture_removal_index, 1)
+
+    def test_edge_exit_routes_capture_without_moving_unrelated_a4(self):
+        board = chess.Board()
+        for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
+            board.push_uci(uci)
+        move = chess.Move.from_uci("c6e5")
+        problem = planning_problem_from_chess(
+            board,
+            move,
+            physical_occupancy=frozenset(board.piece_map()),
+            deferred_capture=True,
+            edge_capture_exit=True,
+        )
+
+        plan = self.planner(time_limit_s=15.0, max_nodes=500_000).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertEqual(plan.temporary_piece_count, 0)
+        self.assertEqual(plan.capture_removal_index, 0)
+        self.assertEqual(plan.capture_path[0], sq("e5"))
+        self.assertEqual(plan.capture_path[-1], sq("a3"))
+        commands = plan.protocol_commands()
+        self.assertNotIn("DRAG a4a5", commands)
+        self.assertLess(commands.index("DRAG e3a3"), commands.index("REMOVE"))
+
+    def test_edge_exit_uses_a_winding_empty_route_before_disturbing_pieces(self):
+        fixed = (
+            "a1", "a2", "a3", "a4", "a5", "a7", "a8",
+            "b1", "b2", "b3", "b4", "b7", "b8",
+        )
+        pieces = [PieceTask("main", sq("h8"), sq("h7"), primary=True)]
+        pieces.extend(PieceTask(f"fixed-{name}", sq(name), sq(name)) for name in fixed)
+        problem = PlanningProblem(
+            tuple(pieces),
+            move_uci="h8h7",
+            captured_square=sq("e5"),
+            deferred_capture=True,
+            edge_capture_exit=True,
+        )
+
+        plan = self.planner(max_temporary_pieces=0).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertEqual(plan.temporary_piece_count, 0)
+        self.assertEqual(
+            tuple(map(sq, ("e5", "e6", "d6", "c6", "b6", "a6"))),
+            plan.capture_path,
+        )
+
 
 class ChessAdapterTests(unittest.TestCase):
     def test_capture_square_is_removed_from_the_rearrangement_problem(self):

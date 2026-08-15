@@ -66,7 +66,11 @@ and deterministic square order. The physical cost prioritizes:
 Search duration, node count, temporary pieces, corridor/parking branch width,
 and dependency depth are bounded. A limit failure is explicit and never falls
 back to an unverified move. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search.
+standard castling sides are adapted before search. Capture removal is a search
+transition containing a tracked carried
+path to any available `a1`-`a8` exit. A winding empty route requires no temporary
+piece movement; only a genuinely disconnected edge invokes ordinary recursive
+parking. Version 5.0.1 has no legacy routing branch.
 
 ## Route transaction
 
@@ -77,19 +81,31 @@ counter discards results after stop, disconnect, or position change.
 Execution is strictly:
 
 ```text
-PLAN -> BOARD -> (straight DRAG -> BOARD)* -> COMMIT
+PLAN -> BOARD -> (straight DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOVE -> BOARD] ->
+        (straight DRAG -> BOARD)* -> COMMIT
 ```
 
 Each exact acknowledgement advances one state. The phone maintains the expected
 occupancy independently from the Nano and uses separate control and physical-
-motion timeouts. Capture removal happens during `PLAN`; after that or any
-`DRAG`, loss of proof makes state uncertain. The app sends one `STOP`, releases
-the connection owner, ends the game, and requires inspection instead of retry.
+motion timeouts. `PLAN` never moves hardware; `REMOVE` is sent only after
+the planner has routed the capture to a valid exit. After `REMOVE` or any `DRAG`, loss of
+proof makes state uncertain. The app sends one `STOP`, releases the connection
+owner, ends the game, and requires inspection instead of retry.
 
 Reed switches prove occupancy, not identity, gantry position, magnet current, or
 piece centring. The host owns chess legality and labels; the Nano owns
 deterministic motion, limits, magnet cutoff, corridor checks, and sensor-frame
 proof.
+
+The protocol also supports explicit `APPBOARD` authority. The user selects every
+human move in `ChessboardView`; `GameController` sends both sides through the
+same route transaction. The Nano maintains a separate command-derived virtual
+frame and `BOARD` returns that frame during the session, so phone/Nano state is
+still cross-checked after each command without consulting unreliable reeds.
+After `DONE`, the snapshot previews the proposed logical result and a
+non-cancelable whole-board confirmation blocks progression. Mismatch or
+disconnect stops and invalidates the game. There is deliberately no automatic
+fallback between reed and virtual authority.
 
 ## Threading and lifecycle
 
@@ -109,7 +125,9 @@ Structured log writes use one daemon writer and bounded rollover files.
 ## State authority and safety invariants
 
 1. chesslib owns legal position and piece identity.
-2. BOARD owns physical occupancy after firmware rank normalization.
+2. In verified mode, BOARD owns physical occupancy after firmware rank
+   normalization. In explicitly selected APPBOARD mode it owns the Nano's
+   command-derived virtual occupancy and must never be presented as sensor proof.
 3. TELEM reports commanded/calculated mechanism state, not physical proof.
 4. A timestamp older than 12 seconds is stale, never ready, except while expected
    motion deliberately suppresses polling; that state is reported as a warning.
@@ -126,9 +144,9 @@ Structured log writes use one daemon writer and bounded rollover files.
 ## Extending the protocol
 
 Add a typed value and parser in `protocol`, simulator coverage, repository event
-reduction, parser/model tests, then display it. Gate new behaviour on the INFO
-capability set. Keep old positional responses compatible. Host-planned motion
-must retain exclusive ownership and exact acknowledgement checks.
+reduction, parser/model tests, then display it. Bump the coordinated software
+version and update Nano, Android, and Windows in the same release. Host-planned
+motion must retain exclusive ownership and exact acknowledgement checks.
 
 ## Fixed-layout rule
 

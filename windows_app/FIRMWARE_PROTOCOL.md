@@ -1,244 +1,138 @@
-# ACB serial protocol
+# Firmware protocol 5.0.1
 
-Commands and events are printable ASCII terminated by CR, LF, or CRLF at 9600
-baud. BLE packets may split a line at any byte; clients must buffer until a line
-terminator. Firmware 4.5.0 advertises `ACB2` monitoring while retaining the
-legacy `READY ACB1`, `PONG ACB1`, and `STATUS ACB1` responses.
+The Nano uses newline-terminated printable ASCII at 9600 baud over USB and the
+HC-08 transparent BLE link. Version 5.0.1 is one coordinated firmware/companion
+contract; it does not negotiate old capability sets or fall back to old motion
+commands.
 
-## Compatibility handshake
+## Exact release handshake
 
-Send `PING`, then `INFO`:
+Each transport must establish its own match before sending a control or motion
+command:
 
 ```text
-> PING
-< PONG ACB1
+> HELLO 5.0.1
+< HELLO 5.0.1
 > INFO
-< INFO ACB2 4.5.0 BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN
+< INFO ACB3 5.0.1 NANO
 ```
 
-Clients must use the capability list instead of assuming that every firmware
-supports every command. A missing `INFO` response indicates legacy firmware.
-The Windows app uses the verified `PLANROUTE` transaction when advertised and
-retains `PLAY` as a compatibility fallback for firmware 4.0 and earlier.
+The MKS build reports `MKS_GEN_L_V1`; simulators report `SIM`. A different `HELLO`
+version returns `ERR VERSION` and clears that transport's agreement. `INFO`,
+`TELEM`, and `BOARD` remain readable before agreement. `STOP` and the byte-level
+`!` emergency halt also remain available so a mismatched tool can make a
+best-effort stop and inspect state, but it cannot control or move the board.
 
-## Read-only commands
+`PING`, `STATUS`, `PLAY`, capability strings, and pre-5.0 compatibility behavior
+are not part of this protocol.
 
-- `PING` or `HELLO` -> `PONG ACB1`
-- `INFO` -> protocol, firmware version, and comma-separated capabilities
-- `STATUS` -> legacy `STATUS ACB1 sequence homed remote`
-- `TELEM` -> versioned visual-monitoring telemetry
-- `BOARD` -> sixteen hexadecimal occupancy digits
-- `BTTEST` -> idle-only HC-08 AT test; normally run over USB
-- `SWTEST` -> idle-only guided press/release test for both shared limit inputs;
-  it keeps the magnet off, performs no movement, rejects crossed activation,
-  and reports the pressed A6 raw value
-- `GEOMETRY` -> `GEOMETRY ACB1 file_pitch rank_pitch black_park white_park
-  microsteps`; values are the actual compiled step counts
-- `ALIGN STATUS` -> `ALIGN IDLE` or the active square, marker mode, and signed
-  X/Y offsets; it never moves the mechanism
+## Read-only state
 
-`BOARD` contains two hexadecimal digits per normalized row, rank 8 through rank
-1. Bit 0 is file a and bit 7 is file h. A set bit means a reed sensor sees a
-magnetic piece. It contains no piece-type or colour information. Firmware
-applies the fixed hardware row map before producing this snapshot.
+- `INFO` → `INFO ACB3 firmware hardware`, where hardware is `NANO`,
+  `MKS_GEN_L_V1`, or `SIM`
+- `TELEM` → the live controller frame below.
+- `BOARD` → 16 hexadecimal digits, two per physical rank from rank 8 to rank 1;
+  each byte uses bit 0 for file a through bit 7 for file h.
+- `GEOMETRY` → `GEOMETRY ACB3 file_pitch rank_pitch black_park white_park microsteps`
+- `ALIGN STATUS` → `ALIGN IDLE` or the active measurement report.
+- `BTTEST` and `SWTEST` are explicit diagnostics. `SWTEST` requires local user
+  interaction and must never be presented as a passive poll.
 
-`TELEM` fields are positional to minimize Nano memory:
+Telemetry is:
 
 ```text
-TELEM ACB2 sequence homed remote fault magnet x y a_released b_released b_raw free_ram uptime_s
+TELEM ACB3 sequence homed remote fault magnet x y a_released b_released b_raw free_ram uptime_s
 ```
 
-- Booleans are `0` or `1`.
-- `x` and `y` are the firmware's calculated carriage square.
-- `b_raw` is the A6 ADC value, normally near 1023 when released and 0 when active.
-- `free_ram` is an instantaneous stack-to-heap estimate.
-- `uptime_s` wraps with the Nano's `millis()` counter.
+`remote` is `0` for standalone/idle, `1` for reed-authoritative companion play,
+and `2` for app-authoritative play. A reported trolley square is a calculated
+coordinate, not encoder feedback. `free_ram` is the minimum free SRAM observed
+since boot, so temporary route-search stack peaks remain visible afterward.
 
-Firmware 4.5 state numbers are stable protocol data: `0` startup, `1` idle,
-`2` position recovery, `3` calibration, `4` setup check, `5`/`6` standalone
-human turns, `7` undo, `8` automatic-move sensor check, `9` game over, `10`
-fault, `11` reserved, `12` board alignment, `13` remote setup, `14` remote
-human, `15` remote waiting for host, `16` remote undo, `17` remote sensor
-check, `18` promotion replacement, `19` direct host motion, and `20` verified
-route transaction. Clients must show unknown future values rather than remap
-them heuristically.
+All ordinary read-only requests must be serialized. BLE is slow enough that
+multiple outstanding polls otherwise become stale and ambiguous.
 
-The fixed reported-to-physical rank mapping is `8->1, 7->2, 2->3, 1->4, 4->5,
-3->6, 6->7, 5->8`; files A-H are unchanged. This is part of the
-hardware/firmware contract and is not a runtime setting.
+## Session and direct controls
 
-## Collision-safe route transactions (firmware 4.1+)
+- `START W` / `START B` begins reed-authoritative companion play.
+- `START W APP` / `START B APP` begins app-authoritative play from the standard
+  starting position. Reed input is ignored for that entire session.
+- `ACCEPT`, `REJECT`, and `GAMEOVER ...` advance or terminate the remote game
+  state.
+- `STOP` ends the remote session on a best-effort basis.
+- `CALIBRATE` runs the production homing/reference routine and reports
+  `CALIBRATED e6` only after success.
+- `HEAD e4` moves the carriage without magnet pickup after calibration.
+- `PIECE e2e4` performs one guarded direct carry. Its endpoints must be
+  queen-aligned and its physical corridor must be clear.
+- `ALIGN <square> H|M`, `NUDGE X+|X-|Y+|Y-`, and `ALIGN END` implement the
+  recoverable geometry-measurement workflow.
+- `PATH` and `JOG` are guarded developer commissioning commands, never normal
+  game commands.
 
-The host plans the complete labeled rearrangement. The Nano executes only one
-straight, orthogonal, sensor-verified drag at a time. A normal transaction is:
+Every motion command can fail with an `ERR ...` response. A failure is not
+permission to retry from an assumed position.
+
+## Verified route transaction
+
+The companion is the expensive planner; the Nano is the deterministic executor.
+The host first requests a fresh `BOARD` snapshot matching its logical occupancy,
+then opens a fixed-width plan:
 
 ```text
-> PLAN e7e5---
-< PLAN READY
-> BOARD
-< BOARD <16 hex digits>
-> DRAG e7e6
-< MOVING PIECE e7e6
-< MOVED PIECE e7e6
-> BOARD
-< BOARD <16 hex digits>
-> DRAG e6e5
-< MOVING PIECE e6e5
-< MOVED PIECE e6e5
-> BOARD
-< BOARD <16 hex digits>
-> COMMIT
-< DONE e7e5
+PLAN e2e4---
+PLAN e4d5-d5
+PLAN a7a8q--
+PLAN e1g1k--
+PLAN e1c1c--
 ```
 
-`PLAN` has a fixed seven-character payload:
+The seven payload characters are source, target, mode (`-`, promotion piece,
+`k`, or `c`), and captured square or `--`. A valid header returns `PLAN READY`
+without moving hardware.
+
+While the plan owns the board:
+
+- `DRAG e2e4` performs exactly one straight orthogonal square-centre run and
+  returns `MOVED PIECE e2e4` only after the authoritative occupancy transition
+  is proven.
+- `REMOVE` removes the tracked captured piece to the full-height left bin and
+  returns `REMOVED` only after proof. The capture may already have been routed
+  by verified drags to an a-file exit; the Nano can also find a shortest empty
+  orthogonal route itself.
+- `BOARD` proves the frame between every physical action.
+- `COMMIT` accepts only the exact derived final occupancy and returns `DONE
+  <from><to>`. If no physical state changed, it returns `PLAN CANCELLED`.
+
+The normal companion sequence is:
 
 ```text
-PLAN <from><to><mode><capture-square-or-->
+PLAN -> BOARD -> (DRAG -> BOARD)* ->
+  [capture DRAG(s) -> BOARD -> REMOVE -> BOARD] ->
+  (DRAG -> BOARD)* -> COMMIT
 ```
 
-- `mode` is `-` for an ordinary move, `q`, `r`, `b`, or `n` for promotion,
-  and `k` or `c` for standard king-side or queen-side castling.
-- Captures name the occupied square removed before `PLAN READY`. For en passant
-  this is the captured pawn's square, not the move destination.
-- `DRAG` endpoints must share a file or rank. Every intermediate square must be
-  empty. A turning host route is split at square centres, where the magnet is
-  released and reacquired for the next straight run.
-- The Nano checks its complete 64-square frame before accepting `PLAN`, before
-  each `DRAG`, after every physical move, and before `COMMIT`.
-- Windows independently requests and checks `BOARD` after `PLAN` and every
-  `DRAG`. It sends only one transaction command at a time and waits for the
-  exact acknowledgement.
-- `COMMIT` succeeds only when occupancy matches the final chess move, including
-  capture and standard castling. If no physical change occurred and the start
-  frame is intact, it returns `PLAN CANCELLED` instead.
+Turning paths are split into straight runs and release/reacquire only at square
+centres. Companion routing first searches all empty paths to any `a1`-`a8` bin
+exit; it moves unrelated pieces only if every exit is disconnected. Temporary
+pieces must be restored before commit.
 
-Possible transaction errors include `ERR NOT READY`, `ERR BAD PLAN`,
-`ERR PLAN STATE`, `ERR NO PLAN`, `ERR SOURCE EMPTY`, `ERR TARGET FULL`,
-`ERR BAD ROUTE`, `ERR ROUTE BLOCKED`, `ERR FINAL SENSORS`, and
-`ERR PLAN INCOMPLETE`. A sensor or motion failure after movement latches a
-fault. Do not retry from an assumed position: inspect all squares, stop the
-session, and recalibrate where required.
+## App-authoritative play
 
-The safety proof is occupancy-based. Reed switches cannot establish piece
-identity, polarity, precise centring, magnet current, or missed gantry steps.
-The trusted host owns chess legality and labeled-piece planning; the Nano owns
-deterministic motion and occupancy transition checks.
+In `APP` mode, both human and engine moves originate in the companion. The Nano
+maintains an independent command-derived occupancy frame and returns it from
+`BOARD`; reed readings never silently enter the game. After `DONE`, the app must
+require a whole-board visual confirmation before applying the logical move or
+starting another one. Manual physical movement is prohibited except when the app
+explicitly prompts for promotion-piece replacement.
 
-## Legacy game and motion commands
+A mismatch, route error, halt, or connection loss invalidates the session.
+Send `STOP` only while transport remains available; after link loss, do not claim
+delivery. Inspect the physical board and recalibrate before a new session.
 
-- `START W` or `START B` selects the human colour and requests calibration.
-- `ACCEPT` or `REJECT` resolves a reported human move.
-- `PLAY e7e5` requests an ordinary automatic move.
-- `PLAY e1g1 C` marks castling.
-- `PLAY e5d6 E` marks en passant.
-- `PLAY e7e8q` requests promotion; the physical piece is replaced by hand.
-- `GAMEOVER 1-0`, `GAMEOVER 0-1`, or `GAMEOVER 1/2-1/2` closes the session.
-- `STOP` stops a session when the main loop is available.
+## Emergency behavior
 
-Important events include `SETUP PRESS A`, `SESSION W|B`, `TURN HUMAN|COMPUTER`,
-`MOVE e2e4`, `MOVING e7e5`, `DONE e7e5`, `PROMOTE q`, `STOPPED`, and
-`ERR reason`.
-
-`PLAY` is accepted only in the remote wait-host state. A host must never send a
-second automatic move before receiving `DONE`.
-
-## App calibration and direct square movement
-
-Firmware 3.31+ provides guarded maintenance commands. They are accepted only
-from the idle main menu, outside a remote game, and never while a motion fault
-is latched.
-
-- `CALIBRATE` performs the complete reference routine. It emits `CALIBRATING`,
-  then `CALIBRATED e6 W<steps> B<steps>` only when the head is homed, parked at
-  e6, and the magnet is off. The companion requests fresh `TELEM` and
-  independently confirms `homed=1`, `fault=0`, `magnet=0`, `x=5`, and `y=6`
-  before enabling movement.
-- `HEAD e4` moves only the head and keeps the electromagnet off. It emits
-  `MOVING HEAD e4`, then `MOVED HEAD e4`.
-- `PIECE e2e4` scans the reed matrix before moving. The source must be occupied
-  and the destination empty. The head first reaches e2 with the magnet off,
-  energizes it only for the carried segment, and verifies that e2 became empty
-  and e4 occupied before emitting `MOVED PIECE e2e4`.
-- Firmware 4.4 accepts `PIECE` only when its square centres share a file, rank,
-  or diagonal. Turning and knight moves use `PLANROUTE`; direct unsupported
-  geometry returns `ERR BAD ROUTE` before the head or magnet moves.
-
-Possible rejections include `ERR CALIBRATE`, `ERR SOURCE EMPTY`,
-`ERR TARGET FULL`, `ERR SENSORS`, `ERR BUSY`, `ERR FAULT`, and `ERR MOTION`.
-Manual motion uses telemetry sequence 19 while active. `!` remains the immediate
-best-effort remote halt during calibration and direct movement.
-
-## Board registration (firmware 4.5+)
-
-Registration is deliberately a measurement workflow, not a runtime setting.
-The firmware never writes geometry to EEPROM; builders edit the four constants
-in `global.h` and upload the resulting firmware.
-
-1. Calibrate and verify the normal `CALIBRATED e6` response.
-2. Send `GEOMETRY` and retain the current actual values and microstep factor.
-3. Send `ALIGN a2 H` for head-only measurement, or `ALIGN a2 M` only when a
-   magnetic marker is physically safe. The response is `ALIGN READY a2 H 0 0`.
-4. Send `NUDGE X+`, `NUDGE X-`, `NUDGE Y+`, or `NUDGE Y-`. Each command moves
-   one logical Cartesian step and responds with, for example, `ALIGN ACTIVE a2
-   H 3 -1`. Each axis is bounded to +/-60 steps.
-5. Record the centered point and repeat at a widely separated square whose file
-   and rank both differ.
-6. Send `ALIGN END`. The firmware reverses the accumulated nudge, keeps the
-   magnet off, responds `ALIGN ENDED`, and leaves the carriage unhomed.
-
-The position journal is marked unknown before the first nudge; a link loss,
-reset, or power loss therefore cannot make the offset position appear
-calibrated. `ALIGN STATUS` lets a reconnecting app recover the current session.
-`STOP` and `!` remain available, but both also require subsequent calibration.
-Head-only mode never energizes the magnet. Marker mode pulses it only while an
-individual nudge is moving and remains subject to the global magnet timeout.
-
-Calculate file and rank scale from two different files/ranks, translate either
-point back to the e6 origin, divide the final actual values by `microsteps`, and
-edit the source coefficients multiplying `MOTOR_MICROSTEPS`. Both official apps
-perform this calculation and display copyable lines.
-
-## Developer motion tools
-
-`DEVPATH` advertises `PATH e2e4`, a developer-only, magnet-free command that
-exercises the production queen-aligned piece planner without changing
-sensor state. It has the same calibration, fault, idle-state, and emergency-halt
-guards as direct movement and returns `MOVED PATH e2e4`. It is intended for the
-repository endurance tool, not normal game clients.
-
-`DEVJOG` advertises guarded `JOG W+`, `JOG W-`, `JOG B+`, and `JOG B-` commands.
-Each pulses only the selected CoreXY driver for 20 full steps, keeps the magnet
-off, and invalidates the carriage position. Use them only for one-driver-at-a-
-time commissioning with the other driver and magnet power disconnected. A
-successful jog returns `MOVED JOG W+`; calibration is required before any
-coordinate-based movement.
-
-The firmware independently limits any continuous magnet command to 30 seconds.
-On timeout it switches the magnet off, invalidates the carriage position,
-latches a motion fault, and reports `ERR MAGNET TIMEOUT`.
-
-## Best-effort emergency halt
-
-The single printable character `!` is reserved for emergency halt. It does not
-wait for a line terminator and is checked from both USB and Bluetooth inside the
-motor step loops. The response is:
-
-```text
-ESTOP REMOTE
-```
-
-The firmware disables the magnet, marks carriage position unknown, enters the
-motion-fault screen, and requires local inspection/recovery. This is not a
-certified emergency stop: radio loss, host failure, electrical faults, or MCU
-failure can prevent it. Physical power isolation remains authoritative.
-
-## Polling guidance
-
-Use at most one outstanding request. Alternate `TELEM` and `BOARD` every 1-10
-seconds while idle. Pause normal polling during any route transaction or after
-`MOVING`, and resume only after its terminal `MOVED HEAD`, `MOVED PIECE`,
-`MOVED PATH`, `MOVED JOG`, `DONE`, `PLAN CANCELLED`, `ERR`, `STOPPED`, or
-`ESTOP`. During alignment, allow only serialized `NUDGE`, `ALIGN STATUS`,
-`ALIGN END`, `STOP`, and `!` traffic. Precise motor loops intentionally delay
-ordinary responses.
+The single `!` byte is checked inside motion loops, turns off the magnet, stops
+step output, latches a motion fault, and makes the carriage position unknown.
+It is best-effort communication, not a safety-rated emergency stop. Hardware
+must provide a physical way to remove motor and magnet power.

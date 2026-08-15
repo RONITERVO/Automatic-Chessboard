@@ -7,19 +7,16 @@ void sendHostError(const __FlashStringHelper *message) {
   Serial.println(message);
 }
 
-void sendHostStatus() {
-  Serial.print(F("STATUS ACB1 "));
-  Serial.print(sequence);
-  Serial.print(' ');
-  Serial.print(trolley_homed ? 1 : 0);
-  Serial.print(' ');
-  Serial.println(remote_mode ? 1 : 0);
-}
-
 int freeRam() {
   extern int __heap_start, *__brkval;
   int stack_top;
-  return (int)&stack_top - (__brkval ? (int)__brkval : (int)&__heap_start);
+  int available = (int)&stack_top -
+                  (__brkval ? (int)__brkval : (int)&__heap_start);
+  if (available < minimum_free_ram) {
+    minimum_free_ram = available;
+    return available;
+  }
+  return minimum_free_ram;
 }
 
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
@@ -29,14 +26,13 @@ static inline int readControlPinRaw(byte pin) {
 #endif
 
 void sendHostInfo() {
-  Serial.print(F("INFO ACB2 "));
+  Serial.print(F("INFO ACB3 "));
   Serial.print(F(FIRMWARE_VERSION));
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
-  Serial.print(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN"));
-  Serial.print(',');
+  Serial.print(' ');
   Serial.println((const __FlashStringHelper *)HARDWARE_PROFILE_NAME);
 #else
-  Serial.println(F(" BOARD,TELEM,REMOTE,ESTOP,BTTEST,SWTEST,CALIBRATE,MANUAL,SENSORFRAME,PLANROUTE,DEVPATH,DEVJOG,ALIGN"));
+  Serial.println(F(" NANO"));
 #endif
 }
 
@@ -46,7 +42,7 @@ void sendTelemetry() {
 #else
   int black_raw = analogRead(BUTTON_B_LIMIT_BLACK);
 #endif
-  Serial.print(F("TELEM ACB2 "));
+  Serial.print(F("TELEM ACB3 "));
   Serial.print(sequence);
   Serial.print(' ');
   Serial.print(trolley_homed ? 1 : 0);
@@ -67,13 +63,19 @@ void sendTelemetry() {
   Serial.print(' ');
   Serial.print(black_raw);
   Serial.print(' ');
+  // Report a boot-lifetime low-water mark so short-lived route/BFS stack peaks
+  // remain visible after the move has completed.
   Serial.print(freeRam());
   Serial.print(' ');
   Serial.println(millis() / 1000UL);
 }
 
 void sendSensorSnapshot() {
-  scanSensors();
+  // In app-authoritative play the physical switches are deliberately ignored.
+  // Mirror the Nano's independently tracked virtual occupancy so both ends can
+  // still prove every route command against the same board state.
+  if (remote_mode == 2) copySensorTable(reed_sensor_status, reed_sensor_record);
+  else scanSensors();
   Serial.print(F("BOARD "));
   const char hex[] = "0123456789ABCDEF";
   for (byte row = 0; row < 8; row++) {
@@ -175,7 +177,7 @@ void runHostMotorJog(char motor, char sign) {
   Serial.println(sign);
 }
 
-void startRemoteSession(boolean human_white) {
+void startRemoteSession(boolean human_white, boolean app_board) {
   if (motion_fault) {
     sendHostError(F("FAULT"));
     return;
@@ -185,7 +187,7 @@ void startRemoteSession(boolean human_white) {
     return;
   }
 
-  remote_mode = true;
+  remote_mode = app_board ? 2 : 1;
   remote_human_white = human_white;
   remote_human_move_pending = false;
   remote_promotion_piece = 0;
@@ -214,6 +216,14 @@ boolean sensorSquareOccupied(byte file, byte rank) {
   return boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1);
 }
 
+boolean remoteBoardMatchesExpected() {
+  if (remote_mode == 2) {
+    copySensorTable(reed_sensor_status, reed_sensor_record);
+    return true;
+  }
+  return physicalSensorsMatchExpected();
+}
+
 void hostMotionFault(const __FlashStringHelper *message) {
   setMagnet(false);
   motion_fault = true;
@@ -234,7 +244,7 @@ void finishHostManualMotion(boolean succeeded) {
 }
 
 void sendHostGeometry() {
-  Serial.print(F("GEOMETRY ACB1 "));
+  Serial.print(F("GEOMETRY ACB3 "));
   Serial.print(FILE_PITCH_STEPS);
   Serial.print(' ');
   Serial.print(RANK_PITCH_STEPS);
@@ -437,7 +447,8 @@ void runHostPieceMove(const char *move, boolean routed) {
     return;
   }
 
-  scanSensors();
+  if (remote_mode == 2) copySensorTable(reed_sensor_status, reed_sensor_record);
+  else scanSensors();
   if (routed && memcmp(reed_sensor_record.rows, reed_sensor_status.rows, 8)) {
     sendHostError(F("PLAN STATE"));
     return;
@@ -485,10 +496,13 @@ void runHostPieceMove(const char *move, boolean routed) {
     }
     setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
     setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
-    if (!physicalSensorsMatchExpected()) {
+    if (!remoteBoardMatchesExpected()) {
       hostMotionFault(F("SENSORS"));
       return;
     }
+    byte source = (from_rank - 1) * 8 + from_file - 1;
+    if (move_to == source)
+      move_to = (to_rank - 1) * 8 + to_file - 1;
     sequence = remote_route_plan;
   }
   else {
@@ -601,7 +615,7 @@ void beginRemoteRoutePlan(char *arguments) {
     sendHostError(F("BAD PLAN"));
     return;
   }
-  if (!physicalSensorsMatchExpected()) {
+  if (!remoteBoardMatchesExpected()) {
     sendHostError(F("PLAN STATE"));
     return;
   }
@@ -623,20 +637,28 @@ void beginRemoteRoutePlan(char *arguments) {
       sendHostError(F("PLAN STATE"));
       return;
     }
-    if (!findCaptureExitRank(file, rank)) {
-      sequence = remote_wait_host;
-      sendHostError(F("BAD ROUTE"));
-      return;
-    }
     move_from = (rank - 1) * 8 + file - 1;  // Capture square for final-frame proof.
-    setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
-    if (!removeCapturedPiece(file, rank) || motion_fault ||
-        !physicalSensorsMatchExpected()) {
-      hostMotionFault(F("SENSORS"));
+    move_to = move_from;  // Reuse the move tracker as the pending-removal marker.
+  }
+  Serial.println(F("PLAN READY"));
+}
+
+void __attribute__((noinline)) runRemoteCaptureRemoval() {
+  if (sequence == remote_route_plan && move_to != NO_SQUARE) {
+    byte file = (move_to & 7) + 1;
+    byte rank = (move_to >> 3) + 1;
+    if (remoteBoardMatchesExpected() && captureRouteClear(file, rank)) {
+      setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
+      if (!removeCapturedPiece(file, rank) || !remoteBoardMatchesExpected()) {
+        hostMotionFault(F("SENSORS"));
+        return;
+      }
+      move_to = NO_SQUARE;
+      Serial.println(F("REMOVED"));
       return;
     }
   }
-  Serial.println(F("PLAN READY"));
+  sendHostError(F("CAPTURE"));
 }
 
 void commitRemoteRoutePlan() {
@@ -644,7 +666,7 @@ void commitRemoteRoutePlan() {
     sendHostError(F("NO PLAN"));
     return;
   }
-  if (!physicalSensorsMatchExpected()) {
+  if (!remoteBoardMatchesExpected()) {
     sendHostError(F("FINAL SENSORS"));
     return;
   }
@@ -654,7 +676,7 @@ void commitRemoteRoutePlan() {
     Serial.println(F("PLAN CANCELLED"));
     return;
   }
-  if (!routedFinalStateMatches()) {
+  if (move_to != NO_SQUARE || !routedFinalStateMatches()) {
     sendHostError(F("PLAN INCOMPLETE"));
     return;
   }
@@ -662,9 +684,17 @@ void commitRemoteRoutePlan() {
   finishRemoteComputerTurn();
 }
 
-void processHostCommand(char *line) {
-  if (strcmp(line, "PING") == 0 || strcmp(line, "HELLO") == 0) {
-    Serial.println(F("PONG ACB1"));
+void processHostCommand(char *line, HostInputBuffer &buffer) {
+  if (strncmp_P(line, PSTR("HELLO "), 6) == 0) {
+    if (strcmp_P(line + 6, PSTR(FIRMWARE_VERSION)) == 0) {
+      buffer.flags |= HOST_VERSION_AGREED;
+      Serial.print(F("HELLO "));
+      Serial.println(F(FIRMWARE_VERSION));
+    }
+    else {
+      buffer.flags &= ~HOST_VERSION_AGREED;
+      sendHostError(F("VERSION"));
+    }
     return;
   }
   if (strcmp(line, "INFO") == 0) {
@@ -675,12 +705,19 @@ void processHostCommand(char *line) {
     sendTelemetry();
     return;
   }
-  if (strcmp(line, "STATUS") == 0) {
-    sendHostStatus();
-    return;
-  }
   if (strcmp(line, "BOARD") == 0) {
     sendSensorSnapshot();
+    return;
+  }
+  // STOP and the byte-level '!' emergency command are deliberately available
+  // even to a mismatched client. Every other state-changing command requires
+  // an exact companion/firmware release handshake on this transport.
+  if (strcmp(line, "STOP") == 0) {
+    stopRemoteSession();
+    return;
+  }
+  if (!(buffer.flags & HOST_VERSION_AGREED)) {
+    sendHostError(F("VERSION"));
     return;
   }
   if (strcmp_P(line, PSTR("GEOMETRY")) == 0) {
@@ -723,10 +760,6 @@ void processHostCommand(char *line) {
     runHostAlignmentEnd();
     return;
   }
-  if (strcmp(line, "STOP") == 0) {
-    stopRemoteSession();
-    return;
-  }
   if (strcmp(line, "CALIBRATE") == 0) {
     runHostCalibration();
     return;
@@ -746,8 +779,10 @@ void processHostCommand(char *line) {
     return;
   }
   if (strncmp(line, "START ", 6) == 0 &&
-      (line[6] == 'W' || line[6] == 'B') && line[7] == 0) {
-    startRemoteSession(line[6] == 'W');
+      (line[6] == 'W' || line[6] == 'B') &&
+      (line[7] == 0 || (line[7] == ' ' && line[8] == 'A' &&
+                        line[9] == 'P' && line[10] == 'P' && line[11] == 0))) {
+    startRemoteSession(line[6] == 'W', line[7] != 0);
     return;
   }
   if (strcmp(line, "ACCEPT") == 0) {
@@ -788,41 +823,12 @@ void processHostCommand(char *line) {
     runHostPieceMove(line + 5, true);
     return;
   }
-  if (strcmp(line, "COMMIT") == 0) {
-    commitRemoteRoutePlan();
+  if (strcmp_P(line, PSTR("REMOVE")) == 0) {
+    runRemoteCaptureRemoval();
     return;
   }
-  if (strncmp(line, "PLAY ", 5) == 0) {
-    if (!remote_mode || sequence != remote_wait_host) {
-      sendHostError(F("NOT READY"));
-      return;
-    }
-    if (remote_human_move_pending) {
-      sendHostError(F("ACCEPT FIRST"));
-      return;
-    }
-
-    char *move_text = line + 5;
-    char *flag_text = strchr(move_text, ' ');
-    if (flag_text) {
-      *flag_text++ = 0;
-      remote_move_flags = *flag_text;
-    }
-    else remote_move_flags = 0;
-
-    if (!validMoveText(move_text)) {
-      sendHostError(F("BAD MOVE"));
-      return;
-    }
-    for (byte i = 0; i < 4; i++) lastM[i] = move_text[i];
-    lastM[4] = 0;
-    remote_promotion_piece = move_text[4];
-    if (remote_promotion_piece == 'q' || remote_promotion_piece == 'r' ||
-        remote_promotion_piece == 'b' || remote_promotion_piece == 'n') {
-      remote_move_flags = 'P';
-    }
-    else remote_promotion_piece = 0;
-    executeRemoteComputerMove();
+  if (strcmp(line, "COMMIT") == 0) {
+    commitRemoteRoutePlan();
     return;
   }
   if (strncmp(line, "GAMEOVER", 8) == 0) {
@@ -848,25 +854,26 @@ void processHostStream(Stream &input, HostInputBuffer &buffer) {
     char value = input.read();
     if (value == '!') {
       buffer.length = 0;
-      buffer.overflowed = false;
+      buffer.flags &= ~HOST_INPUT_OVERFLOWED;
       tripRemoteEmergencyStop();
       continue;
     }
     if (value == '\r' || value == '\n') {
-      if (!buffer.overflowed && buffer.length) {
+      if (!(buffer.flags & HOST_INPUT_OVERFLOWED) && buffer.length) {
         buffer.data[buffer.length] = 0;
-        processHostCommand(buffer.data);
+        processHostCommand(buffer.data, buffer);
       }
       buffer.length = 0;
-      buffer.overflowed = false;
+      buffer.flags &= ~HOST_INPUT_OVERFLOWED;
     }
-    else if (value >= 32 && value <= 126 && !buffer.overflowed) {
+    else if (value >= 32 && value <= 126 &&
+             !(buffer.flags & HOST_INPUT_OVERFLOWED)) {
       if (buffer.length < HOST_INPUT_SIZE - 1) {
         buffer.data[buffer.length++] = value;
       }
       else {
         buffer.length = 0;
-        buffer.overflowed = true;
+        buffer.flags |= HOST_INPUT_OVERFLOWED;
         sendHostError(F("LINE LONG"));
       }
     }
@@ -887,17 +894,32 @@ void showRemoteSetupCheck() {
 }
 
 void beginRemoteSession() {
+  if (remote_mode == 2) {
+    for (byte row = 0; row < 8; row++)
+      reed_sensor_status.rows[row] = (row < 2 || row > 5) ? 0xFF : 0;
+    copySensorTable(reed_sensor_status, reed_sensor_record);
+    copySensorTable(reed_sensor_status, turn_start_status);
+  }
   Serial.print(F("SESSION "));
   Serial.println(remote_human_white ? 'W' : 'B');
+  if (remote_mode == 2) {
+    waitForRemoteApp();
+    Serial.println(remote_human_white ? F("TURN HUMAN") : F("TURN COMPUTER"));
+    return;
+  }
   if (remote_human_white) beginRemoteHumanTurn();
   else {
-    sequence = remote_wait_host;
-    lcd.clear();
-    lcd.print(F("HOST MOVE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("B=STOP"));
+    waitForRemoteApp();
     Serial.println(F("TURN COMPUTER"));
   }
+}
+
+void waitForRemoteApp() {
+  sequence = remote_wait_host;
+  lcd.clear();
+  lcd.print(F("HOST MOVE"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("B=STOP"));
 }
 
 void beginRemoteHumanTurn() {
@@ -965,32 +987,6 @@ void showRemoteSensorMismatch() {
   lcd.print(F("A=RETRY B=STOP"));
 }
 
-void executeRemoteComputerMove() {
-  lcd.clear();
-  lcd.print(F("PC MOVE "));
-  printMove(lastM);
-  lcd.setCursor(0, 1);
-  lcd.print(F("KEEP HANDS CLEAR"));
-  Serial.print(F("MOVING "));
-  Serial.println(lastM);
-  delay(500);
-
-  if (!computerPlayerMovement(lastM, remote_move_flags)) {
-    sequence = fault_screen;
-    showMotionFault();
-    sendHostError(F("MOTION"));
-    return;
-  }
-  if (!physicalSensorsMatchExpected()) {
-    sequence = remote_sensor_check;
-    showRemoteSensorMismatch();
-    sendHostError(F("SENSORS"));
-    return;
-  }
-  syncSensorState();
-  finishRemoteComputerTurn();
-}
-
 void finishRemoteComputerTurn() {
   Serial.print(F("DONE "));
   Serial.println(lastM);
@@ -1004,5 +1000,6 @@ void finishRemoteComputerTurn() {
     Serial.print(F("PROMOTE "));
     Serial.println(remote_promotion_piece);
   }
+  else if (remote_mode == 2) waitForRemoteApp();
   else beginRemoteHumanTurn();
 }

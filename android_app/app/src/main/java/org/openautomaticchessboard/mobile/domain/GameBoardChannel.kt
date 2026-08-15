@@ -2,7 +2,7 @@ package org.openautomaticchessboard.mobile.domain
 
 /** Narrow board API used by game and route orchestration. */
 interface GameBoardChannel {
-    val firmwareCapabilities: Set<String>
+    val softwareCompatible: Boolean
     val physicalOccupancy: Set<Int>?
     val sensorUpdatedMs: Long?
     val connected: Boolean

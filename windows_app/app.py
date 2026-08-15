@@ -42,7 +42,9 @@ from protocol import (
     parse_geometry,
     parse_info,
     parse_telemetry,
-    play_command,
+    hello_command,
+    SOFTWARE_VERSION,
+    start_game_command,
 )
 from routing import MotionPlan, PlannerConfig, PlanningError, plan_chess_move
 from support import EventRecorder, create_support_bundle, user_data_dir, write_json_atomic
@@ -54,7 +56,7 @@ from transports import (
     serial_ports,
 )
 
-APP_VERSION = "1.4.0"
+APP_VERSION = SOFTWARE_VERSION
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
 APP_DIR = Path(__file__).resolve().parent
@@ -261,7 +263,16 @@ class AutomaticChessboardApp:
         self.board = chess.Board()
         self.human_color = chess.WHITE
         self.pending_engine_move: chess.Move | None = None
+        self.pending_move_is_human = False
+        self.pending_move_generation: int | None = None
+        self.sensorless_game = False
+        self.sensorless_ready_for_move = False
+        self.sensorless_selected_source: int | None = None
+        self.sensorless_waiting_visual = False
+        self.sensorless_confirmation_generation: int | None = None
+        self.sensorless_stop_reason: str | None = None
         self.route_snapshot_pending = False
+        self.route_snapshot_request_sent = False
         self.route_planning = False
         self.active_route_plan: MotionPlan | None = None
         self.route_commands: deque[str] = deque()
@@ -272,6 +283,7 @@ class AutomaticChessboardApp:
         self.route_motion_command_sent = False
         self.route_expected_occupancy: frozenset[int] = frozenset()
         self.route_generation = 0
+        self.session_generation = 0
         self.awaiting_promotion_confirmation = False
         self.engine_thinking = False
         self.session_active = False
@@ -503,7 +515,7 @@ class AutomaticChessboardApp:
         ttk.Label(
             engine_frame,
             text=("Stockfish and collision-safe rearrangement planning run on Windows. "
-                  "Firmware 4.3 executes one sensor-verified drag transaction at a time."),
+                  "Matching 5.0 firmware executes one fail-safe drag transaction at a time."),
             wraplength=470, style="Quiet.TLabel",
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
@@ -514,18 +526,25 @@ class AutomaticChessboardApp:
                         value="White").grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(game, text="Human plays Black", variable=self.human_side,
                         value="Black").grid(row=0, column=1, sticky="w")
+        self.game_input_mode = tk.StringVar(value=self.settings.get("game_input_mode", "Reed"))
+        ttk.Radiobutton(game, text="Verified reed switches", variable=self.game_input_mode,
+                        value="Reed").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Radiobutton(game, text="Move by tapping app", variable=self.game_input_mode,
+                        value="App").grid(row=1, column=1, sticky="w", pady=(7, 0))
         ttk.Button(game, text="Start game and calibrate", command=self._start_game).grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(10, 4))
-        ttk.Button(game, text="Stop game session", command=lambda: self._send("STOP")).grid(
-            row=2, column=0, sticky="ew", padx=(0, 3))
+            row=2, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+        ttk.Button(game, text="Stop game session", command=self._stop_game).grid(
+            row=3, column=0, sticky="ew", padx=(0, 3))
         ttk.Button(game, text="Save PGN...", command=self._save_pgn).grid(
-            row=2, column=1, sticky="ew", padx=(3, 0))
+            row=3, column=1, sticky="ew", padx=(3, 0))
         self.game_status = tk.StringVar(value="No game in progress")
         ttk.Label(game, textvariable=self.game_status, wraplength=470,
-                  style="Heading.TLabel").grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+                  style="Heading.TLabel").grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
+        self.play_board = ChessboardCanvas(self.play_tab, size=430)
+        self.play_board.grid(row=1, column=0, sticky="nsew", pady=(10, 0), padx=(0, 8))
         history = ttk.LabelFrame(self.play_tab, text="Move history", padding=8)
-        history.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
+        history.grid(row=1, column=1, sticky="nsew", pady=(10, 0))
         self.play_tab.rowconfigure(1, weight=1)
         self.move_history = tk.Text(history, height=15, state="disabled", font=("Consolas", 10))
         self.move_history.pack(fill="both", expand=True)
@@ -605,7 +624,7 @@ class AutomaticChessboardApp:
             wraplength=430,
         ).grid(row=1, column=0, sticky="ew", pady=(5, 8))
 
-        self.alignment_message = tk.StringVar(value="Connect firmware 4.5 or newer to begin.")
+        self.alignment_message = tk.StringVar(value="Connect matching 5.0 firmware to begin.")
         self.alignment_geometry_text = tk.StringVar(value="Current firmware geometry: not read")
         self.alignment_points_text = tk.StringVar(value="Point A: —   Point B: —")
         self.alignment_result_text = tk.StringVar(value="Result appears after two valid points.")
@@ -771,6 +790,7 @@ class AutomaticChessboardApp:
             "auto_monitor": self.auto_monitor.get(), "poll_seconds": self.poll_seconds.get(),
             "engine": self.engine_path.get(), "elo": self.elo.get(),
             "think_seconds": self.think_seconds.get(), "human_side": self.human_side.get(),
+            "game_input_mode": self.game_input_mode.get(),
             "route_seconds": self.route_seconds.get(),
             "route_temporary_pieces": self.route_temporary_pieces.get(),
             "camera_source": source,
@@ -810,6 +830,10 @@ class AutomaticChessboardApp:
 
     def _toggle_connection(self) -> None:
         if self.transport:
+            self._invalidate_game_session()
+            self.session_active = False
+            self.sensorless_ready_for_move = False
+            self._reset_route_orchestration(clear_pending=True)
             self.transport.close()
             self.transport = None
             self.model.connected = False
@@ -864,13 +888,13 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board before refreshing.", parent=self.root)
             return
-        self._queue_safe_requests("INFO", "TELEM", "BOARD")
+        self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
 
     @staticmethod
     def _expected_response(command: str) -> str:
         verb = command.split(maxsplit=1)[0].upper()
-        if verb in ("PING", "HELLO"):
-            return "PONG"
+        if verb == "HELLO":
+            return "HELLO"
         if verb == "BTTEST":
             return "BT"
         if command.strip().upper() == "ALIGN STATUS":
@@ -921,6 +945,7 @@ class AutomaticChessboardApp:
                                      command=command, expected=expected)
                 self.safe_request_pending = None
             self._dispatch_safe_request()
+            self._dispatch_route_snapshot()
             if (connected and self.auto_monitor.get() and not self.motion_expected and
                     not self.safe_request_pending and not self.safe_request_queue):
                 interval = max(1.0, float(self.poll_seconds.get()))
@@ -943,11 +968,13 @@ class AutomaticChessboardApp:
                 elif kind == "transport_status":
                     self._handle_transport_status(str(payload))
                 elif kind == "engine_move":
-                    self._send_engine_move(str(payload))
+                    self._send_engine_move(payload)
                 elif kind == "engine_error":
-                    self.engine_thinking = False
-                    self.game_status.set(f"Engine error: {payload}")
-                    self._append_log("error", "Stockfish", str(payload))
+                    if (isinstance(payload, tuple) and len(payload) == 2 and
+                            payload[0] == self.session_generation and self.session_active):
+                        self.engine_thinking = False
+                        self.game_status.set(f"Engine error: {payload[1]}")
+                        self._append_log("error", "Stockfish", str(payload[1]))
                 elif kind == "route_plan_ready":
                     self._begin_route_execution(payload)
                 elif kind == "route_plan_error":
@@ -983,11 +1010,14 @@ class AutomaticChessboardApp:
         lower = status.lower()
         if "connected" in lower and "disconnected" not in lower:
             self.model.connected = True
+            self.model.firmware = None
             if not self.manual_calibration_verified:
                 self.manual_status.set("Connected; calibrate from this page before moving.")
-            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
+            self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
         elif any(word in lower for word in ("disconnected", "interrupted", "stopped", "reconnecting")):
+            self._invalidate_game_session()
             self.model.connected = False
+            self.model.firmware = None
             self.safe_request_queue.clear()
             self.safe_request_pending = None
             self.manual_calibration_verified = False
@@ -1002,6 +1032,12 @@ class AutomaticChessboardApp:
                 "Connection lost. Reconnect and Read status; firmware keeps interrupted alignment unhomed."
             )
             self._reset_route_orchestration(clear_pending=True)
+            if self.sensorless_game and self.session_active:
+                self.session_active = False
+                self.sensorless_ready_for_move = False
+                self.game_status.set(
+                    "Connection lost in app-controlled play. Inspect the board and start a new calibrated game."
+                )
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
         self._refresh_visual_state()
@@ -1012,15 +1048,24 @@ class AutomaticChessboardApp:
         event = parse_event(line)
         self.response_counts[event.kind] = self.response_counts.get(event.kind, 0) + 1
         self._append_log("RX", event.kind, " ".join(event.args))
-        self._complete_safe_request(event.kind)
+        completion_kind = event.kind
+        if (event.kind == "ERR" and event.args[:1] == ("VERSION",) and
+                self.safe_request_pending and self.safe_request_pending[0] == "HELLO"):
+            completion_kind = "HELLO"
+        self._complete_safe_request(completion_kind)
         if event.kind == "INFO":
             try:
                 self.model.firmware = parse_info(event)
             except ValueError as error:
                 self.model.last_error = str(error)
             else:
-                if "ALIGN" in self.model.firmware.capabilities:
+                if self.model.firmware.compatible:
                     self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
+                else:
+                    self.model.last_error = (
+                        f"Software mismatch: app {SOFTWARE_VERSION}, firmware "
+                        f"{self.model.firmware.firmware}. Install the matching release on both."
+                    )
         elif event.kind == "GEOMETRY":
             try:
                 self.alignment_geometry = parse_geometry(event)
@@ -1098,7 +1143,7 @@ class AutomaticChessboardApp:
                 else:
                     self._verify_manual_sensors()
                     self._maybe_start_route_planning()
-        elif event.kind in ("READY", "PONG"):
+        elif event.kind in ("READY", "HELLO"):
             self._set_connection_text("Board connected and responding")
         elif event.kind == "SETUP":
             self.motion_expected = False
@@ -1109,7 +1154,11 @@ class AutomaticChessboardApp:
             if event.args[0] == "COMPUTER" and self.board.turn != self.human_color:
                 self._start_engine_think()
             elif event.args[0] == "HUMAN":
-                self.game_status.set("Your move. Press Button A on the board when complete.")
+                if self.sensorless_game:
+                    self.sensorless_ready_for_move = self.board.turn == self.human_color
+                    self.game_status.set("Your move. Tap your source square, then the destination.")
+                else:
+                    self.game_status.set("Your move. Press Button A on the board when complete.")
         elif event.kind == "MOVE" and event.args:
             self._accept_human_move(event.args[0])
         elif event.kind == "CALIBRATING":
@@ -1136,7 +1185,8 @@ class AutomaticChessboardApp:
                     self.route_deadline = 0.0
                     self.route_firmware_open = True
                     captured = self.active_route_plan.problem.captured_square
-                    if captured is not None:
+                    if (captured is not None and
+                            not self.active_route_plan.problem.deferred_capture):
                         if captured not in self.route_expected_occupancy:
                             self._route_plan_failed(
                                 PlanningError("Capture square was absent from the planned start frame")
@@ -1149,6 +1199,18 @@ class AutomaticChessboardApp:
                     self._advance_route_execution()
                 else:
                     self._route_plan_failed(PlanningError("PLAN acknowledgement mismatch"))
+        elif event.kind == "REMOVED":
+            if self.active_route_plan is not None and self.route_waiting_for == "REMOVED":
+                captured = self.active_route_plan.problem.captured_square
+                if captured not in self.route_expected_occupancy:
+                    self._route_plan_failed(PlanningError("Capture square was absent before removal"))
+                else:
+                    self.route_expected_occupancy = frozenset(
+                        square for square in self.route_expected_occupancy
+                        if square != captured
+                    )
+                    self.route_deadline = 0.0
+                    self._advance_route_execution()
         elif event.kind == "MOVING":
             self.motion_expected = True
             if event.args and event.args[0] in ("HEAD", "PIECE"):
@@ -1208,11 +1270,15 @@ class AutomaticChessboardApp:
                                 parent=self.root)
         elif event.kind == "PROMOTION" and event.args and event.args[0] == "OK":
             self.awaiting_promotion_confirmation = False
-            if self.board.is_game_over(claim_draw=True):
+            if self.sensorless_game and self.pending_engine_move is not None:
+                self._request_sensorless_visual_confirmation()
+            elif self.board.is_game_over(claim_draw=True):
                 self._finish_game()
         elif event.kind == "ESTOP":
+            self._invalidate_game_session()
             self.motion_expected = False
             self.session_active = False
+            self._reset_route_orchestration(clear_pending=True)
             self.game_status.set("REMOTE HALT REQUESTED — inspect the board locally")
             self.alignment_state = None
             self.alignment_pending = ""
@@ -1230,14 +1296,23 @@ class AutomaticChessboardApp:
                 self.alignment_pending = ""
                 self.alignment_message.set(f"Board rejected alignment: {' '.join(event.args)}")
         elif event.kind == "STOPPED":
+            stop_message = self.sensorless_stop_reason
+            self.sensorless_stop_reason = None
+            self._invalidate_game_session()
             self.session_active = False
             self.motion_expected = False
+            self.sensorless_ready_for_move = False
+            self.sensorless_waiting_visual = False
+            self.sensorless_selected_source = None
             self._reset_route_orchestration(clear_pending=True)
-            self.game_status.set("Remote game stopped; standalone mode remains available.")
+            self.game_status.set(
+                stop_message or "Remote game stopped; standalone mode remains available."
+            )
             self.alignment_state = None
             self.alignment_pending = ""
         self._render()
         self._refresh_visual_state()
+        self._dispatch_route_snapshot()
         self.root.after_idle(self._dispatch_safe_request)
 
     def _set_connection_text(self, text: str) -> None:
@@ -1279,7 +1354,9 @@ class AutomaticChessboardApp:
         else:
             for key in ("carriage", "magnet", "limit_a", "limit_b", "ram", "uptime"):
                 self.state_values[key].set("Unknown")
-        if self.model.sensor_squares is None:
+        if self.sensorless_game and self.session_active:
+            self.state_values["sensors"].set("Ignored · app-authoritative board")
+        elif self.model.sensor_squares is None:
             self.state_values["sensors"].set("Not read")
         else:
             count = len(self.model.sensor_squares)
@@ -1340,14 +1417,6 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
             return False
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if not {"CALIBRATE", "MANUAL"}.issubset(capabilities):
-            messagebox.showerror(
-                "Firmware update required",
-                "Install firmware 3.31 or newer to use in-app calibration and square movement.",
-                parent=self.root,
-            )
-            return False
         if not self._sensor_frame_ready():
             return False
         if self.session_active:
@@ -1376,12 +1445,11 @@ class AutomaticChessboardApp:
         return True
 
     def _sensor_frame_ready(self) -> bool:
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "SENSORFRAME" in capabilities:
+        if self.model.firmware and self.model.firmware.compatible:
             return True
         messagebox.showerror(
-            "Firmware update required",
-            "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.",
+            "Matching software required",
+            f"Install version {SOFTWARE_VERSION} on both this app and the Nano, then reconnect.",
             parent=self.root,
         )
         return False
@@ -1609,12 +1677,7 @@ class AutomaticChessboardApp:
         if not self.transport or not self.transport.is_connected:
             messagebox.showwarning("Not connected", "Connect to the board first.", parent=self.root)
             return
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "ALIGN" not in capabilities:
-            messagebox.showerror(
-                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
-                parent=self.root,
-            )
+        if not self._sensor_frame_ready():
             return
         self._queue_safe_requests("GEOMETRY", "ALIGN STATUS")
         self.alignment_message.set("Reading firmware geometry and any interrupted alignment session.")
@@ -1635,12 +1698,7 @@ class AutomaticChessboardApp:
             return
         if not self._manual_capability_ready():
             return
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "ALIGN" not in capabilities:
-            messagebox.showerror(
-                "Firmware update required", "Install firmware 4.5 or newer for board alignment.",
-                parent=self.root,
-            )
+        if not self._sensor_frame_ready():
             return
         if self.alignment_state and self.alignment_state.state in {"READY", "ACTIVE"}:
             messagebox.showwarning("Already aligning", "Finish the active alignment first.", parent=self.root)
@@ -1795,40 +1853,80 @@ class AutomaticChessboardApp:
             return
         if not self._sensor_frame_ready():
             return
+        sensorless = self.game_input_mode.get() == "App"
+        warning = (
+            "Confirm all pieces are in the standard starting position. Reed switches will be ignored: "
+            "select every human move by tapping the app board, do not move pieces by hand except when "
+            "prompted for promotion, and visually confirm every completed move. Any mismatch or lost "
+            "connection ends the game.\n\nCalibration can move the carriage; keep the mechanism clear "
+            "and the physical power cutoff available."
+            if sensorless else
+            "Confirm that the camera or local view is clear, no hands are near the mechanism, "
+            "and a physical power cutoff is available.\n\nStart calibration now?"
+        )
         if not messagebox.askyesno(
             "Calibration will move the carriage",
-            "Confirm that the camera or local view is clear, no hands are near the mechanism, "
-            "and a physical power cutoff is available.\n\nStart calibration now?",
+            warning,
             icon="warning", parent=self.root,
         ):
             return
         if not self._ensure_engine():
             return
+        self._invalidate_game_session()
         self.board.reset()
         self._reset_route_orchestration(clear_pending=True)
         self.awaiting_promotion_confirmation = False
         self.engine_thinking = False
+        self.sensorless_game = sensorless
+        self.sensorless_ready_for_move = False
+        self.sensorless_selected_source = None
+        self.sensorless_waiting_visual = False
+        self.sensorless_stop_reason = None
+        self.pending_move_is_human = False
         self.human_color = chess.WHITE if self.human_side.get() == "White" else chess.BLACK
         self.session_active = True
         self.motion_expected = True
         self._render()
-        self._send("START W" if self.human_color == chess.WHITE else "START B")
+        self._send(start_game_command(self.human_color == chess.WHITE, app_board=sensorless))
         self.game_status.set("Calibration requested. Keep hands clear and watch the board.")
+
+    def _stop_game(self) -> None:
+        delivered = bool(self.transport and self.transport.is_connected and self._send("STOP", quiet=True))
+        self._invalidate_game_session()
+        self.session_active = False
+        self.motion_expected = False
+        self.sensorless_ready_for_move = False
+        self._reset_route_orchestration(clear_pending=True)
+        self.game_status.set(
+            "Stop requested; inspect the board before restarting."
+            if delivered else
+            "Stop was not delivered; use the physical cutoff and inspect the board."
+        )
+        self._render()
 
     def _emergency_halt(self) -> None:
         if not self.transport or not self.transport.is_connected:
+            self._invalidate_game_session()
+            self.session_active = False
+            self.sensorless_ready_for_move = False
+            self._reset_route_orchestration(clear_pending=True)
             messagebox.showwarning(
                 "No radio connection",
                 "The halt command cannot be delivered. Use the board's physical power cutoff.",
                 parent=self.root,
             )
             return
-        self._send("!", quiet=True)
+        delivered = self._send("!", quiet=True)
+        self._invalidate_game_session()
         self.motion_expected = False
         self.session_active = False
         self._reset_route_orchestration(clear_pending=True)
-        self.game_status.set("REMOTE HALT SENT — verify locally; use physical power if motion continues")
-        self.recorder.record("safety", "remote_halt_sent")
+        if delivered:
+            self.game_status.set("REMOTE HALT SENT — verify locally; use physical power if motion continues")
+            self.recorder.record("safety", "remote_halt_sent")
+        else:
+            self.game_status.set("REMOTE HALT NOT DELIVERED — use the physical cutoff and inspect locally")
+            self.recorder.record("safety", "remote_halt_failed")
 
     def _resolve_human_move(self, text: str) -> chess.Move | None:
         candidates = [move for move in self.board.legal_moves if move.uci().startswith(text)]
@@ -1859,25 +1957,41 @@ class AutomaticChessboardApp:
         else:
             self._start_engine_think()
 
+    def _invalidate_game_session(self) -> None:
+        self.session_generation += 1
+        self.engine_thinking = False
+        self.pending_move_generation = None
+        self.sensorless_confirmation_generation = None
+        self.sensorless_waiting_visual = False
+
     def _start_engine_think(self) -> None:
-        if self.engine_thinking or not self.engine or self.board.turn == self.human_color:
+        if (self.engine_thinking or not self.engine or not self.session_active or
+                self.board.turn == self.human_color):
             return
         self.engine_thinking = True
         position = self.board.copy()
+        generation = self.session_generation
         limit = chess.engine.Limit(time=max(0.05, self.think_seconds.get()))
         self.game_status.set("Stockfish is thinking on Windows...")
 
         def worker() -> None:
             try:
                 result = self.engine.play(position, limit)
-                self.events.put(("engine_move", result.move.uci()))
+                self.events.put(("engine_move", (generation, result.move.uci())))
             except Exception as error:
-                self.events.put(("engine_error", error))
+                self.events.put(("engine_error", (generation, error)))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _send_engine_move(self, uci: str) -> None:
+    def _send_engine_move(self, payload: object) -> None:
+        if (not isinstance(payload, tuple) or len(payload) != 2 or
+                not isinstance(payload[0], int)):
+            return
+        generation, raw_uci = payload
+        if generation != self.session_generation or not self.session_active:
+            return
         self.engine_thinking = False
+        uci = str(raw_uci)
         try:
             move = chess.Move.from_uci(uci)
         except ValueError:
@@ -1887,36 +2001,101 @@ class AutomaticChessboardApp:
             self.game_status.set(f"Stockfish returned illegal move {uci}")
             return
 
-        self.pending_engine_move = move
-        capabilities = self.model.firmware.capabilities if self.model.firmware else frozenset()
-        if "PLANROUTE" in capabilities:
-            self.safe_request_queue.clear()
-            self.safe_request_pending = None
-            self.route_snapshot_pending = True
-            self.route_planning = False
-            self.motion_expected = True
-            self.route_waiting_for = "BOARD"
-            self.route_current_command = "BOARD"
-            self.route_deadline = time.monotonic() + ROUTE_CONTROL_TIMEOUT_S
-            self.game_status.set("Reading all 64 sensors before collision-safe route planning...")
-            if not self._send("BOARD", quiet=True):
-                self._reset_route_orchestration(clear_pending=True)
-                self.game_status.set("Could not request the physical board snapshot.")
+        self._request_physical_move(move, human=False, generation=generation)
+
+    def _sensorless_square_clicked(self, square: int) -> None:
+        if not (self.sensorless_game and self.sensorless_ready_for_move and
+                self.session_active and self.board.turn == self.human_color):
+            return
+        piece = self.board.piece_at(square)
+        if self.sensorless_selected_source is None:
+            if piece is None or piece.color != self.human_color:
+                self.game_status.set("Select one of your pieces.")
+                return
+            self.sensorless_selected_source = square
+            self.game_status.set(f"Selected {square_name(square)}. Tap its destination.")
+            self._render()
             return
 
-        # Backward compatibility for firmware 4.0 and earlier. Legal chess moves
-        # retain the original direct/knight physical planner.
-        command = play_command(
-            uci,
-            castling=self.board.is_castling(move),
-            en_passant=self.board.is_en_passant(move),
+        source = self.sensorless_selected_source
+        if piece is not None and piece.color == self.human_color:
+            self.sensorless_selected_source = square
+            self.game_status.set(f"Selected {square_name(square)}. Tap its destination.")
+            self._render()
+            return
+        candidates = [
+            move for move in self.board.legal_moves
+            if move.from_square == source and move.to_square == square
+        ]
+        if not candidates:
+            self.game_status.set(
+                f"{square_name(source)} to {square_name(square)} is not legal. Select another destination."
+            )
+            return
+        move = candidates[0]
+        promotions = [candidate for candidate in candidates if candidate.promotion]
+        if promotions:
+            answer = simpledialog.askstring(
+                "Promotion", "Promote to Q, R, B, or N:", initialvalue="Q", parent=self.root
+            )
+            symbol = (answer or "Q").strip().lower()[:1]
+            move = next(
+                (candidate for candidate in promotions
+                 if chess.piece_symbol(candidate.promotion or chess.QUEEN) == symbol),
+                None,
+            )
+            if move is None:
+                self.game_status.set("Choose Q, R, B, or N for promotion.")
+                return
+        self.sensorless_selected_source = None
+        self.sensorless_ready_for_move = False
+        self._request_physical_move(move, human=True)
+
+    def _request_physical_move(
+        self, move: chess.Move, *, human: bool, generation: int | None = None
+    ) -> None:
+        move_generation = self.session_generation if generation is None else generation
+        if not self.session_active or move_generation != self.session_generation:
+            return
+        if self.pending_engine_move is not None:
+            self.game_status.set("A physical move is already in progress.")
+            return
+
+        self.pending_engine_move = move
+        self.pending_move_is_human = human
+        self.pending_move_generation = move_generation
+        self.safe_request_queue.clear()
+        self.route_snapshot_pending = True
+        self.route_snapshot_request_sent = False
+        self.route_planning = False
+        self.motion_expected = True
+        self.route_waiting_for = "BOARD"
+        self.route_current_command = "BOARD"
+        self.route_deadline = 0.0
+        self.game_status.set(
+            "Checking a fresh virtual app/Nano board state before collision-safe routing..."
+            if self.sensorless_game else
+            "Reading all 64 sensors before collision-safe route planning..."
         )
-        if self._send(command):
-            self.motion_expected = True
-            self.game_status.set(f"Board is moving {uci}; keep hands clear.")
+        self._dispatch_route_snapshot()
+
+    def _dispatch_route_snapshot(self) -> None:
+        if (not self.route_snapshot_pending or self.route_snapshot_request_sent or
+                self.safe_request_pending is not None):
+            return
+        if not self.transport or not self.transport.is_connected:
+            self._route_plan_failed(PlanningError("Could not request a fresh board snapshot"))
+            return
+        if not self._send("BOARD", quiet=True):
+            self._route_plan_failed(PlanningError("Could not request a fresh board snapshot"))
+            return
+        self.route_snapshot_request_sent = True
+        self.route_deadline = time.monotonic() + ROUTE_CONTROL_TIMEOUT_S
 
     def _maybe_start_route_planning(self) -> None:
-        if not self.route_snapshot_pending or self.pending_engine_move is None:
+        if (not self.route_snapshot_pending or not self.route_snapshot_request_sent or
+                self.pending_engine_move is None or
+                self.pending_move_generation != self.session_generation):
             return
         self.route_snapshot_pending = False
         self.route_waiting_for = ""
@@ -1961,6 +2140,8 @@ class AutomaticChessboardApp:
                     position,
                     move,
                     physical_occupancy=occupancy,
+                    deferred_capture=True,
+                    edge_capture_exit=True,
                     config=config,
                 )
                 self.events.put(("route_plan_ready", (generation, plan)))
@@ -1983,7 +2164,8 @@ class AutomaticChessboardApp:
             return
         payload = result
         move = self.pending_engine_move
-        if move is None or payload.problem.move_uci != move.uci():
+        if (move is None or self.pending_move_generation != self.session_generation or
+                payload.problem.move_uci != move.uci()):
             self._route_plan_failed(PlanningError("Stale route plan was discarded"))
             return
         try:
@@ -2032,22 +2214,24 @@ class AutomaticChessboardApp:
         self.route_waiting_for = (
             "PLAN" if verb == "PLAN" else
             "MOVED" if verb == "DRAG" else
+            "REMOVED" if verb == "REMOVE" else
             "BOARD" if verb == "BOARD" else
             "DONE" if verb == "COMMIT" else ""
         )
         self.route_current_command = command
         plan_has_capture = (
-            verb == "PLAN" and self.active_route_plan.problem.captured_square is not None
+            verb == "PLAN" and self.active_route_plan.problem.captured_square is not None and
+            not self.active_route_plan.problem.deferred_capture
         )
         timeout = (
             ROUTE_MOTION_TIMEOUT_S
-            if verb == "DRAG" or plan_has_capture
+            if verb in {"DRAG", "REMOVE"} or plan_has_capture
             else ROUTE_CONTROL_TIMEOUT_S
         )
         self.route_deadline = time.monotonic() + timeout
-        if verb == "DRAG" or plan_has_capture:
-            # A capture is removed during PLAN. Once any physical command is
-            # issued, a missing reply cannot prove the starting arrangement.
+        if verb in {"DRAG", "REMOVE"} or plan_has_capture:
+            # Once any physical command is issued, a missing reply cannot prove
+            # the starting arrangement.
             self.route_motion_command_sent = True
         if not self.route_waiting_for or not self._send(command, quiet=True):
             self._route_plan_failed(PlanningError(f"Could not send route command {verb}"))
@@ -2063,8 +2247,8 @@ class AutomaticChessboardApp:
             error = actual_error
         detail = str(error) or error.__class__.__name__
         self.recorder.record("route", "plan_failed", error=detail)
-        # A non-capture PLAN is reversible because no magnet motion was issued.
-        # Never attempt automatic cancellation after capture/DRAG motion: a
+        # PLAN is reversible because no magnet motion was issued. Never
+        # attempt automatic cancellation after REMOVE/DRAG motion: a
         # lost acknowledgement leaves the physical arrangement uncertain.
         connected = self.transport is not None and self.transport.is_connected
         can_cancel = (
@@ -2081,6 +2265,7 @@ class AutomaticChessboardApp:
         if connected:
             self._send("STOP", quiet=True)
         uncertain = self.route_motion_command_sent
+        self._invalidate_game_session()
         self._reset_route_orchestration(clear_pending=True)
         self.motion_expected = False
         self.session_active = False
@@ -2095,6 +2280,7 @@ class AutomaticChessboardApp:
     def _reset_route_orchestration(self, *, clear_pending: bool) -> None:
         self.route_generation += 1
         self.route_snapshot_pending = False
+        self.route_snapshot_request_sent = False
         self.route_planning = False
         self.active_route_plan = None
         self.route_commands.clear()
@@ -2106,11 +2292,26 @@ class AutomaticChessboardApp:
         self.route_expected_occupancy = frozenset()
         if clear_pending:
             self.pending_engine_move = None
+            self.pending_move_is_human = False
+            self.pending_move_generation = None
+            self.sensorless_confirmation_generation = None
+            self.sensorless_waiting_visual = False
+            self.sensorless_selected_source = None
 
     def _complete_engine_move(self, reported: str) -> None:
         move = self.pending_engine_move
-        if move is None or not move.uci().startswith(reported):
+        if (move is None or self.pending_move_generation != self.session_generation or
+                not move.uci().startswith(reported)):
             self.game_status.set(f"Unexpected motion completion: {reported}")
+            return
+        if self.sensorless_game:
+            self.motion_expected = False
+            self.awaiting_promotion_confirmation = bool(move.promotion)
+            self._reset_route_orchestration(clear_pending=False)
+            if move.promotion:
+                self.game_status.set("Move finished. Replace the promoted pawn when the board prompts you.")
+            else:
+                self._request_sensorless_visual_confirmation()
             return
         self.board.push(move)
         self.awaiting_promotion_confirmation = bool(move.promotion)
@@ -2121,20 +2322,97 @@ class AutomaticChessboardApp:
         else:
             self.game_status.set("Your move. Press Button A when complete.")
 
+    def _request_sensorless_visual_confirmation(self) -> None:
+        move = self.pending_engine_move
+        generation = self.pending_move_generation
+        if (move is None or generation is None or generation != self.session_generation or
+                self.sensorless_waiting_visual or not self.session_active):
+            return
+        self.sensorless_waiting_visual = True
+        self.sensorless_confirmation_generation = generation
+        preview = self.board.copy(stack=False)
+        preview.push(move)
+        if hasattr(self, "play_board"):
+            self.play_board.set_state(preview, None, self.human_color == chess.BLACK)
+            self.play_board.set_interaction(frozenset(), None)
+        matches = messagebox.askyesno(
+            "Confirm the physical board",
+            f"The carriage reports {move.uci()} complete. Visually compare the entire physical board "
+            "with the app board. Did every piece finish on the shown square?\n\nChoose No for any "
+            "slip, collision, dropped piece, obstruction, or uncertainty. The game will stop safely.",
+            icon="warning",
+            parent=self.root,
+        )
+        if self.sensorless_confirmation_generation == generation:
+            self.sensorless_waiting_visual = False
+        if (not self.session_active or generation != self.session_generation or
+                self.sensorless_confirmation_generation != generation or
+                self.pending_move_generation != generation or self.pending_engine_move != move):
+            return
+        self.sensorless_confirmation_generation = None
+        if not matches:
+            mismatch_message = (
+                "App-controlled game stopped after a visual mismatch. "
+                "Inspect the board and recalibrate."
+            )
+            self.sensorless_stop_reason = mismatch_message
+            self._send("STOP", quiet=True)
+            self._invalidate_game_session()
+            self.session_active = False
+            self.sensorless_ready_for_move = False
+            self._reset_route_orchestration(clear_pending=True)
+            self.game_status.set(mismatch_message)
+            self._render()
+            return
+        human_move = self.pending_move_is_human
+        self.board.push(move)
+        self.awaiting_promotion_confirmation = False
+        self.pending_engine_move = None
+        self.pending_move_is_human = False
+        self.pending_move_generation = None
+        self._render()
+        if self.board.is_game_over(claim_draw=True):
+            self._finish_game()
+        elif human_move:
+            self.game_status.set("Move confirmed. Stockfish is thinking.")
+            self._start_engine_think()
+        else:
+            self.sensorless_ready_for_move = True
+            self.game_status.set("Your move. Tap your source square, then the destination.")
+
     def _finish_game(self) -> None:
         outcome = self.board.outcome(claim_draw=True)
         result = outcome.result() if outcome else "*"
         self._send(f"GAMEOVER {result}")
         self.game_status.set(f"Game over: {result}")
+        self._invalidate_game_session()
         self.session_active = False
+        self.sensorless_ready_for_move = False
 
     def _render(self) -> None:
         self.model.expected_squares = expected_occupancy(self.board)
         telemetry = self.model.telemetry
         carriage = (telemetry.trolley_x, telemetry.trolley_y) if telemetry else None
+        sensor_overlay = None if self.sensorless_game and self.session_active else self.model.sensor_squares
         if hasattr(self, "board_canvas"):
-            self.board_canvas.set_state(self.board, self.model.sensor_squares,
+            self.board_canvas.set_state(self.board, sensor_overlay,
                                         self.human_color == chess.BLACK, carriage)
+        if hasattr(self, "play_board"):
+            self.play_board.set_state(
+                self.board, sensor_overlay, self.human_color == chess.BLACK, carriage
+            )
+            can_select = (
+                self.sensorless_game and self.sensorless_ready_for_move and self.session_active and
+                self.board.turn == self.human_color and self.pending_engine_move is None and
+                not self.sensorless_waiting_visual
+            )
+            selected = (
+                frozenset({self.sensorless_selected_source})
+                if self.sensorless_selected_source is not None else frozenset()
+            )
+            self.play_board.set_interaction(
+                selected, self._sensorless_square_clicked if can_select else None
+            )
         if hasattr(self, "move_history"):
             lines = []
             replay = chess.Board()
@@ -2174,11 +2452,11 @@ class AutomaticChessboardApp:
         connected = bool(self.transport and self.transport.is_connected)
         self._set_diag("connection", "Pass" if connected else "Fail",
                        self.model.connection_text, "pass" if connected else "fail")
-        expected = ("PONG", "INFO", "TELEM", "BOARD")
+        expected = ("HELLO", "INFO", "TELEM", "BOARD")
         baseline = {kind: self.response_counts.get(kind, 0) for kind in expected}
         self.diagnostic_batch = (baseline, time.monotonic() + (18.0 if connected else 0.0))
         if connected:
-            self._queue_safe_requests("PING", "INFO", "TELEM", "BOARD")
+            self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
         for key in ("firmware", "telemetry", "sensors", "controls"):
             self._set_diag(key, "Running", "Waiting for board response...", "warn")
 
@@ -2220,14 +2498,15 @@ class AutomaticChessboardApp:
         def fresh(kind: str) -> bool:
             return self.response_counts.get(kind, 0) > baseline.get(kind, 0)
 
-        connected = bool(self.transport and self.transport.is_connected and fresh("PONG"))
+        connected = bool(self.transport and self.transport.is_connected and fresh("HELLO"))
         self._set_diag("connection", "Pass" if connected else "Fail",
-                       self.model.connection_text if connected else "No current PONG response",
+                       self.model.connection_text if connected else "No matching HELLO response",
                        "pass" if connected else "fail")
         info = self.model.firmware if fresh("INFO") else None
-        self._set_diag("firmware", "Pass" if info else "Fail",
+        info_ok = bool(info and info.compatible)
+        self._set_diag("firmware", "Pass" if info_ok else "Fail",
                        f"Firmware {info.firmware}, protocol {info.protocol}" if info else "No INFO response",
-                       "pass" if info else "fail")
+                       "pass" if info_ok else "fail")
         telemetry = self.model.telemetry if fresh("TELEM") else None
         self._set_diag("telemetry", "Pass" if telemetry else "Fail",
                        self.model.sequence_name() if telemetry else "No TELEM response",
@@ -2354,10 +2633,10 @@ class AutomaticChessboardApp:
     def _send_developer_command(self) -> None:
         command = self.developer_command.get().strip()
         verb = command.split(maxsplit=1)[0].upper() if command else ""
-        if verb in {"PLAN", "DRAG", "COMMIT"}:
+        if verb in {"PLAN", "DRAG", "REMOVE", "COMMIT"}:
             messagebox.showwarning(
                 "Verified route command reserved",
-                "PLAN, DRAG, and COMMIT are owned by automatic route orchestration.",
+                "PLAN, DRAG, REMOVE, and COMMIT are owned by automatic route orchestration.",
                 parent=self.root,
             )
             return
@@ -2428,6 +2707,7 @@ class AutomaticChessboardApp:
         )
 
     def _on_close(self) -> None:
+        self._invalidate_game_session()
         self._save_settings()
         self.recorder.record("app", "session_closed")
         if self.camera:

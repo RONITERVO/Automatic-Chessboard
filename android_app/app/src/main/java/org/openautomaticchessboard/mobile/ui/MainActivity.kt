@@ -108,7 +108,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private var alignmentPointA: AlignmentPoint? = null
     private var alignmentPointB: AlignmentPoint? = null
     private var alignmentPending = ""
-    private var alignmentMessage = "Connect firmware 4.5 or newer to align the board."
+    private var alignmentMessage = "Connect matching 5.0 firmware to align the board."
     private val ui = Handler(Looper.getMainLooper())
     private val ageRefreshRunnable = object : Runnable {
         override fun run() {
@@ -124,12 +124,29 @@ class MainActivity : Activity(), BoardRepository.Observer {
         recorder = EventRecorder(this)
         repository = BoardRepository(recorder)
         engine = StockfishEngine(this)
-        game = GameController(engine, repository, ::onGameChanged) { reported, choose ->
-            AlertDialog.Builder(this).setTitle("Promotion")
-                .setItems(arrayOf("Queen", "Rook", "Bishop", "Knight")) { _, index ->
-                    choose(charArrayOf('q', 'r', 'b', 'n')[index])
-                }.setCancelable(false).show()
-        }
+        game = GameController(
+            engine,
+            repository,
+            ::onGameChanged,
+            onPromotionChoice = { _, choose ->
+                AlertDialog.Builder(this).setTitle("Promotion")
+                    .setItems(arrayOf("Queen", "Rook", "Bishop", "Knight")) { _, index ->
+                        choose(charArrayOf('q', 'r', 'b', 'n')[index])
+                    }.setCancelable(false).show()
+            },
+            onBoardVerification = { move, confirm ->
+                AlertDialog.Builder(this).setTitle("Confirm the physical board")
+                    .setMessage(
+                        "The carriage reports $move complete. Compare the entire physical board with " +
+                            "the app. Did every piece finish on the shown square?\n\nChoose Mismatch for " +
+                            "any slip, collision, dropped piece, obstruction, or uncertainty."
+                    )
+                    .setPositiveButton("Board matches") { _, _ -> confirm(true) }
+                    .setNegativeButton("Mismatch — stop") { _, _ -> confirm(false) }
+                    .setCancelable(false)
+                    .show()
+            },
+        )
         game.elo = prefs.getInt("elo", 2000)
         game.thinkMillis = prefs.getLong("think_ms", 800)
         game.routeTimeMillis = prefs.getLong("route_ms", 8_000)
@@ -224,7 +241,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         fun update() {
             val state = monitorState
             board.pieces = gameState.pieces
-            board.sensors = state.sensorSquares
+            board.sensors = if (gameState.active && gameState.appControlled) null else state.sensorSquares
             board.flipped = !gameState.humanWhite
             board.trolley = trolleyPosition(state)
             val (label, level) = state.health()
@@ -247,7 +264,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun buildPlay(): View {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val board = ChessboardView(this).apply {
-            pieces = gameState.pieces; sensors = monitorState.sensorSquares; flipped = !gameState.humanWhite
+            pieces = gameState.pieces
+            sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            selectedSquares = gameState.selectedSquares
+            onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
+            flipped = !gameState.humanWhite
             trolley = trolleyPosition()
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -270,12 +291,17 @@ class MainActivity : Activity(), BoardRepository.Observer {
         ))
         playUpdater = {
             board.pieces = gameState.pieces
-            board.sensors = monitorState.sensorSquares
+            board.sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            board.selectedSquares = gameState.selectedSquares
+            board.onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
             board.flipped = !gameState.humanWhite
             board.trolley = trolleyPosition()
             status.text = gameState.status
             side.white.background = rounded(if (gameState.humanWhite) ACCENT_DARK else SURFACE)
             side.black.background = rounded(if (!gameState.humanWhite) ACCENT_DARK else SURFACE)
+            val appMoves = prefs.getBoolean("app_controlled_play", false)
+            side.mode.text = if (appMoves) "Moves: App" else "Moves: Reeds"
+            side.mode.background = rounded(if (appMoves) ACCENT_DARK else SURFACE)
             history.text = historyPageText()
         }
         playUpdater?.invoke()
@@ -296,9 +322,19 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 game.chooseHumanSide(false)
             }
         }
+        val mode = button(
+            if (prefs.getBoolean("app_controlled_play", false)) "Moves: App" else "Moves: Reeds"
+        ) {
+            if (!gameState.active) {
+                val enabled = !prefs.getBoolean("app_controlled_play", false)
+                prefs.edit().putBoolean("app_controlled_play", enabled).apply()
+                playUpdater?.invoke()
+            }
+        }
         row.addView(white, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         row.addView(black, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = dp(4) })
-        return SideSelector(row, white, black)
+        row.addView(mode, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, .9f).apply { marginStart = dp(4) })
+        return SideSelector(row, white, black, mode)
     }
 
     private fun buildPlaySliders(landscape: Boolean): View {
@@ -647,8 +683,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
     override fun onBoardEvent(event: BoardEvent) {
         game.handle(event)
         when (event.kind) {
-            "INFO" -> if (runCatching { Protocol.parseInfo(event) }.getOrNull()
-                    ?.capabilities?.contains("ALIGN") == true) {
+            "INFO" -> if (runCatching { Protocol.parseInfo(event) }.getOrNull()?.compatible == true) {
                 repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
             }
             "GEOMETRY" -> runCatching { Protocol.parseGeometry(event) }
@@ -921,22 +956,28 @@ class MainActivity : Activity(), BoardRepository.Observer {
 
     private fun confirmStartGame() {
         if (!monitorState.connected) { toast("Connect to the board first"); return }
+        val appControlled = prefs.getBoolean("app_controlled_play", false)
         if (!sensorFrameReady()) return
+        val message = if (appControlled) {
+            "Confirm all pieces are in the standard starting position. Reed switches will be ignored: " +
+                "select every human move by tapping this app, never move pieces by hand except when prompted " +
+                "for promotion, and visually confirm every completed move. Any mismatch or lost connection " +
+                "ends the game.\n\nCalibration can move the carriage. Keep the mechanism clear and the " +
+                "physical power cutoff accessible."
+        } else {
+            "Confirm the complete board is clear, both limits were tested locally, live state is current, " +
+                "and physical power cutoff is accessible."
+        }
         AlertDialog.Builder(this).setTitle("Calibration can move the carriage")
-            .setMessage("Confirm the complete board is clear, both limits were tested locally, live state is current, and physical power cutoff is accessible.")
+            .setMessage(message)
             .setPositiveButton("Start calibration") { _, _ ->
                 val white = prefs.getBoolean("human_white", true)
-                game.start(white).onFailure { alert("Could not start", it.message ?: it.toString()) }
+                game.start(white, appControlled).onFailure { alert("Could not start", it.message ?: it.toString()) }
             }.setNegativeButton("Cancel", null).show()
     }
 
     private fun manualCapabilityReady(): Boolean {
         if (!monitorState.connected) { toast("Connect to the board first"); return false }
-        val capabilities = monitorState.firmware?.capabilities.orEmpty()
-        if (!capabilities.containsAll(setOf("MANUAL", "CALIBRATE"))) {
-            alert("Firmware update required", "Install firmware 3.31 or newer to use in-app calibration and square movement.")
-            return false
-        }
         if (!sensorFrameReady()) return false
         if (gameState.active) { alert("Game active", "Stop the game session before manual head or piece movement."); return false }
         if (alignmentIsActive()) { alert("Alignment active", "Record or finish board alignment first."); return false }
@@ -948,8 +989,11 @@ class MainActivity : Activity(), BoardRepository.Observer {
     }
 
     private fun sensorFrameReady(): Boolean {
-        if ("SENSORFRAME" in monitorState.firmware?.capabilities.orEmpty()) return true
-        alert("Firmware update required", "Install firmware 3.31 or newer so reed sensors and carriage coordinates agree.")
+        if (monitorState.firmware?.compatible == true) return true
+        alert(
+            "Matching software required",
+            "Install version ${Protocol.SOFTWARE_VERSION} on both this app and the Nano, then reconnect.",
+        )
         return false
     }
 
@@ -1063,8 +1107,8 @@ class MainActivity : Activity(), BoardRepository.Observer {
             alignmentMessage = "Connect to the board first."
             return
         }
-        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
-            alignmentMessage = "Firmware 4.5 or newer is required for alignment."
+        if (monitorState.firmware?.compatible != true) {
+            alignmentMessage = "App and Nano must both run ${Protocol.SOFTWARE_VERSION}."
             return
         }
         repository.enqueueRequests("GEOMETRY", "ALIGN STATUS")
@@ -1074,10 +1118,6 @@ class MainActivity : Activity(), BoardRepository.Observer {
     private fun startAlignmentChoice() {
         if (alignmentPending.isNotEmpty()) { toast("Wait for the current operation"); return }
         if (!manualCapabilityReady()) return
-        if ("ALIGN" !in monitorState.firmware?.capabilities.orEmpty()) {
-            alert("Firmware update required", "Install firmware 4.5 or newer for board alignment.")
-            return
-        }
         if (!manualCalibrationVerified) {
             alert("Calibrate first", "Calibrate and wait for the e6 telemetry proof before alignment.")
             return
@@ -1426,5 +1466,5 @@ class MainActivity : Activity(), BoardRepository.Observer {
         private const val REQ_SNAPSHOT = 203
     }
 
-    private data class SideSelector(val view: View, val white: Button, val black: Button)
+    private data class SideSelector(val view: View, val white: Button, val black: Button, val mode: Button)
 }

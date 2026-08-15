@@ -9,7 +9,8 @@ import org.openautomaticchessboard.mobile.protocol.Telemetry
 class MonitorStateTest {
     @Test fun mismatchIsVisibleAndActionable() {
         val state = MonitorState(
-            connected = true, lastSeenMs = 10_000, firmware = FirmwareInfo("ACB2", "3.29", setOf("BOARD")),
+            connected = true, lastSeenMs = 10_000,
+            firmware = FirmwareInfo("ACB2", "3.29", "NANO", setOf("BOARD")),
             sensorSquares = (MonitorState.initialOccupancy - 12) + 28,
             expectedSquares = MonitorState.initialOccupancy,
         )
@@ -17,6 +18,19 @@ class MonitorStateTest {
         assertEquals(setOf(28), state.unexpectedSquares())
         assertEquals(HealthLevel.WARN, state.health(10_100).second)
         assertTrue(state.guidance().contains("differ"))
+    }
+
+    @Test fun incompatibleFirmwareIsBadWhenOccupancyMatches() {
+        val now = 10_000L
+        val state = MonitorState(
+            connected = true,
+            lastSeenMs = now,
+            firmware = FirmwareInfo("ACB2", "3.29", "NANO", setOf("BOARD")),
+            sensorSquares = MonitorState.initialOccupancy,
+            sensorUpdatedMs = now,
+        )
+        assertEquals("App/firmware version mismatch", state.health(now).first)
+        assertEquals(HealthLevel.BAD, state.health(now).second)
     }
 
     @Test fun faultOutranksMismatch() {
@@ -47,9 +61,9 @@ class MonitorStateTest {
         val state = MonitorState(
             connected = true,
             lastSeenMs = now,
-            firmware = FirmwareInfo("ACB2", "3.29", setOf("TELEM", "BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("TELEM", "BOARD")),
             telemetry = Telemetry(
-                protocol = "ACB2", sequence = 1, homed = false, remoteMode = false,
+                protocol = "ACB3", sequence = 1, homed = false, remoteMode = false,
                 motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
                 buttonAReleased = true, buttonBReleased = true, buttonBRaw = 1023,
                 freeRam = 728, uptimeSeconds = 42,
@@ -65,7 +79,7 @@ class MonitorStateTest {
         val now = 20_000L
         val base = MonitorState(
             connected = true, lastSeenMs = now,
-            firmware = FirmwareInfo("ACB2", "3.29", setOf("BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("BOARD")),
             sensorSquares = MonitorState.initialOccupancy,
             sensorUpdatedMs = 1_000L,
         )

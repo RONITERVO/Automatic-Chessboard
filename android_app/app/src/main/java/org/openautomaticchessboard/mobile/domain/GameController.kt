@@ -25,9 +25,11 @@ import java.util.concurrent.Executors
 data class GameSnapshot(
     val active: Boolean,
     val humanWhite: Boolean,
+    val appControlled: Boolean,
     val status: String,
     val pieces: Map<Int, Piece>,
     val expectedSquares: Set<Int>,
+    val selectedSquares: Set<Int>,
     val history: List<String>,
     val engineThinking: Boolean,
 )
@@ -37,15 +39,24 @@ class GameController(
     private val channel: GameBoardChannel,
     private val onChanged: (GameSnapshot) -> Unit,
     private val onPromotionChoice: (reported: String, choose: (Char) -> Unit) -> Unit,
+    private val onBoardVerification: (move: String, confirm: (Boolean) -> Unit) -> Unit,
 ) : AutoCloseable {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "chess-engine").apply { isDaemon = true } }
     private var board = Board()
     private var moveList = MoveList()
     private var active = false
+    private var gameGeneration = 0L
     private var humanWhite = true
+    private var appControlled = false
+    private var appMoveReady = false
     private var status = "No game in progress"
+    private var stopStatusOverride: String? = null
     private var pendingEngineMove: Move? = null
+    private var pendingMoveIsHuman = false
+    private var selectedSource: Int? = null
+    private var physicalMoveComplete = false
+    private var waitingVisualConfirmation = false
     private var engineThinking = false
     private var awaitingPromotionConfirmation = false
     private var routePhase = RoutePhase.NONE
@@ -53,6 +64,7 @@ class GameController(
     private val routeCommands = ArrayDeque<String>()
     private var routeCurrentCommand = ""
     private var routeExpectedOccupancy = emptySet<Int>()
+    private var routeCaptureSquare: Int? = null
     private var routeSnapshotRequestedMs = 0L
     private var routeMotionSent = false
     private var routeExclusive = false
@@ -65,12 +77,22 @@ class GameController(
     var routeMaxTemporaryPieces = 10
 
     val snapshot: GameSnapshot get() {
+        val pending = pendingEngineMove
+        val shown = if (appControlled && physicalMoveComplete && pending != null) {
+            Board().apply {
+                loadFromFen(board.fen)
+                doMove(Move(pending.toString(), sideToMove), true)
+            }
+        } else board
         val pieces = (0..63).mapNotNull { index ->
-            val piece = board.getPiece(Square.values()[index])
+            val piece = shown.getPiece(Square.values()[index])
             if (piece == Piece.NONE) null else index to piece
         }.toMap()
         val sans = runCatching { moveList.toSanArray().toList() }.getOrElse { moveList.map(Move::toString) }
-        return GameSnapshot(active, humanWhite, status, pieces, pieces.keys, sans, engineThinking)
+        return GameSnapshot(
+            active, humanWhite, appControlled, status, pieces, pieces.keys,
+            selectedSource?.let(::setOf) ?: emptySet(), sans, engineThinking,
+        )
     }
 
     fun chooseHumanSide(white: Boolean) {
@@ -79,22 +101,33 @@ class GameController(
         publish()
     }
 
-    fun start(humanPlaysWhite: Boolean): Result<Unit> = runCatching {
+    fun start(humanPlaysWhite: Boolean, useAppBoard: Boolean = false): Result<Unit> = runCatching {
         check(!active) { "Stop the current game first" }
         check(engine.isInstalled) { "Stockfish is unavailable for this Android CPU" }
+        check(channel.connected && channel.softwareCompatible) {
+            "App and Nano must both run ${Protocol.SOFTWARE_VERSION}"
+        }
         resetRoute()
+        gameGeneration++
         board = Board()
         moveList = MoveList()
         active = true
         humanWhite = humanPlaysWhite
+        appControlled = useAppBoard
+        appMoveReady = false
         pendingEngineMove = null
+        pendingMoveIsHuman = false
+        selectedSource = null
+        physicalMoveComplete = false
+        waitingVisualConfirmation = false
+        stopStatusOverride = null
         awaitingPromotionConfirmation = false
         status = "Calibration requested. Keep hands clear."
         publish()
-        channel.sendCommand(if (humanWhite) "START W" else "START B").getOrThrow()
+        channel.sendCommand(Protocol.startGameCommand(humanWhite, appControlled)).getOrThrow()
     }.onFailure {
         if (!closed) {
-            active = false
+            invalidateGameSession()
             status = it.message ?: "Could not start game"
             publish()
         }
@@ -103,9 +136,14 @@ class GameController(
     fun stop() {
         val result = if (routeExclusive) channel.abortRouteTransaction() else channel.sendCommand("STOP")
         resetRoute()
-        active = false
+        invalidateGameSession()
         engineThinking = false
         pendingEngineMove = null
+        selectedSource = null
+        physicalMoveComplete = false
+        waitingVisualConfirmation = false
+        appMoveReady = false
+        stopStatusOverride = null
         status = result.fold(
             onSuccess = { "Stop requested" },
             onFailure = { "Stop was not delivered: ${it.message ?: "connection failed"}" },
@@ -125,29 +163,86 @@ class GameController(
                 "COMPUTER" -> when {
                     !active -> status = "Ignored computer turn: no remote game is active."
                     sideToMoveIsHuman() -> status = "Ignored computer turn: the logical position expects the human."
-                    else -> startEngineThink()
+                    else -> { appMoveReady = false; startEngineThink() }
                 }
-                "HUMAN" -> status = "Your move. Press Button A on the board when complete."
+                "HUMAN" -> status = if (appControlled) {
+                    appMoveReady = sideToMoveIsHuman()
+                    "Your move. Tap your source square, then the destination."
+                } else "Your move. Press Button A on the board when complete."
             }
-            "MOVE" -> event.args.firstOrNull()?.let(::acceptHumanMove)
+            "MOVE" -> if (!appControlled) event.args.firstOrNull()?.let(::acceptHumanMove)
             "MOVING" -> status = "Carriage is moving. Keep hands clear."
             "DONE" -> event.args.firstOrNull()?.let(::completeEngineMove)
             "PROMOTE" -> status = "Replace pawn with ${event.args.firstOrNull()?.uppercase() ?: "piece"}, then press Button A."
             "PROMOTION" -> if (event.args.firstOrNull() == "OK") {
                 awaitingPromotionConfirmation = false
-                if (isGameOver()) finishGame() else status = "Your move."
+                if (appControlled && pendingEngineMove != null) requestVisualConfirmation()
+                else if (isGameOver()) finishGame() else status = "Your move."
             }
             "ESTOP" -> {
-                active = false; engineThinking = false; pendingEngineMove = null
+                invalidateGameSession(); engineThinking = false; pendingEngineMove = null
+                appMoveReady = false
                 status = "REMOTE HALT SENT — inspect locally"
             }
             "ERR" -> status = "Board error: ${event.args.joinToString(" ")}"
             "STOPPED" -> {
-                active = false; engineThinking = false; pendingEngineMove = null
-                status = "Remote game stopped; standalone mode remains available."
+                val stopMessage = stopStatusOverride
+                stopStatusOverride = null
+                invalidateGameSession(); engineThinking = false; pendingEngineMove = null
+                selectedSource = null; physicalMoveComplete = false; waitingVisualConfirmation = false
+                appMoveReady = false
+                status = stopMessage ?: "Remote game stopped; standalone mode remains available."
             }
         }
         publish()
+    }
+
+    fun selectAppSquare(index: Int) {
+        if (!active || !appControlled || !appMoveReady || !sideToMoveIsHuman() || pendingEngineMove != null ||
+            routePhase != RoutePhase.NONE || engineThinking || waitingVisualConfirmation) return
+        val square = Square.values().getOrNull(index) ?: return
+        val piece = board.getPiece(square)
+        val humanSide = if (humanWhite) Side.WHITE else Side.BLACK
+        val source = selectedSource
+        if (source == null) {
+            if (piece == Piece.NONE || piece.pieceSide != humanSide) {
+                status = "Select one of your pieces."
+            } else {
+                selectedSource = index
+                status = "Selected ${squareName(index)}. Tap its destination."
+            }
+            publish()
+            return
+        }
+        if (piece != Piece.NONE && piece.pieceSide == humanSide) {
+            selectedSource = index
+            status = "Selected ${squareName(index)}. Tap its destination."
+            publish()
+            return
+        }
+        val matches = board.legalMoves().filter {
+            it.from.ordinal == source && it.to.ordinal == index
+        }
+        if (matches.isEmpty()) {
+            status = "${squareName(source)} to ${squareName(index)} is not legal."
+            publish()
+            return
+        }
+        val promotions = matches.filter { it.promotion != Piece.NONE }
+        if (promotions.isNotEmpty()) {
+            onPromotionChoice("${squareName(source)}${squareName(index)}") { symbol ->
+                val chosen = promotions.firstOrNull {
+                    it.toString().last() == symbol.lowercaseChar()
+                } ?: promotions.first()
+                selectedSource = null
+                appMoveReady = false
+                requestPhysicalMove(chosen, human = true)
+            }
+        } else {
+            selectedSource = null
+            appMoveReady = false
+            requestPhysicalMove(matches.first(), human = true)
+        }
     }
 
     private fun acceptHumanMove(reported: String) {
@@ -189,13 +284,14 @@ class GameController(
         engineThinking = true
         status = "Stockfish is thinking on this phone…"
         val fen = board.fen
+        val generation = gameGeneration
         val selectedElo = elo
         val selectedTime = thinkMillis
         publish()
         worker.execute {
             val result = runCatching { engine.bestMove(fen, selectedElo, selectedTime) }
             main.post {
-                if (closed) return@post
+                if (closed || generation != gameGeneration) return@post
                 engineThinking = false
                 if (!active || board.fen != fen) {
                     status = "Ignored completed engine analysis because the game position changed."
@@ -207,7 +303,7 @@ class GameController(
                     else sendEngineMove(move)
                 }.onFailure {
                     status = "Stockfish failed: ${it.message}"
-                    active = false
+                    invalidateGameSession()
                 }
                 publish()
             }
@@ -220,28 +316,28 @@ class GameController(
             status = "Stockfish returned illegal move $uci"
             return
         }
-        pendingEngineMove = move
-        if ("PLANROUTE" in channel.firmwareCapabilities) {
-            routePhase = RoutePhase.SNAPSHOT
-            routeGeneration++
-            routeSnapshotRequestedMs = System.currentTimeMillis()
-            status = "Reading board for collision-safe routing…"
-            channel.sendCommand("BOARD")
-                .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
-                .onFailure { failRoute(it.message ?: "Could not request the board snapshot") }
+        requestPhysicalMove(move, human = false)
+    }
+
+    private fun requestPhysicalMove(move: Move, human: Boolean) {
+        if (pendingEngineMove != null) {
+            status = "A physical move is already in progress."
+            publish()
             return
         }
-        val movingPiece = board.getPiece(move.from)
-        val castling = movingPiece.pieceType == PieceType.KING &&
-            kotlin.math.abs(move.from.ordinal % 8 - move.to.ordinal % 8) == 2
-        val enPassant = movingPiece.pieceType == PieceType.PAWN && board.getPiece(move.to) == Piece.NONE &&
-            move.from.ordinal % 8 != move.to.ordinal % 8
-        channel.sendCommand(Protocol.playCommand(uci, castling, enPassant)).onSuccess {
-            status = "Board is moving $uci; keep hands clear."
-        }.onFailure {
-            pendingEngineMove = null
-            status = it.message ?: "Could not request engine move"
+        pendingEngineMove = move
+        pendingMoveIsHuman = human
+        routePhase = RoutePhase.SNAPSHOT
+        routeGeneration++
+        routeSnapshotRequestedMs = System.currentTimeMillis()
+        status = if (appControlled) {
+            "Checking a fresh virtual board snapshot for collision-safe routing…"
+        } else {
+            "Reading all 64 sensors for collision-safe routing…"
         }
+        channel.sendCommand("BOARD")
+            .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }
+            .onFailure { failRoute(it.message ?: "Could not request the board snapshot") }
     }
 
     private fun handleRouteEvent(event: BoardEvent): Boolean {
@@ -250,6 +346,7 @@ class GameController(
             "BOARD" -> handleRouteBoard()
             "PLAN" -> handleRoutePlan(event)
             "MOVED" -> handleRouteMoved(event)
+            "REMOVED" -> handleRouteRemoved(event)
             "DONE" -> handleRouteDone(event)
             "ERR" -> {
                 failRoute(event.args.joinToString(" ").ifBlank { "unknown route error" })
@@ -265,6 +362,20 @@ class GameController(
 
     private fun handleRouteBoard(): Boolean {
         if (routePhase == RoutePhase.SNAPSHOT) {
+            val updatedMs = channel.sensorUpdatedMs
+            if (updatedMs == null || updatedMs < routeSnapshotRequestedMs) {
+                cancelRouteTimeout()
+                routeSnapshotRequestedMs = System.currentTimeMillis()
+                status = if (appControlled) {
+                    "Refreshing the virtual board snapshot for collision-safe routing…"
+                } else {
+                    "Refreshing all 64 sensors for collision-safe routing…"
+                }
+                channel.sendCommand("BOARD")
+                    .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "fresh BOARD snapshot") }
+                    .onFailure { failRoute(it.message ?: "Could not refresh the board snapshot") }
+                return true
+            }
             cancelRouteTimeout()
             startRoutePlanning()
             return true
@@ -290,16 +401,34 @@ class GameController(
             failRoute("PLAN acknowledgement mismatch")
             return true
         }
-        val captured = activeRoutePlan?.problem?.capturedSquare
-        if (captured != null) {
+        val captured = routeCaptureSquare
+        if (captured != null && activeRoutePlan?.problem?.deferredCapture != true) {
             if (captured !in routeExpectedOccupancy) {
                 failRoute("Capture square was absent from the planned start frame")
                 return true
             }
             routeExpectedOccupancy = routeExpectedOccupancy - captured
+            routeCaptureSquare = null
         }
         cancelRouteTimeout()
         advanceRoute()
+        return true
+    }
+
+    private fun handleRouteRemoved(event: BoardEvent): Boolean {
+        if (routePhase != RoutePhase.REMOVED) {
+            failRoute("Unexpected REMOVED acknowledgement")
+            return true
+        }
+        val captured = routeCaptureSquare
+        if (captured == null || captured !in routeExpectedOccupancy) {
+            failRoute("Capture square was absent before removal")
+        } else {
+            routeExpectedOccupancy = routeExpectedOccupancy - captured
+            routeCaptureSquare = null
+            cancelRouteTimeout()
+            advanceRoute()
+        }
         return true
     }
 
@@ -319,6 +448,7 @@ class GameController(
                 "Route occupancy diverged before sensor proof"
             }
             routeExpectedOccupancy = (routeExpectedOccupancy - drag.source) + drag.target
+            if (routeCaptureSquare == drag.source) routeCaptureSquare = drag.target
             cancelRouteTimeout()
             advanceRoute()
         } catch (error: Exception) {
@@ -351,7 +481,7 @@ class GameController(
         val sensorUpdatedMs = channel.sensorUpdatedMs
         val expected = logicalOccupancy()
         if (sensorUpdatedMs == null || sensorUpdatedMs < routeSnapshotRequestedMs) {
-            failRoute("The board snapshot was stale; request a fresh sensor frame")
+            failRoute("The requested fresh board snapshot was not received")
             return
         }
         if (sensors == null || sensors != expected) {
@@ -367,7 +497,13 @@ class GameController(
         val problem = try {
             val position = Board().apply { loadFromFen(board.fen) }
             val immutableMove = Move(move.toString(), position.sideToMove)
-            planningProblemFromChess(position, immutableMove, sensors.toSet())
+            planningProblemFromChess(
+                position,
+                immutableMove,
+                sensors.toSet(),
+                deferredCapture = true,
+                edgeCaptureExit = true,
+            )
         } catch (error: Exception) {
             failRoute(error.message ?: "Could not construct a route problem")
             return
@@ -419,6 +555,7 @@ class GameController(
             routeCommands.addAll(commands)
             routeExpectedOccupancy = plan.problem.initialPhysicalOccupancy
                 ?: plan.problem.initialOccupancyBeforeCapture
+            routeCaptureSquare = plan.problem.capturedSquare
             routeMotionSent = false
             status = "Route ready: ${plan.dragCount} drags, ${plan.temporaryPieceCount} temporary. Keep hands clear."
             advanceRoute()
@@ -439,15 +576,19 @@ class GameController(
             "PLAN" -> RoutePhase.PLAN
             "BOARD" -> RoutePhase.BOARD
             "DRAG" -> RoutePhase.MOVED
+            "REMOVE" -> RoutePhase.REMOVED
             "COMMIT" -> RoutePhase.DONE
             else -> {
                 failRoute("Unknown route command $verb")
                 return
             }
         }
-        val planHasCapture = verb == "PLAN" && activeRoutePlan?.problem?.capturedSquare != null
-        if (verb == "DRAG" || planHasCapture) routeMotionSent = true
-        val timeout = if (verb == "DRAG" || planHasCapture) ROUTE_MOTION_TIMEOUT_MS else ROUTE_CONTROL_TIMEOUT_MS
+        val planHasCapture = verb == "PLAN" && activeRoutePlan?.problem?.capturedSquare != null &&
+            activeRoutePlan?.problem?.deferredCapture != true
+        if (verb == "DRAG" || verb == "REMOVE" || planHasCapture) routeMotionSent = true
+        val timeout = if (verb == "DRAG" || verb == "REMOVE" || planHasCapture) {
+            ROUTE_MOTION_TIMEOUT_MS
+        } else ROUTE_CONTROL_TIMEOUT_MS
         armRouteTimeout(timeout, verb)
         channel.sendRouteCommand(command).onFailure {
             failRoute(it.message ?: "Could not send route command $verb")
@@ -478,8 +619,13 @@ class GameController(
         }
         resetRoute()
         pendingEngineMove = null
+        pendingMoveIsHuman = false
+        selectedSource = null
+        physicalMoveComplete = false
+        waitingVisualConfirmation = false
+        appMoveReady = false
         engineThinking = false
-        active = false
+        invalidateGameSession()
         val recovery = if (uncertain) {
             "The last action may have changed the board; inspect every square before recovery."
         } else {
@@ -498,6 +644,7 @@ class GameController(
         routeCommands.clear()
         routeCurrentCommand = ""
         routeExpectedOccupancy = emptySet()
+        routeCaptureSquare = null
         routeSnapshotRequestedMs = 0L
         routeMotionSent = false
     }
@@ -505,6 +652,16 @@ class GameController(
     fun connectionChanged(isConnected: Boolean) {
         if (!isConnected && routePhase != RoutePhase.NONE) {
             failRoute("Board connection was lost during route execution", attemptStop = false)
+            publish()
+        } else if (!isConnected && appControlled && active) {
+            resetRoute()
+            pendingEngineMove = null
+            selectedSource = null
+            physicalMoveComplete = false
+            waitingVisualConfirmation = false
+            appMoveReady = false
+            invalidateGameSession()
+            status = "Connection lost in app-controlled play. Inspect the board and start a new calibrated game."
             publish()
         }
     }
@@ -522,6 +679,15 @@ class GameController(
             status = "Unexpected motion completion: $reported"
             return
         }
+        if (appControlled) {
+            physicalMoveComplete = true
+            awaitingPromotionConfirmation = move.promotion != Piece.NONE
+            status = if (awaitingPromotionConfirmation) {
+                "Move finished. Replace the promoted pawn when the board prompts you."
+            } else "Move finished. Visually verify the physical board."
+            if (!awaitingPromotionConfirmation) requestVisualConfirmation()
+            return
+        }
         if (!board.doMove(move, true)) {
             status = "Completed board move is illegal in the logical game"
             return
@@ -531,6 +697,63 @@ class GameController(
         pendingEngineMove = null
         if (isGameOver() && !awaitingPromotionConfirmation) finishGame()
         else status = "Your move. Press Button A when complete."
+    }
+
+    private fun requestVisualConfirmation() {
+        val move = pendingEngineMove ?: return
+        if (waitingVisualConfirmation || !active) return
+        waitingVisualConfirmation = true
+        val generation = gameGeneration
+        status = "Compare the physical board with the app before continuing."
+        publish()
+        onBoardVerification(move.toString()) { matches ->
+            main.post { finishVisualConfirmation(matches, generation) }
+        }
+    }
+
+    private fun finishVisualConfirmation(matches: Boolean, generation: Long) {
+        val move = pendingEngineMove
+        if (generation != gameGeneration || !waitingVisualConfirmation || move == null || !active) return
+        waitingVisualConfirmation = false
+        if (!matches) {
+            val mismatchMessage =
+                "App-controlled game stopped after a visual mismatch. Inspect the board and recalibrate."
+            stopStatusOverride = mismatchMessage
+            channel.sendCommand("STOP")
+            resetRoute()
+            pendingEngineMove = null
+            pendingMoveIsHuman = false
+            selectedSource = null
+            physicalMoveComplete = false
+            appMoveReady = false
+            invalidateGameSession()
+            status = mismatchMessage
+            publish()
+            return
+        }
+        val humanMove = pendingMoveIsHuman
+        if (!board.doMove(move, true)) {
+            channel.sendCommand("STOP")
+            invalidateGameSession()
+            appMoveReady = false
+            status = "Completed physical move became illegal in the logical game. Inspect the board."
+            publish()
+            return
+        }
+        moveList.add(move)
+        pendingEngineMove = null
+        pendingMoveIsHuman = false
+        physicalMoveComplete = false
+        awaitingPromotionConfirmation = false
+        if (isGameOver()) finishGame()
+        else if (humanMove) {
+            status = "Move confirmed. Stockfish is thinking."
+            startEngineThink()
+        } else {
+            appMoveReady = true
+            status = "Your move. Tap your source square, then the destination."
+        }
+        publish()
     }
 
     private fun sideToMoveIsHuman(): Boolean = (board.sideToMove == Side.WHITE) == humanWhite
@@ -547,7 +770,9 @@ class GameController(
         val result = result()
         channel.sendCommand("GAMEOVER $result")
         status = "Game over: $result"
-        active = false
+        invalidateGameSession()
+        appMoveReady = false
+        selectedSource = null
     }
 
     fun pgn(): String {
@@ -572,11 +797,16 @@ $moves $result
 
     private fun publish() { if (!closed) onChanged(snapshot) }
 
+    private fun invalidateGameSession() {
+        gameGeneration++
+        active = false
+    }
+
     override fun close() {
         if (routeExclusive && channel.connected) channel.abortRouteTransaction()
         resetRoute()
         closed = true
-        active = false
+        invalidateGameSession()
         engineThinking = false
         pendingEngineMove = null
         main.removeCallbacksAndMessages(null)
@@ -584,7 +814,7 @@ $moves $result
         engine.close()
     }
 
-    private enum class RoutePhase { NONE, SNAPSHOT, PLANNING, PLAN, BOARD, MOVED, DONE }
+    private enum class RoutePhase { NONE, SNAPSHOT, PLANNING, PLAN, BOARD, MOVED, REMOVED, DONE }
 
     companion object {
         private const val ROUTE_PLANNING_TIMEOUT_MS = 8_000L

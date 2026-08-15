@@ -26,7 +26,7 @@ if ($HardwareProfile -eq "mks-gen-l-v1") {
 }
 else {
   if (-not $Fqbn) { $Fqbn = "arduino:avr:nano:cpu=atmega328old" }
-  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 29500 }
+  if (-not $PSBoundParameters.ContainsKey("MaxFlashBytes")) { $MaxFlashBytes = 29900 }
   if (-not $PSBoundParameters.ContainsKey("MaxRamBytes")) { $MaxRamBytes = 1115 }
   $profileBuildFlags = ""
 }
@@ -103,7 +103,10 @@ try {
   try {
     $ErrorActionPreference = "Continue"
     $result = & $cli @compileArguments 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "$HardwareProfile compilation failed." }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host $result.TrimEnd()
+      throw "$HardwareProfile compilation failed."
+    }
   }
   finally {
     $ErrorActionPreference = $previousErrorActionPreference

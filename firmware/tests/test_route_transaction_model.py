@@ -82,6 +82,7 @@ class RouteTransactionModelTests(unittest.TestCase):
     def test_capture_en_passant_promotion_and_standard_castling(self):
         capture = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
         capture.begin("PLAN e4d5-d5")
+        capture.remove_capture()
         self.assertNotIn(square_index("d5"), capture.observed)
         capture.drag("DRAG e4e5")
         capture.drag("DRAG e5d5")
@@ -89,6 +90,7 @@ class RouteTransactionModelTests(unittest.TestCase):
 
         en_passant = MotionlessRouteExecutor({square_index("e5"), square_index("d5")})
         en_passant.begin("PLAN e5d6-d5")
+        en_passant.remove_capture()
         en_passant.drag("DRAG e5e6")
         en_passant.drag("DRAG e6d6")
         self.assertEqual("DONE e5d6", en_passant.commit())
@@ -116,6 +118,29 @@ class RouteTransactionModelTests(unittest.TestCase):
             queen_side.drag(f"DRAG d{other_rank}d{rank}")
             self.assertEqual(f"DONE e{rank}c{rank}", queen_side.commit())
 
+    def test_capture_removal_waits_until_an_orthogonal_exit_path_exists(self):
+        model = MotionlessRouteExecutor({
+            square_index("c6"), square_index("e5"), square_index("d5"),
+            square_index("f5"), square_index("e4"), square_index("e6"),
+        })
+        self.assertEqual("PLAN READY", model.begin("PLAN c6e5-e5"))
+        assert_error(self, "CAPTURE", model.remove_capture)
+        model.drag("DRAG d5d4")
+        self.assertEqual("REMOVED", model.remove_capture())
+        self.assertNotIn(square_index("e5"), model.observed)
+
+    def test_capture_can_be_dragged_to_any_a_file_exit_before_removal(self):
+        model = MotionlessRouteExecutor({
+            square_index("c6"), square_index("e5"), square_index("a4"),
+            square_index("d5"), square_index("e6"),
+        })
+        self.assertEqual("PLAN READY", model.begin("PLAN c6e5-e5"))
+        model.drag("DRAG e5e3")
+        model.drag("DRAG e3a3")
+        self.assertEqual("REMOVED", model.remove_capture())
+        self.assertNotIn(square_index("a3"), model.observed)
+        self.assertIn(square_index("a4"), model.observed)
+
     def test_exact_commit_cancellation_and_incomplete_plan(self):
         source, target = square_index("a1"), square_index("a2")
         cancelled = MotionlessRouteExecutor({source})
@@ -131,6 +156,15 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertFalse(incomplete.active)
         self.assertEqual(frozenset({square_index('b1')}), incomplete.expected)
         self.assertNotEqual(frozenset({target}), incomplete.expected)
+
+    def test_capture_pending_cannot_be_silently_committed(self):
+        model = MotionlessRouteExecutor({square_index("c6"), square_index("e5")})
+        model.begin("PLAN c6e5-e5")
+        model.drag("DRAG e5e4")
+        assert_error(self, "PLAN INCOMPLETE", model.commit)
+        self.assertTrue(model.active)
+        self.assertIn(square_index("e4"), model.observed)
+        self.assertIn(square_index("e4"), model.expected)
 
     def test_pre_plan_pre_drag_and_post_drag_sensor_faults(self):
         stale = MotionlessRouteExecutor({square_index("a1")})
@@ -154,12 +188,12 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertFalse(post_drag.active)
 
         capture_fault = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
+        capture_fault.begin("PLAN e4d5-d5")
         assert_error(
             self,
             "SENSORS",
-            lambda: capture_fault.begin(
-                "PLAN e4d5-d5",
-                observed_after_capture={square_index("e4"), square_index("d5")},
+            lambda: capture_fault.remove_capture(
+                observed_after={square_index("e4"), square_index("d5")},
             ),
         )
         self.assertTrue(capture_fault.fault)

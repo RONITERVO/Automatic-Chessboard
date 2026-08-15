@@ -105,7 +105,12 @@ void prepareManualAiPlacement() {
   byte to_file = lastM[2] - 'a' + 1;
   byte to_rank = lastM[3] - '0';
   move_from = NO_SQUARE;
-  if (carriedPathClear(from_file, from_rank, to_file, to_rank, 0, 0)) {
+  // physicalSensorsMatchExpected() has just refreshed reed_sensor_record with
+  // the manually cleared capture square. Retry the same direct-then-routed
+  // policy as an ordinary standalone AI move; do not force a reachable knight
+  // or blocked straight move into a second manual phase.
+  if (carriedPathClear(from_file, from_rank, to_file, to_rank, 0, 0) ||
+      carriedRouteClear(from_file, from_rank, to_file, to_rank, NO_SQUARE)) {
     beginAiTurn();
     return;
   }

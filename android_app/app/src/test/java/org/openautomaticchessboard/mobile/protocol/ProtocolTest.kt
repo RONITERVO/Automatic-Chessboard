@@ -22,12 +22,18 @@ class ProtocolTest {
     }
 
     @Test fun parsesInfoTelemetryAndBoard() {
-        val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 3.29 BOARD,TELEM,REMOTE,ESTOP"))
-        assertEquals("3.29", info.firmware)
+        val info = Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.1 NANO"))
+        assertEquals("5.0.1", info.firmware)
+        assertTrue(info.compatible)
         assertTrue("ESTOP" in info.capabilities)
-        val current = Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 3.31 BOARD,TELEM,MANUAL,SENSORFRAME"))
-        assertTrue("SENSORFRAME" in current.capabilities)
-        val telemetry = Protocol.parseTelemetry(Protocol.parseEvent("TELEM ACB2 17 1 1 0 0 5 6 1 1 1023 847 65"))
+        assertEquals(
+            "MKS_GEN_L_V1",
+            Protocol.parseInfo(Protocol.parseEvent("INFO ACB3 5.0.1 MKS_GEN_L_V1")).hardware,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            Protocol.parseInfo(Protocol.parseEvent("INFO ACB2 4.8.0 BOARD,TELEM"))
+        }
+        val telemetry = Protocol.parseTelemetry(Protocol.parseEvent("TELEM ACB3 17 1 1 0 0 5 6 1 1 1023 847 65"))
         assertEquals(17, telemetry.sequence)
         assertTrue(telemetry.homed)
         assertEquals(1023, telemetry.buttonBRaw)
@@ -44,7 +50,7 @@ class ProtocolTest {
     @Test fun classifiesAndBuildsGuardedCommands() {
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("TELEM"))
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("SWTEST"))
-        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAY e2e4"))
+        assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("PLAY e2e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("CALIBRATE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("HEAD e4"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PIECE e2e4"))
@@ -52,6 +58,7 @@ class ProtocolTest {
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("JOG W+"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("PLAN e2e4---"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("DRAG e2e4"))
+        assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("REMOVE"))
         assertEquals(CommandRisk.MOTION, Protocol.classifyCommand("COMMIT"))
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("GEOMETRY"))
         assertEquals(CommandRisk.READ_ONLY, Protocol.classifyCommand("ALIGN STATUS"))
@@ -60,9 +67,9 @@ class ProtocolTest {
         assertEquals(CommandRisk.CONTROL, Protocol.classifyCommand("STOP"))
         assertEquals(CommandRisk.EMERGENCY, Protocol.classifyCommand("!"))
         assertEquals(CommandRisk.UNKNOWN, Protocol.classifyCommand("MOTOR 1"))
-        assertEquals("PLAY e1g1 C", Protocol.playCommand("e1g1", castling = true))
-        assertEquals("PLAY e5d6 E", Protocol.playCommand("e5d6", enPassant = true))
-        assertThrows(IllegalArgumentException::class.java) { Protocol.playCommand("z9z8") }
+        assertEquals("START W", Protocol.startGameCommand(humanWhite = true))
+        assertEquals("START B APP", Protocol.startGameCommand(humanWhite = false, appBoard = true))
+        assertEquals("HELLO 5.0.1", Protocol.helloCommand())
         assertEquals("HEAD e6", Protocol.headCommand("e6"))
         assertEquals("PIECE e2e4", Protocol.pieceCommand("e2", "e4"))
         assertEquals("ALIGN h7 H", Protocol.alignmentCommand("h7"))
@@ -95,6 +102,7 @@ class ProtocolTest {
         assertEquals("PLAN a7a8q--", Protocol.planCommand("a7a8q"))
         assertEquals("PLAN e1g1k--", Protocol.planCommand("e1g1", castlingSide = "kingside"))
         assertEquals("PLAN e5d6-d5", Protocol.planCommand("e5d6", Protocol.squareIndex("d5")))
+        assertEquals("REMOVE", Protocol.removeCommand(Protocol.squareIndex("d5")))
 
         val request = Protocol.parsePlanCommand("PLAN e5d6-d5")
         assertEquals("e5d6", request.uci)

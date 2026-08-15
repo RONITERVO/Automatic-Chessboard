@@ -26,10 +26,11 @@ boolean drainForEmergencyStop(Stream &input, HostInputBuffer &buffer) {
     char value = input.read();
     if (value == '!') requested = true;
     if (value == '\r' || value == '\n') {
-      buffer.overflowed = false;
+      buffer.flags &= ~HOST_INPUT_OVERFLOWED;
     }
-    else if (value >= 32 && value <= 126 && value != '!' && !buffer.overflowed) {
-      buffer.overflowed = true;
+    else if (value >= 32 && value <= 126 && value != '!' &&
+             !(buffer.flags & HOST_INPUT_OVERFLOWED)) {
+      buffer.flags |= HOST_INPUT_OVERFLOWED;
       sendHostError(F("BUSY"));
     }
     buffer.length = 0;
@@ -186,10 +187,10 @@ boolean queenAlignedSquares(byte from_x, byte from_y, byte to_x, byte to_y) {
   return !squares_x || !squares_y || squares_x == squares_y;
 }
 
-// A carried square-to-square move must itself be queen-aligned. Connected
-// planners express knights and every other turning route as separate DRAGs
-// that stop on square centres. Never restore a continuous knight/S-curve here:
-// unequal or turning carry paths lose full steps on the physical mechanism.
+// A carried square-to-square segment must itself be queen-aligned. Connected
+// planners and the standalone empty-square search express every turning route
+// as separate segments that stop on square centres. Never restore a continuous
+// knight/S-curve here: unequal or turning carries lose full steps physically.
 boolean moveHeldPieceSafely(byte from_x, byte from_y, byte to_x, byte to_y) {
   int dx = ((int)to_x - from_x) * (int)FILE_PITCH_STEPS;
   int dy = ((int)to_y - from_y) * (int)RANK_PITCH_STEPS;

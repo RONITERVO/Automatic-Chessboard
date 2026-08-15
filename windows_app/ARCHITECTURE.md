@@ -32,9 +32,9 @@ timing, magnet cutoff, straight-corridor validation, per-drag occupancy proof,
 and final-frame proof.
 
 This separation keeps the Nano maintainable and makes future planners replaceable
-without weakening the hardware guardrails. The app uses the `PLANROUTE`
-capability when available and falls back to the firmware 4.0 `PLAY` command for
-older boards.
+without weakening the hardware guardrails. Version 5.0 has one route-transaction
+contract and no direct-move fallback. An exact `HELLO 5.0.1` handshake gates all
+control and motion commands.
 
 ## Routing model
 
@@ -51,6 +51,14 @@ The bounded best-first search can:
 - recursively move secondary blockers to free a trapped piece;
 - handle capture removal, en passant, promotion occupancy, and both standard
   castling sides.
+
+Capture removal is itself a bounded search transition. The captured piece
+becomes a tracked transaction
+object: Windows routes it through empty square centres to any available `a1`-
+`a8` exit using ordinary verified `DRAG`s, then sends `REMOVE`. A zero-disturbance
+path therefore wins even when it winds around occupied squares. Only when every
+edge exit is disconnected does the normal dependency/parking search move another
+piece. There is no version-dependent routing branch in the 5.0 companion.
 
 Candidate corridors and parking squares are ranked before full configuration
 search. Disturbance count dominates the cost, followed by the physical number of
@@ -73,14 +81,28 @@ stale by disconnect, stop, or a newer move.
 Execution is one command at a time:
 
 ```text
-PLAN -> BOARD -> (DRAG -> BOARD)* -> COMMIT
+PLAN -> BOARD -> (DRAG -> BOARD)* -> [capture DRAG(s) -> BOARD -> REMOVE -> BOARD] ->
+        (DRAG -> BOARD)* -> COMMIT
 ```
 
 Windows waits for the exact acknowledgement, maintains its own expected
 occupancy frame, and applies separate control and motion timeouts. The Nano also
-checks the authoritative occupancy frame locally. After any capture or drag, a
-lost or mismatched acknowledgement makes physical state uncertain and ends the
-session instead of retrying.
+checks the authoritative occupancy frame locally. `PLAN` is motionless;
+after any `REMOVE` or drag, a lost or mismatched acknowledgement makes physical
+state uncertain and ends the session instead of retrying.
+
+`APPBOARD` provides an explicit second authority mode rather than weakening that
+proof opportunistically. In `APPBOARD` play, both human and AI moves originate
+in the UI. The Nano seeds and independently updates a virtual standard-position
+occupancy frame; `BOARD` exposes that command-derived frame so the existing
+transaction comparison remains intact without sampling reed inputs. After
+`DONE`, Windows previews the intended result and blocks all further moves until
+the user visually confirms the whole physical board. A mismatch sends `STOP` on
+a best-effort basis while transport remains available. After connection loss,
+Windows invalidates the logical session without claiming that `STOP` was
+delivered. Both cases require physical inspection and recalibration through the
+established recovery procedure. Code must never auto-switch authority based on
+sensor quality.
 
 ## Threading
 
@@ -97,7 +119,10 @@ polling pauses until they finish or fail.
 ## State authority
 
 - `python-chess` is authoritative for legal rules and expected piece identity.
-- Reed sensors are authoritative only for physical occupancy.
+- Reed sensors are authoritative only for physical occupancy in verified mode.
+- In explicitly selected `APPBOARD` play, command-derived Nano/app occupancy is
+  authoritative for routing while human visual confirmation is the only
+  physical feedback.
 - The Nano normalizes raw multiplexer rows through the fixed hardware row map
   before move logic or `BOARD` telemetry consumes them.
 - Nano telemetry reports commanded/calculated controller state.
@@ -108,11 +133,10 @@ polling pauses until they finish or fail.
 
 ## Extensibility
 
-Protocol evolution is capability-based. Add new optional lines rather than
-changing old positional responses. Parsers reject malformed data without taking
-control action. Every public capability needs parser tests, simulator support or
-an explicit hardware-only boundary, protocol documentation, and a backward-
-compatible fallback where practical.
+Protocol evolution uses coordinated release versions. Change the shared version,
+firmware, both companions, typed parsers, simulators, diagnostics, documentation,
+and tests together. Parsers reject malformed data without taking control action;
+there is no legacy motion fallback.
 
 ## Safety design
 
