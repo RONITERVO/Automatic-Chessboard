@@ -314,9 +314,15 @@ configurations. It uses only orthogonal square-to-square carried paths, so the
 physical diagonal-clearance constraint is satisfied conservatively. Turning
 paths are split at square centres into straight sensor-verified `DRAG` commands.
 The search minimizes disturbed pieces first, then actual magnet pickups,
-distance, turns, and clearance risk. Time, node, parking, corridor, temporary-
-piece, and recursion limits prevent unbounded work; failure stops the move rather
-than falling back to an unverified path.
+distance, and turns. Hardware-validated side-adjacent pieces do not penalize an
+otherwise empty orthogonal route. Time, node, parking, corridor,
+temporary-piece, and recursion limits prevent unbounded optimization work.
+Before search,
+the planner classifies the exact 8×8 labeled-pebble reachability cases; ordinary
+chess positions have enough empty squares to be structurally reachable. If
+bounded optimization cannot finish, a reversible dense-board constructor can
+return a replay-validated safe plan. It is marked non-optimal. Failure still
+stops the move when neither method produces a validated plan.
 
 Every corridor ends on an exact whole-step destination, with no interpolation
 rounding to accumulate between moves. Firmware 4.4 also removes unequal-ratio

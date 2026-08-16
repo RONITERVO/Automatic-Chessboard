@@ -1,21 +1,55 @@
+import hashlib
+import random
 import unittest
 
 import chess
 
 from routing import (
+    CAPTURE_EDGE_EXITS,
     MotionPlan,
+    NO_SQUARE,
     PieceTask,
     PlannerConfig,
     PlanningError,
     PlanningProblem,
     RearrangementPlanner,
+    analyze_feasibility,
     parse_square,
     planning_problem_from_chess,
+    relaxed_corridors,
 )
 
 
 def sq(name: str) -> int:
     return parse_square(name)
+
+
+def physical_fen_problem(fen: str, uci: str) -> PlanningProblem:
+    """Build a hardware endpoint task without asserting chess legality."""
+
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci)
+    pieces = []
+    for square, piece in sorted(board.piece_map().items()):
+        if square == move.to_square:
+            continue
+        pieces.append(
+            PieceTask(
+                f"{piece.symbol()}-{chess.square_name(square)}",
+                square,
+                move.to_square if square == move.from_square else square,
+                square == move.from_square,
+            )
+        )
+    captured = board.piece_at(move.to_square) is not None
+    return PlanningProblem(
+        tuple(pieces),
+        move_uci=uci,
+        captured_square=move.to_square if captured else None,
+        initial_physical_occupancy=frozenset(board.piece_map()),
+        deferred_capture=captured,
+        edge_capture_exit=captured,
+    )
 
 
 class RearrangementPlannerTests(unittest.TestCase):
@@ -159,6 +193,279 @@ class RearrangementPlannerTests(unittest.TestCase):
         with self.assertRaises(PlanningError):
             self.planner().plan(problem)
 
+    def test_dense_challenge_geometries_have_constructive_plans(self):
+        cases = (
+            ("8/2pppp2/1pbqkbp1/1prpprp1/1PPnnPP1/1PBBKQP1/2PNNP2/2R2R2 w - - 0 1", "d3e4"),
+            ("4k3/2pppp2/1prqnbp1/1pNBBpr1/1PRRNPP1/1PBBQNP1/2PPKP2/8 b - - 0 1", "d5c4"),
+            ("2k5/2pppp2/1pbbnrp1/1prppqp1/1PPpnPP1/1PBBNNP1/2PRQP2/2K3R1 w - - 0 1", "e3f5"),
+            ("4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PRBNPP1/1PBQNRP1/2PPKP2/8 b - - 0 1", "c6d4"),
+            ("4k3/2pppp2/1pbbqnp1/2prnpr1/1PPPNPP1/2PRQBP1/2PRNP2/4K3 w - - 0 1", "e4d5"),
+            ("4k3/2pppp2/1pbbqrp1/1pnRnRp1/1PRQNPP1/1PBBNRP1/2PPKP2/8 w - - 0 1", "d4e5"),
+            ("4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PBRNPP1/1PBQNRP1/2PPKP2/8 w - - 0 1", "d4d5"),
+            ("4k3/2pppp2/1pnbqrp1/1pnrprb1/1PRKNPP1/1PBQNRP1/2PPBP2/8 w - - 0 1", "d4e5"),
+            ("4k3/8/8/rnbq4/pppp4/PP1P4/PPPP4/RNBQ1K2 w - - 0 1", "b1c3"),
+            ("4k3/8/8/8/8/n1nnnnnn/P1PPPPPP/RNBQKBNR w - - 0 1", "c1a3"),
+        )
+        planner = self.planner(
+            time_limit_s=1.0,
+            max_nodes=1,
+            max_temporary_pieces=10,
+            parking_candidates=12,
+            corridor_candidates=8,
+            dependency_depth=8,
+        )
+        for fen, uci in cases:
+            with self.subTest(move=uci, fen=fen):
+                problem = physical_fen_problem(fen, uci)
+                self.assertEqual(analyze_feasibility(problem).status, "proven_solvable")
+                plan = planner.plan(problem)
+                self.assert_valid(plan)
+                self.assertLessEqual(plan.temporary_piece_count, 10)
+                if problem.captured_square is not None:
+                    self.assertEqual(plan.capture_path[-1] % 8, 0)
+
+    def test_deterministic_constructive_stress_plans_replay(self):
+        rng = random.Random(20260816)
+        planner = self.planner(
+            time_limit_s=1.0,
+            max_nodes=1,
+            max_temporary_pieces=63,
+            corridor_candidates=8,
+            parking_candidates=12,
+            dependency_depth=8,
+            broad_candidates_per_piece=3,
+        )
+        for capture in (False, True):
+            for trial in range(500):
+                piece_count = rng.randint(2, 32)
+                occupied = set(rng.sample(range(64), piece_count))
+                source = rng.choice(sorted(occupied))
+                if capture:
+                    target = rng.choice(sorted(occupied - {source}))
+                    active = occupied - {target}
+                else:
+                    target = rng.choice(sorted(set(range(64)) - occupied))
+                    active = occupied
+                problem = PlanningProblem(
+                    tuple(
+                        PieceTask(
+                            f"piece-{square}",
+                            square,
+                            target if square == source else square,
+                            square == source,
+                        )
+                        for square in sorted(active)
+                    ),
+                    captured_square=target if capture else None,
+                    deferred_capture=capture,
+                    edge_capture_exit=capture,
+                )
+                with self.subTest(capture=capture, trial=trial):
+                    self.assertEqual(analyze_feasibility(problem).status, "proven_solvable")
+                    plan = planner.plan(problem)
+                    self.assert_valid(plan)
+                    self.assertEqual(plan.statistics.search_mode, "constructive-fallback")
+
+    def test_capture_corridor_limit_never_discards_a_bin_exit(self):
+        start = 7
+        occupied = {
+            1, 2, 3, 5, 9, 10, 14, 15, 16, 17, 24, 25, 31, 32, 34, 36,
+            37, 39, 44, 45, 48, 49, 52, 53, 56, 58, 59, 60, 61, 62, 63,
+        }
+        occupant = {start: NO_SQUARE}
+        occupant.update({square: index for index, square in enumerate(occupied)})
+
+        corridors = relaxed_corridors(
+            start, CAPTURE_EDGE_EXITS, occupant, NO_SQUARE, limit=4
+        )
+
+        self.assertEqual({path[-1] for path in corridors}, set(CAPTURE_EDGE_EXITS))
+
+    def test_random_legal_chess_corpus_matches_shared_parity_digest(self):
+        class XorShift64:
+            def __init__(self, seed: int) -> None:
+                self.state = seed
+
+            def next_index(self, bound: int) -> int:
+                mask = (1 << 64) - 1
+                self.state ^= (self.state << 13) & mask
+                self.state ^= self.state >> 7
+                self.state ^= (self.state << 17) & mask
+                self.state &= mask
+                return self.state % bound
+
+        selector = XorShift64(20260816)
+        digest = hashlib.sha256()
+        board = chess.Board()
+        captures = 0
+        promotions = 0
+        planner = self.planner(
+            time_limit_s=1.0,
+            max_nodes=1,
+            max_temporary_pieces=31,
+            corridor_candidates=8,
+            parking_candidates=12,
+            dependency_depth=8,
+            broad_candidates_per_piece=3,
+        )
+        for case in range(1000):
+            if case and case % 80 == 0:
+                board = chess.Board()
+                digest.update(b"RESET\n")
+            legal = sorted(move.uci() for move in board.legal_moves)
+            if not legal:
+                board = chess.Board()
+                digest.update(b"RESET\n")
+                legal = sorted(move.uci() for move in board.legal_moves)
+            uci = legal[selector.next_index(len(legal))]
+            digest.update(f"{uci}\n".encode())
+            move = chess.Move.from_uci(uci)
+            captures += int(board.is_capture(move))
+            promotions += int(move.promotion is not None)
+            problem = planning_problem_from_chess(
+                board,
+                move,
+                physical_occupancy=frozenset(board.piece_map()),
+                deferred_capture=True,
+                edge_capture_exit=True,
+            )
+            plan = planner.plan(problem)
+            self.assert_valid(plan)
+            self.assertEqual(plan.statistics.search_mode, "constructive-fallback")
+            commands = plan.protocol_commands()
+            self.assertTrue(commands[0].startswith("PLAN "))
+            self.assertEqual(commands[-1], "COMMIT")
+            for command in commands:
+                self.assertLess(len(command), 32)
+                if command.startswith("DRAG "):
+                    move_text = command[5:]
+                    self.assertTrue(
+                        move_text[0] == move_text[2] or move_text[1] == move_text[3]
+                    )
+            board.push(move)
+
+        self.assertEqual(captures, 124)
+        self.assertEqual(promotions, 2)
+        self.assertEqual(
+            digest.hexdigest().upper(),
+            "0E2822D7D5A4A2500587ABCC85799E8417A5AAEE6C3EBF9FCD2AD2164120757A",
+        )
+
+    def test_capture_blocker_can_stay_parked_until_after_primary_move(self):
+        occupied = {sq(name) for name in (
+            "a1", "c1", "a2", "b2", "d2", "a3", "b3", "c3", "a4"
+        )}
+        source, captured = sq("a4"), sq("b2")
+        pieces = tuple(
+            PieceTask(
+                f"p-{square}",
+                square,
+                captured if square == source else square,
+                square == source,
+            )
+            for square in sorted(occupied - {captured})
+        )
+        problem = PlanningProblem(
+            pieces,
+            captured_square=captured,
+            deferred_capture=True,
+            edge_capture_exit=True,
+        )
+
+        plan = self.planner(
+            time_limit_s=1.0,
+            max_nodes=1,
+            max_temporary_pieces=1,
+            corridor_candidates=8,
+            parking_candidates=12,
+            dependency_depth=8,
+        ).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertEqual(plan.temporary_piece_count, 1)
+        self.assertEqual(plan.capture_removal_index, 1)
+        self.assertEqual(plan.relocations[0].piece_key, f"p-{sq('b3')}")
+        self.assertEqual(plan.relocations[-1].target, sq("b3"))
+
+    def test_constructive_capture_seeds_every_a_file_exit(self):
+        occupied = {
+            1, 6, 8, 9, 11, 18, 23, 25, 27, 29, 30, 31, 32, 33, 34, 35,
+            37, 39, 40, 43, 44, 46, 48, 49, 50, 52, 53, 55, 56, 59, 61, 62,
+        }
+        source, captured = 61, 43
+        pieces = tuple(
+            PieceTask(
+                f"p-{square}",
+                square,
+                captured if square == source else square,
+                square == source,
+            )
+            for square in sorted(occupied - {captured})
+        )
+        problem = PlanningProblem(
+            pieces,
+            captured_square=captured,
+            deferred_capture=True,
+            edge_capture_exit=True,
+        )
+
+        plan = self.planner(
+            time_limit_s=1.0,
+            max_nodes=1,
+            max_temporary_pieces=10,
+            corridor_candidates=8,
+            parking_candidates=12,
+            dependency_depth=8,
+        ).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertLessEqual(plan.temporary_piece_count, 10)
+        self.assertEqual(plan.capture_path[-1] % 8, 0)
+
+    def test_full_board_non_edge_capture_is_proven_impossible(self):
+        captured = sq("b1")
+        pieces = []
+        for square in range(64):
+            if square == captured:
+                continue
+            pieces.append(
+                PieceTask(
+                    f"p-{square}",
+                    square,
+                    captured if square == sq("a1") else square,
+                    square == sq("a1"),
+                )
+            )
+        problem = PlanningProblem(
+            tuple(pieces),
+            captured_square=captured,
+            deferred_capture=True,
+            edge_capture_exit=True,
+            initial_physical_occupancy=frozenset(range(64)),
+        )
+        analysis = analyze_feasibility(problem)
+        self.assertEqual(analysis.status, "proven_impossible")
+        with self.assertRaisesRegex(PlanningError, "Proven physically impossible"):
+            self.planner().plan(problem)
+
+    def test_one_hole_parity_obstruction_is_proven_impossible(self):
+        # Swap two same-color labels while the only blank remains fixed.  The
+        # desired permutation is odd but the blank-color change is even.
+        blank = sq("h8")
+        first, second = sq("a1"), sq("c1")
+        pieces = []
+        for square in range(64):
+            if square == blank:
+                continue
+            goal = second if square == first else first if square == second else square
+            pieces.append(
+                PieceTask(f"p-{square}", square, goal, square == first)
+            )
+        problem = PlanningProblem(tuple(pieces))
+        analysis = analyze_feasibility(problem)
+        self.assertEqual(analysis.status, "proven_impossible")
+        self.assertIn("parity", analysis.reason)
+
     def test_deferred_capture_clears_bin_lane_before_removal(self):
         board = chess.Board()
         for uci in ("e2e4", "d7d5", "e4e5", "e7e6", "a2a4", "b8c6", "f2f4"):
@@ -228,8 +535,179 @@ class RearrangementPlannerTests(unittest.TestCase):
             plan.capture_path,
         )
 
+    def test_fewer_pickups_outrank_shorter_carried_distance(self):
+        # The old local pathfinder returned a 6-step route with three turns.
+        # Because each turn is another pickup, the 8-step/two-turn route is
+        # lexicographically better under the hardware objective.
+        problem = PlanningProblem(
+            (
+                PieceTask("main", sq("a1"), sq("a5"), primary=True),
+                PieceTask("wall-b2", sq("b2"), sq("b2")),
+                PieceTask("wall-a4", sq("a4"), sq("a4")),
+            ),
+            move_uci="a1a5",
+        )
+
+        plan = self.planner(max_temporary_pieces=0).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertEqual((plan.pickup_count, plan.carried_steps), (3, 8))
+        self.assertEqual(sum(move.turns for move in plan.relocations), 2)
+
+    def test_fewer_capture_pickups_outrank_shorter_bin_route(self):
+        problem = PlanningProblem(
+            (
+                PieceTask("main", sq("h8"), sq("h7"), primary=True),
+                PieceTask("fixed-a1", sq("a1"), sq("a1")),
+                PieceTask("fixed-f2", sq("f2"), sq("f2")),
+            ),
+            move_uci="h8h7",
+            captured_square=sq("h1"),
+            deferred_capture=True,
+            edge_capture_exit=True,
+        )
+
+        plan = self.planner(max_temporary_pieces=0).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertEqual((plan.pickup_count, plan.carried_steps), (4, 10))
+        self.assertEqual(plan.capture_path[-1], sq("a3"))
+
+    def test_unweighted_default_avoids_weighted_first_goal_turn_loss(self):
+        problem = PlanningProblem(
+            (
+                PieceTask("main", sq("a1"), sq("a8"), primary=True),
+                PieceTask("secondary", sq("a2"), sq("b3")),
+                PieceTask("wall", sq("b1"), sq("b1")),
+            )
+        )
+
+        plan = self.planner(max_temporary_pieces=1).plan(problem)
+
+        self.assert_valid(plan)
+        objective = (
+            plan.temporary_piece_count,
+            plan.pickup_count,
+            plan.carried_steps,
+            sum(move.turns for move in plan.relocations),
+        )
+        self.assertEqual(objective, (1, 3, 9, 0))
+
+    def test_exact_macro_search_certifies_small_case(self):
+        problem = PlanningProblem(
+            (
+                PieceTask("main", sq("a1"), sq("a5"), primary=True),
+                PieceTask("wall-b2", sq("b2"), sq("b2")),
+                PieceTask("wall-a4", sq("a4"), sq("a4")),
+            )
+        )
+
+        plan = self.planner(
+            max_temporary_pieces=0,
+            exact_search=True,
+            heuristic_weight=1.0,
+        ).plan(problem)
+
+        self.assert_valid(plan)
+        self.assertTrue(plan.statistics.optimal)
+        self.assertEqual(plan.statistics.search_mode, "exhaustive")
+        self.assertEqual((plan.pickup_count, plan.carried_steps), (3, 8))
+
+    def test_constructive_incumbent_reserves_one_third_for_search(self):
+        class SearchStarted(RuntimeError):
+            pass
+
+        class DeadlineProbePlanner(RearrangementPlanner):
+            started = 0.0
+            constructive_deadline = 0.0
+            search_deadline = 0.0
+
+            def _constructive_plan(self, problem, started, **_kwargs):
+                self.started = started
+                self.constructive_deadline = self._deadline
+                return None
+
+            def _search(self, *_args, **_kwargs):
+                self.search_deadline = self._deadline
+                raise SearchStarted
+
+        planner = DeadlineProbePlanner(PlannerConfig(time_limit_s=2.0))
+        problem = PlanningProblem(
+            (PieceTask("main", sq("a1"), sq("a2"), primary=True),)
+        )
+
+        with self.assertRaises(SearchStarted):
+            planner.plan(problem)
+
+        self.assertAlmostEqual(
+            planner.constructive_deadline - planner.started, 4.0 / 3.0, places=4
+        )
+        self.assertAlmostEqual(
+            planner.search_deadline - planner.started, 2.0, places=4
+        )
+
+    def test_exact_macro_search_improves_a_focused_first_goal(self):
+        problem = PlanningProblem(
+            (
+                PieceTask("main", sq("d6"), sq("c8"), primary=True),
+                PieceTask("secondary", sq("e3"), sq("d1")),
+            )
+        )
+
+        focused = self.planner(max_temporary_pieces=1).plan(problem)
+        exact = self.planner(
+            max_temporary_pieces=1,
+            exact_search=True,
+            heuristic_weight=1.0,
+        ).plan(problem)
+
+        self.assert_valid(focused)
+        self.assert_valid(exact)
+        focused_turns = sum(move.turns for move in focused.relocations)
+        exact_turns = sum(move.turns for move in exact.relocations)
+        self.assertEqual(
+            (focused.pickup_count, focused.carried_steps, focused_turns),
+            (4, 6, 2),
+        )
+        self.assertEqual(
+            (exact.pickup_count, exact.carried_steps, exact_turns),
+            (4, 6, 0),
+        )
+        self.assertTrue(exact.statistics.optimal)
+
+    def test_duplicate_piece_keys_fail_at_problem_construction(self):
+        with self.assertRaisesRegex(ValueError, "unique"):
+            PlanningProblem(
+                (
+                    PieceTask("duplicate", sq("a1"), sq("a2"), primary=True),
+                    PieceTask("duplicate", sq("h8"), sq("h8")),
+                )
+            )
+
+    def test_invalid_branch_controls_are_rejected(self):
+        with self.assertRaises(ValueError):
+            PlannerConfig(dependency_depth=-1)
+        with self.assertRaises(ValueError):
+            PlannerConfig(broad_candidates_per_piece=0)
+        with self.assertRaisesRegex(ValueError, "heuristic_weight=1.0"):
+            PlannerConfig(exact_search=True, heuristic_weight=1.25)
+
 
 class ChessAdapterTests(unittest.TestCase):
+    def test_invalid_fen_is_rejected_even_if_move_generator_lists_the_move(self):
+        board = chess.Board(
+            "8/2pppp2/1pbqkbp1/1prpprp1/1PPnnPP1/1PBBKQP1/2PNNP2/2R2R2 w - - 0 1"
+        )
+        move = chess.Move.from_uci("d3e4")
+        self.assertIn(move, board.legal_moves)
+        status = board.status()
+        self.assertTrue(status & chess.STATUS_TOO_MANY_BLACK_PAWNS)
+        self.assertTrue(status & chess.STATUS_TOO_MANY_BLACK_PIECES)
+        self.assertFalse(board.is_valid())
+
+        with self.assertRaisesRegex(PlanningError, "Invalid chess position"):
+            planning_problem_from_chess(board, move)
+
     def test_capture_square_is_removed_from_the_rearrangement_problem(self):
         board = chess.Board()
         board.push_uci("e2e4")

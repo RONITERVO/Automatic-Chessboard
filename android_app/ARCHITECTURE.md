@@ -61,14 +61,22 @@ and deterministic square order. The physical cost prioritizes:
 1. number of distinct secondary pieces disturbed;
 2. actual magnet pickups after turns are split;
 3. carried distance;
-4. turns and side-adjacent magnetic pieces.
+4. turns.
+
+Hardware-validated side-adjacent pieces do not add a penalty to an otherwise
+empty orthogonal route.
 
 Search duration, node count, temporary pieces, corridor/parking branch width,
-and dependency depth are bounded. A limit failure is explicit and never falls
-back to an unverified move. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search. Capture removal is a search
-transition containing a tracked carried
-path to any available `a1`-`a8` exit. A winding empty route requires no temporary
+and dependency depth are bounded. An exact structural classifier distinguishes
+proven impossibility from bounded-search failure. For the normal one-primary
+move shape, a deterministic dense-board constructor supplies a reversible,
+replay-validated incumbent. It may replace a completed bounded-search result
+when its lexicographic objective is better, or be returned if bounded
+optimization cannot finish; it is marked non-optimal. Optional exact macro A*
+supports small developer cases. No unverified move is ever returned. Captures,
+en passant, promotion occupancy, and both standard castling sides are adapted
+before search. Capture removal is a search transition containing a tracked
+carried path to any available `a1`-`a8` exit. A winding empty route requires no temporary
 piece movement; only a genuinely disconnected edge invokes ordinary recursive
 parking. Version 5.0.1 has no legacy routing branch.
 

@@ -62,10 +62,16 @@ piece. There is no version-dependent routing branch in the 5.0 companion.
 
 Candidate corridors and parking squares are ranked before full configuration
 search. Disturbance count dominates the cost, followed by the physical number of
-magnet pickups, carried distance, turns, and clearance risk. Time, node,
+magnet pickups, carried distance, and turns. Side-adjacent pieces do not add a
+penalty to an otherwise empty orthogonal route. Time, node,
 temporary-piece, corridor, parking, and dependency-depth limits bound worst-case
-work. Failure is explicit; the app never silently substitutes an unverified
-physical move.
+optimization work. An exact structural classifier distinguishes proven
+impossibility from a bounded-search failure. For the normal one-primary move
+shape, a deterministic dense-board constructor builds a reversible incumbent
+before search; it is returned only when preferable or when bounded search fails,
+and only after full replay validation. Such a result is explicitly non-optimal.
+Optional exact macro A* is available to development tools for small cases. The
+app never substitutes an unverified physical move.
 
 A logical path may turn, but `protocol.py` splits it into maximal straight runs.
 The magnet releases and reacquires only at square centres. This lets every
