@@ -59,6 +59,7 @@ from transports import (
 APP_VERSION = SOFTWARE_VERSION
 ROUTE_CONTROL_TIMEOUT_S = 8.0
 ROUTE_MOTION_TIMEOUT_S = 75.0
+START_ACK_TIMEOUT_MS = 8_000
 APP_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else APP_DIR
 DATA_DIR = user_data_dir()
@@ -284,6 +285,7 @@ class AutomaticChessboardApp:
         self.route_expected_occupancy: frozenset[int] = frozenset()
         self.route_generation = 0
         self.session_generation = 0
+        self.start_pending_generation: int | None = None
         self.awaiting_promotion_confirmation = False
         self.engine_thinking = False
         self.session_active = False
@@ -1015,6 +1017,7 @@ class AutomaticChessboardApp:
                 self.manual_status.set("Connected; calibrate from this page before moving.")
             self._queue_safe_requests(hello_command(), "INFO", "TELEM", "BOARD")
         elif any(word in lower for word in ("disconnected", "interrupted", "stopped", "reconnecting")):
+            had_active_session = self.session_active
             self._invalidate_game_session()
             self.model.connected = False
             self.model.firmware = None
@@ -1032,11 +1035,11 @@ class AutomaticChessboardApp:
                 "Connection lost. Reconnect and Read status; firmware keeps interrupted alignment unhomed."
             )
             self._reset_route_orchestration(clear_pending=True)
-            if self.sensorless_game and self.session_active:
+            if had_active_session:
                 self.session_active = False
                 self.sensorless_ready_for_move = False
                 self.game_status.set(
-                    "Connection lost in app-controlled play. Inspect the board and start a new calibrated game."
+                    "Connection lost during companion play. Inspect the board and start a new calibrated game."
                 )
         self.recorder.record("transport", status)
         self._append_log("transport", "Connection", status)
@@ -1145,11 +1148,18 @@ class AutomaticChessboardApp:
                     self._maybe_start_route_planning()
         elif event.kind in ("READY", "HELLO"):
             self._set_connection_text("Board connected and responding")
+        elif event.kind == "OK" and event.args[:1] == ("START",):
+            if self._acknowledge_start():
+                self.game_status.set("Board accepted the game; calibration is starting.")
         elif event.kind == "SETUP":
-            self.motion_expected = False
-            self.game_status.set("Set all starting pieces, then press physical Button A.")
+            self._acknowledge_start()
+            if self.session_active:
+                self.motion_expected = False
+                self.game_status.set("Set all starting pieces, then press physical Button A.")
         elif event.kind == "SESSION":
-            self.game_status.set("Remote game started")
+            self._acknowledge_start()
+            if self.session_active:
+                self.game_status.set("Remote game started")
         elif event.kind == "TURN" and event.args:
             if event.args[0] == "COMPUTER" and self.board.turn != self.human_color:
                 self._start_engine_think()
@@ -1286,10 +1296,14 @@ class AutomaticChessboardApp:
         elif event.kind == "ERR":
             self.model.last_error = " ".join(event.args)
             self.motion_expected = False
-            if self.active_route_plan is not None or self.route_planning or self.route_snapshot_pending:
+            start_rejected = self._start_is_pending()
+            if start_rejected:
+                detail = " ".join(event.args) or "unknown error"
+                self._fail_pending_start(f"Could not start game: board rejected START ({detail}).")
+            elif self.active_route_plan is not None or self.route_planning or self.route_snapshot_pending:
                 detail = " ".join(event.args) or "unknown route error"
                 self._route_plan_failed(PlanningError(detail))
-            if self.manual_pending:
+            if self.manual_pending and not start_rejected:
                 self._clear_manual_pending()
                 self.manual_status.set(f"Board rejected the operation: {' '.join(event.args)}")
             if self.alignment_pending:
@@ -1887,7 +1901,12 @@ class AutomaticChessboardApp:
         self.session_active = True
         self.motion_expected = True
         self._render()
-        self._send(start_game_command(self.human_color == chess.WHITE, app_board=sensorless))
+        generation = self.session_generation
+        self.start_pending_generation = generation
+        if not self._send(start_game_command(self.human_color == chess.WHITE, app_board=sensorless)):
+            self._fail_pending_start("Could not deliver START to the board. Reconnect and try again.")
+            return
+        self.root.after(START_ACK_TIMEOUT_MS, self._handle_start_timeout, generation)
         self.game_status.set("Calibration requested. Keep hands clear and watch the board.")
 
     def _stop_game(self) -> None:
@@ -1958,11 +1977,50 @@ class AutomaticChessboardApp:
             self._start_engine_think()
 
     def _invalidate_game_session(self) -> None:
+        self.start_pending_generation = None
         self.session_generation += 1
         self.engine_thinking = False
         self.pending_move_generation = None
         self.sensorless_confirmation_generation = None
         self.sensorless_waiting_visual = False
+
+    def _start_is_pending(self, generation: int | None = None) -> bool:
+        expected = self.session_generation if generation is None else generation
+        return self.session_active and self.start_pending_generation == expected
+
+    def _acknowledge_start(self) -> bool:
+        if not self._start_is_pending():
+            return False
+        self.start_pending_generation = None
+        return True
+
+    def _fail_pending_start(self, message: str) -> None:
+        self._invalidate_game_session()
+        self.session_active = False
+        self.motion_expected = False
+        self.sensorless_ready_for_move = False
+        self.sensorless_selected_source = None
+        self.sensorless_waiting_visual = False
+        self.awaiting_promotion_confirmation = False
+        self._reset_route_orchestration(clear_pending=True)
+        self.game_status.set(message)
+        self._render()
+
+    def _handle_start_timeout(self, generation: int) -> None:
+        if not self._start_is_pending(generation):
+            return
+        delivered = bool(
+            self.transport and self.transport.is_connected and self._send("STOP", quiet=True)
+        )
+        message = (
+            "The board did not acknowledge START. STOP was requested as a precaution; "
+            "inspect the board before starting a new calibrated game."
+            if delivered else
+            "The board did not acknowledge START and STOP could not be delivered. "
+            "Inspect the board, reconnect, and recalibrate before continuing."
+        )
+        self.sensorless_stop_reason = message if delivered else None
+        self._fail_pending_start(message)
 
     def _start_engine_think(self) -> None:
         if (self.engine_thinking or not self.engine or not self.session_active or

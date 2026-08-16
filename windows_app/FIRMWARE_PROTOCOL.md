@@ -57,6 +57,9 @@ multiple outstanding polls otherwise become stale and ambiguous.
 - `START W` / `START B` begins reed-authoritative companion play.
 - `START W APP` / `START B APP` begins app-authoritative play from the standard
   starting position. Reed input is ignored for that entire session.
+- `GAMEOVER ...` terminates the remote session and returns firmware to idle
+  while leaving the result visible. The next `START` can therefore begin a new
+  calibrated game directly; active states still reject `START` with `ERR BUSY`.
 - `ACCEPT`, `REJECT`, and `GAMEOVER ...` advance or terminate the remote game
   state.
 - `STOP` ends the remote session on a best-effort basis.

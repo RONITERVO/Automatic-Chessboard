@@ -836,7 +836,10 @@ void processHostCommand(char *line, HostInputBuffer &buffer) {
       sendHostError(F("NO SESSION"));
       return;
     }
-    sequence = game_over_screen;
+    // GAMEOVER terminates the remote session but keeps its result visible.
+    // The idle state lets either companion start the next calibrated game.
+    remote_mode = false;
+    sequence = main_menu;
     lcd.clear();
     lcd.print(F("GAME OVER"));
     if (line[8] == ' ') {

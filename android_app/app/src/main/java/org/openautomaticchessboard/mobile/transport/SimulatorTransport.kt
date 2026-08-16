@@ -86,6 +86,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
             }
             else -> when {
                 fault && command.startsWith("START ") -> emit("ERR FAULT", 30)
+                sequence != 1 && command.startsWith("START ") -> emit("ERR BUSY", 30)
                 command.startsWith("START ") -> {
                     occupied.clear()
                     occupied.addAll(MonitorStateDefaults.START_SQUARES)
@@ -97,6 +98,7 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     trolleyX = 5
                     trolleyY = 6
                     sequence = if (appBoard) 15 else if (humanSide == "W") 14 else 15
+                    emit("OK START $humanSide", 30)
                     if (!appBoard) emit("SETUP PRESS A", 30)
                     emit("SESSION $humanSide", 60)
                     emit(if (humanSide == "W") "TURN HUMAN" else "TURN COMPUTER", 120)
@@ -172,7 +174,14 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                         }
                     }
                 }
-                command.startsWith("GAMEOVER ") -> emit("STOPPED", 30)
+                command.startsWith("GAMEOVER ") -> if (!remoteMode) {
+                    emit("ERR NO SESSION", 30)
+                } else {
+                    remoteMode = false
+                    appBoard = false
+                    sequence = 1
+                    emit("OK GAMEOVER", 30)
+                }
                 command.startsWith("SIMMOVE ") -> {
                     val move = command.substringAfter(' ')
                     applyMove(move, null)
