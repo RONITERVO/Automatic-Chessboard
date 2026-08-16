@@ -1677,9 +1677,11 @@ internal fun relaxedCorridors(
     }
     seeds.forEach { found[it] = score(it) }
     val frontier = ArrayDeque(found.keys)
+    val triedEdges = mutableSetOf<Pair<Int, Int>>()
     while (frontier.isNotEmpty() && found.size < maxOf(limit * 4, limit + 1)) {
         val base = frontier.removeFirst()
         base.zipWithNext().forEach { edge ->
+            if (!triedEdges.add(edge)) return@forEach
             val candidate = relaxedShortestPath(
                 start, goals, occupant, movingPiece, setOf(edge),
             ) ?: return@forEach

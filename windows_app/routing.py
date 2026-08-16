@@ -737,9 +737,13 @@ def relaxed_corridors(
     for seed in seeds:
         found[seed] = score(seed)
     frontier = list(found)
+    tried_edges: set[tuple[int, int]] = set()
     while frontier and len(found) < max(limit * 4, limit + 1):
         base = frontier.pop(0)
         for edge in zip(base, base[1:]):
+            if edge in tried_edges:
+                continue
+            tried_edges.add(edge)
             candidate = _relaxed_shortest_path(
                 start,
                 goals,
