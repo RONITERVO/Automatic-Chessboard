@@ -630,7 +630,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         val overallDeadline = deadlineNanos
         deadlineNanos = minOf(
             overallDeadline,
-            started + config.timeLimitMillis * 500_000L,
+            started + config.timeLimitMillis * 2_000_000L / 3L,
         )
         return try {
             constructivePlan(problem, started)

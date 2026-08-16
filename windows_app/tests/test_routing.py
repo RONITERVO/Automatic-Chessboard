@@ -613,7 +613,7 @@ class RearrangementPlannerTests(unittest.TestCase):
         self.assertEqual(plan.statistics.search_mode, "exhaustive")
         self.assertEqual((plan.pickup_count, plan.carried_steps), (3, 8))
 
-    def test_constructive_incumbent_reserves_half_the_deadline_for_search(self):
+    def test_constructive_incumbent_reserves_one_third_for_search(self):
         class SearchStarted(RuntimeError):
             pass
 
@@ -640,7 +640,7 @@ class RearrangementPlannerTests(unittest.TestCase):
             planner.plan(problem)
 
         self.assertAlmostEqual(
-            planner.constructive_deadline - planner.started, 1.0, places=4
+            planner.constructive_deadline - planner.started, 4.0 / 3.0, places=4
         )
         self.assertAlmostEqual(
             planner.search_deadline - planner.started, 2.0, places=4

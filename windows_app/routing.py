@@ -1038,11 +1038,11 @@ class RearrangementPlanner:
     def _constructive_incumbent(
         self, problem: PlanningProblem, started: float
     ) -> MotionPlan | None:
-        """Build an incumbent while reserving half the deadline for search."""
+        """Build an incumbent while reserving one third of the deadline for search."""
 
         overall_deadline = self._deadline
         self._deadline = min(
-            overall_deadline, started + self.config.time_limit_s / 2.0
+            overall_deadline, started + self.config.time_limit_s * 2.0 / 3.0
         )
         try:
             return self._constructive_plan(problem, started)
