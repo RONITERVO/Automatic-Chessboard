@@ -24,14 +24,35 @@ BOARD_SQUARES = 64
 NO_SQUARE = -1
 CAPTURE_EDGE_EXITS = frozenset(range(0, BOARD_SQUARES, BOARD_FILES))
 
-# Lexicographic physical priorities encoded in a single Python integer.  The
-# ranges are deliberately separated by several orders of magnitude so one new
-# temporary piece is always more expensive than every plausible pickup, route,
-# turn, and clearance penalty on an 8x8 board.
+# Legacy scalar reporting constants. Search itself uses an explicit ordered
+# tuple, so lexicographic priority does not depend on assumed upper bounds.
 DISTURBANCE_COST = 10**12
 PICKUP_COST = 10**8
 STEP_COST = 10**4
 TURN_COST = 100
+
+_Objective = tuple[int, int, int, int]
+_ZERO_OBJECTIVE: _Objective = (0, 0, 0, 0)
+
+
+def _add_objectives(left: _Objective, right: _Objective) -> _Objective:
+    return (
+        left[0] + right[0],
+        left[1] + right[1],
+        left[2] + right[2],
+        left[3] + right[3],
+    )
+
+
+def _weighted_priority(
+    cost: _Objective, heuristic: _Objective, weight: float
+) -> _Objective:
+    return (
+        cost[0] + int(weight * heuristic[0]),
+        cost[1] + int(weight * heuristic[1]),
+        cost[2] + int(weight * heuristic[2]),
+        cost[3] + int(weight * heuristic[3]),
+    )
 
 # Direction order and protocol-compatible two-bit codes.
 NORTH, EAST, SOUTH, WEST = range(4)
@@ -45,6 +66,16 @@ DIRECTION_DELTAS = {
 
 class PlanningError(RuntimeError):
     """Raised when a valid plan cannot be found within configured limits."""
+
+
+@dataclass(frozen=True)
+class FeasibilityAnalysis:
+    """Structural reachability result, independent of optimization limits."""
+
+    status: str
+    reason: str
+    holes_before_capture: int
+    holes_after_capture: int
 
 
 @dataclass(frozen=True)
@@ -74,8 +105,13 @@ class PlanningProblem:
     edge_capture_exit: bool = False
 
     def __post_init__(self) -> None:
+        keys = [piece.key for piece in self.pieces]
         starts = [piece.start for piece in self.pieces]
         goals = [piece.goal for piece in self.pieces]
+        if any(not key for key in keys):
+            raise ValueError("Piece keys cannot be empty")
+        if len(keys) != len(set(keys)):
+            raise ValueError("Piece keys must be unique")
         if len(starts) != len(set(starts)):
             raise ValueError("Two pieces start on the same square")
         if len(goals) != len(set(goals)):
@@ -115,16 +151,18 @@ class PlanningProblem:
 
 @dataclass(frozen=True)
 class PlannerConfig:
-    """Search limits and deterministic branch-width controls."""
+    """Search limits, branch controls, and optional exact-search mode."""
 
     time_limit_s: float = 8.0
     max_nodes: int = 250_000
     max_temporary_pieces: int = 10
-    heuristic_weight: float = 1.25
+    heuristic_weight: float = 1.0
     corridor_candidates: int = 4
     parking_candidates: int = 8
     dependency_depth: int = 4
     broad_candidates_per_piece: int = 2
+    exact_search: bool = False
+    constructive_fallback: bool = True
 
     def __post_init__(self) -> None:
         if self.time_limit_s <= 0:
@@ -137,6 +175,12 @@ class PlannerConfig:
             raise ValueError("heuristic_weight must be at least 1.0")
         if self.corridor_candidates <= 0 or self.parking_candidates <= 0:
             raise ValueError("candidate limits must be positive")
+        if self.dependency_depth < 0:
+            raise ValueError("dependency_depth cannot be negative")
+        if self.broad_candidates_per_piece <= 0:
+            raise ValueError("broad_candidates_per_piece must be positive")
+        if self.exact_search and self.heuristic_weight != 1.0:
+            raise ValueError("exact_search requires heuristic_weight=1.0")
 
 
 @dataclass(frozen=True)
@@ -177,6 +221,7 @@ class PlanStatistics:
     disturbance_budget: int
     elapsed_s: float
     search_mode: str
+    optimal: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,7 +246,10 @@ class MotionPlan:
 
     @property
     def drag_count(self) -> int:
-        from protocol import split_route_runs
+        if __package__:
+            from .protocol import split_route_runs
+        else:  # Top-level import used by the review harness.
+            from protocol import split_route_runs
 
         capture_drags = (
             len(split_route_runs(self.capture_path)) if len(self.capture_path) > 1 else 0
@@ -214,6 +262,16 @@ class MotionPlan:
     def carried_steps(self) -> int:
         return max(0, len(self.capture_path) - 1) + sum(
             move.steps for move in self.relocations
+        )
+
+    @property
+    def objective(self) -> _Objective:
+        capture_turns = route_turns(self.capture_path) if len(self.capture_path) > 1 else 0
+        return (
+            self.temporary_piece_count,
+            self.pickup_count,
+            self.carried_steps,
+            capture_turns + sum(move.turns for move in self.relocations),
         )
 
     def validate(self) -> None:
@@ -293,10 +351,16 @@ class MotionPlan:
     def protocol_commands(self) -> tuple[str, ...]:
         """Build the transactional ACB command sequence lazily to avoid cycles."""
 
-        from protocol import (
-            commit_plan_command, drag_command, plan_command, remove_command,
-            split_route_runs,
-        )
+        if __package__:
+            from .protocol import (
+                commit_plan_command, drag_command, plan_command, remove_command,
+                split_route_runs,
+            )
+        else:  # Top-level import used by the review harness.
+            from protocol import (
+                commit_plan_command, drag_command, plan_command, remove_command,
+                split_route_runs,
+            )
 
         # A BOARD proof follows transaction opening and every physical drag.
         # The Nano already validates all 64 switches locally; these snapshots
@@ -340,6 +404,7 @@ class _SearchState:
     positions: tuple[int, ...]
     disturbed_mask: int
     capture_removed: bool
+    last_piece: int = NO_SQUARE
 
 
 @dataclass(frozen=True)
@@ -348,14 +413,14 @@ class _SearchAction:
     target: int
     path: tuple[int, ...]
     purpose: str
-    cost: int
+    cost: _Objective
 
 
 @dataclass(order=True)
 class _QueueEntry:
-    priority: int
+    priority: _Objective
     tie: int
-    cost: int = field(compare=False)
+    cost: _Objective = field(compare=False)
     state: _SearchState = field(compare=False)
 
 
@@ -499,15 +564,6 @@ def route_turns(path: Sequence[int]) -> int:
     return sum(previous != current for previous, current in zip(directions, directions[1:]))
 
 
-def clearance_risk(path: Sequence[int], occupied_without_mover: frozenset[int]) -> int:
-    """Small branch-order penalty for side-adjacent magnetic pieces."""
-
-    risk = 0
-    for square in path[1:]:
-        risk += sum(neighbor in occupied_without_mover for neighbor, _ in orthogonal_neighbors(square))
-    return risk
-
-
 def _reconstruct_path(
     parent: dict[tuple[int, int], tuple[int, int] | None],
     end_state: tuple[int, int],
@@ -522,7 +578,12 @@ def _reconstruct_path(
 
 
 def find_empty_path(start: int, goal: int, occupied: Iterable[int]) -> tuple[int, ...] | None:
-    """Heading-aware A* through empty squares, using orthogonal moves only."""
+    """Find the lexicographically best empty orthogonal carry path.
+
+    Turns are minimized before steps because the protocol releases and
+    reacquires the piece at every corner. The first straight run is a
+    path-independent pickup, so the local objective is exactly (turns, steps).
+    """
 
     validate_square(start)
     validate_square(goal)
@@ -533,15 +594,15 @@ def find_empty_path(start: int, goal: int, occupied: Iterable[int]) -> tuple[int
         return None
 
     start_state = (start, -1)
-    queue: list[tuple[int, int, int, tuple[int, int]]] = []
+    queue: list[tuple[int, int, int, int, int, tuple[int, int]]] = []
     serial = count()
-    heappush(queue, (manhattan(start, goal) * STEP_COST, 0, next(serial), start_state))
-    best = {start_state: 0}
+    heappush(queue, (0, manhattan(start, goal), 0, 0, next(serial), start_state))
+    best = {start_state: (0, 0)}
     parent: dict[tuple[int, int], tuple[int, int] | None] = {start_state: None}
 
     while queue:
-        _priority, cost_so_far, _tie, state = heappop(queue)
-        if cost_so_far != best.get(state):
+        _estimated_turns, _estimated_steps, turns, steps, _tie, state = heappop(queue)
+        if (turns, steps) != best.get(state):
             continue
         square, previous_direction = state
         if square == goal:
@@ -553,18 +614,23 @@ def find_empty_path(start: int, goal: int, occupied: Iterable[int]) -> tuple[int
             if neighbor in blocked:
                 continue
             turn = int(previous_direction != -1 and previous_direction != direction)
-            side_risk = sum(
-                adjacent in blocked for adjacent, _ in orthogonal_neighbors(neighbor)
-            )
-            step_cost = STEP_COST + turn * TURN_COST + side_risk
-            candidate = cost_so_far + step_cost
+            candidate = (turns + turn, steps + 1)
             next_state = (neighbor, direction)
-            if candidate >= best.get(next_state, 1 << 62):
+            if candidate >= best.get(next_state, (1 << 20, 1 << 20)):
                 continue
             best[next_state] = candidate
             parent[next_state] = state
-            priority = candidate + manhattan(neighbor, goal) * STEP_COST
-            heappush(queue, (priority, candidate, next(serial), next_state))
+            heappush(
+                queue,
+                (
+                    candidate[0],
+                    candidate[1] + manhattan(neighbor, goal),
+                    candidate[0],
+                    candidate[1],
+                    next(serial),
+                    next_state,
+                ),
+            )
     return None
 
 
@@ -593,7 +659,7 @@ def _relaxed_shortest_path(
     banned_edges: frozenset[tuple[int, int]] = frozenset(),
     banned_nodes: frozenset[int] = frozenset(),
 ) -> tuple[int, ...] | None:
-    """Lexicographic Dijkstra: occupied cells, then distance, then turns."""
+    """Lexicographic Dijkstra: occupied cells, then turns, then distance."""
 
     if start in goals:
         return (start,)
@@ -605,8 +671,8 @@ def _relaxed_shortest_path(
     parent: dict[tuple[int, int], tuple[int, int] | None] = {start_state: None}
 
     while queue:
-        blockers, steps, turns, _tie, state = heappop(queue)
-        if (blockers, steps, turns) != best.get(state):
+        blockers, turns, steps, _tie, state = heappop(queue)
+        if (blockers, turns, steps) != best.get(state):
             continue
         square, previous_direction = state
         if square in goals:
@@ -619,8 +685,8 @@ def _relaxed_shortest_path(
             add_blocker = int(occupant is not None and occupant != moving_piece)
             candidate = (
                 blockers + add_blocker,
-                steps + 1,
                 turns + int(previous_direction != -1 and previous_direction != direction),
+                steps + 1,
             )
             next_state = (neighbor, direction)
             if candidate >= best.get(next_state, (1 << 20, 1 << 20, 1 << 20)):
@@ -643,7 +709,9 @@ def relaxed_corridors(
     This is a compact Yen-style variant: after each accepted path, individual
     directed edges are banned to expose useful alternatives.  On 64 vertices it
     is much cheaper than carrying a full K-shortest-path implementation and is
-    sufficient for conflict discovery and branch ordering.
+    sufficient for conflict discovery and branch ordering.  Multi-goal calls
+    retain one best path to every reachable endpoint even when that exceeds
+    ``limit``; capture-bin completeness is more important than branch trimming.
     """
 
     goals = frozenset({goal}) if isinstance(goal, int) else goal
@@ -657,10 +725,24 @@ def relaxed_corridors(
             occupant_by_square.get(square) not in (None, moving_piece)
             for square in path[1:]
         )
-        return blockers, len(path) - 1, route_turns(path)
+        return blockers, route_turns(path), len(path) - 1
 
-    found[first] = score(first)
-    frontier = [first]
+    # A multi-goal shortest path can repeatedly rediscover alternatives ending
+    # at only one attractive goal. Seed every endpoint so capture construction
+    # cannot silently omit an otherwise clear a-file exit.
+    seeds = [first]
+    endpoint_seeds: set[tuple[int, ...]] = set()
+    if len(goals) > 1:
+        for endpoint in sorted(goals):
+            candidate = _relaxed_shortest_path(
+                start, frozenset({endpoint}), occupant_by_square, moving_piece
+            )
+            if candidate is not None:
+                seeds.append(candidate)
+                endpoint_seeds.add(candidate)
+    for seed in seeds:
+        found[seed] = score(seed)
+    frontier = list(found)
     while frontier and len(found) < max(limit * 4, limit + 1):
         base = frontier.pop(0)
         for edge in zip(base, base[1:]):
@@ -675,7 +757,14 @@ def relaxed_corridors(
                 continue
             found[candidate] = score(candidate)
             frontier.append(candidate)
-    return tuple(path for path, _ in sorted(found.items(), key=lambda item: item[1])[:limit])
+    ranked = [path for path, _ in sorted(found.items(), key=lambda item: item[1])]
+    selected = set(endpoint_seeds)
+    target_count = max(limit, len(endpoint_seeds))
+    for path in ranked:
+        if len(selected) >= target_count:
+            break
+        selected.add(path)
+    return tuple(path for path in ranked if path in selected)
 
 
 def _articulation_points(vertices: frozenset[int]) -> frozenset[int]:
@@ -715,8 +804,96 @@ def _articulation_points(vertices: frozenset[int]) -> frozenset[int]:
     return frozenset(points)
 
 
+def _permutation_parity(values: Sequence[int]) -> int:
+    parity = 0
+    for index, value in enumerate(values):
+        parity ^= sum(other > value for other in values[:index]) & 1
+    return parity
+
+
+def _one_hole_reachable(
+    initial_positions: Sequence[int], goal_positions: Sequence[int]
+) -> bool:
+    """Exact labeled reachability for the one-vacancy 8x8 sliding puzzle."""
+
+    initial_holes = set(range(BOARD_SQUARES)) - set(initial_positions)
+    goal_holes = set(range(BOARD_SQUARES)) - set(goal_positions)
+    if len(initial_holes) != 1 or len(goal_holes) != 1:
+        raise ValueError("One-hole parity requires exactly one vacancy")
+    blank_start = next(iter(initial_holes))
+    blank_goal = next(iter(goal_holes))
+    blank = len(initial_positions)
+    initial_item = {square: index for index, square in enumerate(initial_positions)}
+    goal_square = {index: square for index, square in enumerate(goal_positions)}
+    initial_item[blank_start] = blank
+    goal_square[blank] = blank_goal
+    permutation = [goal_square[initial_item[square]] for square in range(BOARD_SQUARES)]
+    return _permutation_parity(permutation) == manhattan(blank_start, blank_goal) % 2
+
+
+def analyze_feasibility(problem: PlanningProblem) -> FeasibilityAnalysis:
+    """Classify physical reachability where the 8x8-grid theorem is decisive.
+
+    With at least two vacancies, labeled pebble motion on the non-cycle,
+    biconnected 8x8 grid is connected.  With one vacancy, legal macros reduce
+    to ordinary adjacent blank swaps and the standard permutation/checkerboard
+    parity is necessary and sufficient.  Deferred edge capture first requires
+    enough existing vacancies to fill every post-source vertex of a shortest
+    route to the a-file.
+    """
+
+    before = problem.initial_occupancy_before_capture
+    holes_before = BOARD_SQUARES - len(before)
+    holes_after = BOARD_SQUARES - len(problem.initial_positions)
+
+    if problem.captured_square is not None and problem.deferred_capture:
+        if not problem.edge_capture_exit:
+            return FeasibilityAnalysis(
+                "unknown",
+                "legacy capture clearance is stricter than grid reachability",
+                holes_before,
+                holes_after,
+            )
+        distance_to_edge = problem.captured_square % BOARD_FILES
+        if holes_before < distance_to_edge:
+            return FeasibilityAnalysis(
+                "proven_impossible",
+                f"capture on file {distance_to_edge + 1} needs at least "
+                f"{distance_to_edge} pre-removal vacancies, but only "
+                f"{holes_before} exist",
+                holes_before,
+                holes_after,
+            )
+
+    if holes_after >= 2:
+        return FeasibilityAnalysis(
+            "proven_solvable",
+            "at least two vacancies make all labeled configurations reachable "
+            "on the biconnected 8x8 grid",
+            holes_before,
+            holes_after,
+        )
+    if holes_after == 0:
+        if tuple(problem.initial_positions) == tuple(problem.goal_positions):
+            status = "proven_solvable"
+            reason = "the full-board labeling already equals its goal"
+        else:
+            status = "proven_impossible"
+            reason = "a full board has no legal release square for any pickup"
+        return FeasibilityAnalysis(status, reason, holes_before, holes_after)
+
+    reachable = _one_hole_reachable(problem.initial_positions, problem.goal_positions)
+    return FeasibilityAnalysis(
+        "proven_solvable" if reachable else "proven_impossible",
+        "the one-vacancy permutation/checkerboard parity "
+        + ("matches" if reachable else "does not match"),
+        holes_before,
+        holes_after,
+    )
+
+
 class RearrangementPlanner:
-    """Weighted A* with iterative disturbance budgets and conflict-directed moves."""
+    """A* with iterative disturbance budgets and conflict-directed moves."""
 
     def __init__(self, config: PlannerConfig | None = None) -> None:
         self.config = config or PlannerConfig()
@@ -749,6 +926,10 @@ class RearrangementPlanner:
                     f"unexpected={sorted(map(square_name, unexpected))})"
                 )
 
+        feasibility = analyze_feasibility(problem)
+        if feasibility.status == "proven_impossible":
+            raise PlanningError("Proven physically impossible: " + feasibility.reason)
+
         initial_disturbed = sum(
             1 << index
             for index, piece in enumerate(problem.pieces)
@@ -760,21 +941,38 @@ class RearrangementPlanner:
             problem.captured_square is None or not problem.deferred_capture,
         )
         if initial.positions == problem.goal_positions and initial.capture_removed:
-            statistics = PlanStatistics(0, 0, 0, monotonic() - started, "direct")
+            statistics = PlanStatistics(
+                0, 0, 0, monotonic() - started, "direct", optimal=True
+            )
             return MotionPlan(problem, (), statistics)
+
+        # Dense positions can have an easy constructive solution but an
+        # enormous proof tree.  Build a reversible incumbent before A*: if the
+        # bounded optimizer times out, production still receives a validated
+        # plan.  Exact mode never returns this unproved incumbent.
+        incumbent = (
+            self._constructive_plan(problem, started)
+            if self.config.constructive_fallback and not self.config.exact_search
+            else None
+        )
 
         temporary_count = sum(not piece.primary for piece in problem.pieces)
         maximum_budget = min(self.config.max_temporary_pieces, temporary_count)
+        if incumbent is not None:
+            # No plan at a larger disturbance budget can beat the incumbent.
+            maximum_budget = min(maximum_budget, incumbent.temporary_piece_count)
         # Budget 0 proves direct and primary-only staging cases before any
         # secondary piece can be touched.  Subsequent searches guarantee that
         # the first returned plan minimizes the number of disturbed pieces.
         minimum_budget = initial_disturbed.bit_count()
+        modes = ("exhaustive",) if self.config.exact_search else (
+            "focused", "broad", "exhaustive"
+        )
         for budget in range(minimum_budget, maximum_budget + 1):
             # Focused and broad passes produce mechanically economical plans.
-            # The exhaustive pass restores completeness for the bounded search:
-            # every legal one-cell slide is represented, so repeated actions span
-            # the complete labeled-pebble configuration graph.
-            for mode in ("focused", "broad", "exhaustive"):
+            # Exact mode uses all cost-equivalent macro actions; heuristic mode
+            # retains focused and broad passes for production latency.
+            for mode in modes:
                 result = self._search(problem, initial, budget, mode)
                 if result is None:
                     continue
@@ -787,20 +985,434 @@ class RearrangementPlanner:
                     disturbance_budget=budget,
                     elapsed_s=monotonic() - started,
                     search_mode=mode,
+                    optimal=self.config.exact_search,
                 )
                 plan = MotionPlan(
                     problem, relocations, statistics, capture_index, capture_path
                 )
                 plan.validate()
+                if incumbent is not None and incumbent.objective < plan.objective:
+                    incumbent_statistics = PlanStatistics(
+                        expanded_nodes=self._expanded_total,
+                        generated_nodes=self._generated_total,
+                        disturbance_budget=incumbent.temporary_piece_count,
+                        elapsed_s=monotonic() - started,
+                        search_mode="constructive-incumbent",
+                        optimal=False,
+                    )
+                    return MotionPlan(
+                        problem,
+                        incumbent.relocations,
+                        incumbent_statistics,
+                        incumbent.capture_removal_index,
+                        incumbent.capture_path,
+                    )
                 return plan
 
         elapsed = monotonic() - started
+        if incumbent is not None:
+            statistics = PlanStatistics(
+                expanded_nodes=self._expanded_total,
+                generated_nodes=self._generated_total,
+                disturbance_budget=incumbent.temporary_piece_count,
+                elapsed_s=elapsed,
+                search_mode="constructive-fallback",
+                optimal=False,
+            )
+            plan = MotionPlan(
+                problem,
+                incumbent.relocations,
+                statistics,
+                incumbent.capture_removal_index,
+                incumbent.capture_path,
+            )
+            plan.validate()
+            return plan
         reason = "time limit" if monotonic() >= self._deadline else "search limits"
+        reachability = (
+            "; structural reachability is proven, so this is a bounded-search "
+            "or disturbance-policy failure"
+            if feasibility.status == "proven_solvable"
+            else ""
+        )
         raise PlanningError(
             f"No collision-safe plan found within {reason}: "
             f"{self._expanded_total} states, {elapsed:.2f}s, "
-            f"at most {maximum_budget} temporary pieces"
+            f"at most {maximum_budget} temporary pieces{reachability}"
         )
+
+    def _constructive_plan(
+        self,
+        problem: PlanningProblem,
+        started: float,
+        *,
+        _delay_capture_restoration: bool = True,
+    ) -> MotionPlan | None:
+        """Construct a reversible dense-board plan for one moving primary.
+
+        The construction is deliberately narrower than A*: it handles the
+        common chess-move shape (one primary changes square; every secondary
+        must finish where it began).  It is complete for the corridor choices
+        it succeeds in clearing, and every candidate is replay-validated before
+        it can become an incumbent.
+
+        Capture blockers are peeled from the board edge inward. Safe blockers
+        remain parked through the primary move and are then reversed; an
+        immediate-restoration variant is retried when needed. For the main
+        move, the primary first opens an escape tunnel and parks in free space.
+        The source is then an open end from which the goal corridor can be
+        peeled. Blocker moves are reversed after the primary reaches its goal.
+        """
+
+        moving = [
+            index
+            for index, piece in enumerate(problem.pieces)
+            if piece.primary and piece.start != piece.goal
+        ]
+        if len(moving) != 1 or any(
+            not piece.primary and piece.start != piece.goal
+            for piece in problem.pieces
+        ):
+            return None
+        if problem.deferred_capture and not problem.edge_capture_exit:
+            return None
+        if monotonic() >= self._deadline:
+            return None
+
+        primary = moving[0]
+        positions = list(problem.initial_positions)
+        occupant = {square: index for index, square in enumerate(positions)}
+        if problem.captured_square is not None and problem.deferred_capture:
+            occupant[problem.captured_square] = NO_SQUARE
+
+        relocations: list[Relocation] = []
+        capture_index: int | None = None
+        capture_path: tuple[int, ...] = ()
+        disturbed: set[int] = set()
+        delayed_capture_forward: list[tuple[int, tuple[int, ...]]] = []
+
+        def clone_state() -> tuple[list[int], dict[int, int], list[Relocation], set[int]]:
+            return positions.copy(), occupant.copy(), relocations.copy(), disturbed.copy()
+
+        def restore_state(
+            snapshot: tuple[list[int], dict[int, int], list[Relocation], set[int]]
+        ) -> None:
+            nonlocal positions, occupant, relocations, disturbed
+            # Attempts reuse the same baseline snapshot.  Copy on restore so a
+            # failed candidate cannot mutate the saved rollback state.
+            positions = snapshot[0].copy()
+            occupant = snapshot[1].copy()
+            relocations = snapshot[2].copy()
+            disturbed = snapshot[3].copy()
+
+        def append_move(index: int, path: tuple[int, ...], purpose: str) -> bool:
+            if len(path) < 2 or positions[index] != path[0]:
+                return False
+            moving_occupancy = set(occupant) - {path[0]}
+            if any(square in moving_occupancy for square in path[1:]):
+                return False
+            if path[-1] in moving_occupancy:
+                return False
+            newly_disturbed = (
+                not problem.pieces[index].primary and index not in disturbed
+            )
+            if len(disturbed) + int(newly_disturbed) > self.config.max_temporary_pieces:
+                return False
+            del occupant[path[0]]
+            occupant[path[-1]] = index
+            positions[index] = path[-1]
+            if not problem.pieces[index].primary:
+                disturbed.add(index)
+            relocations.append(
+                Relocation(
+                    problem.pieces[index].key,
+                    path[0],
+                    path[-1],
+                    path,
+                    purpose,
+                )
+            )
+            return True
+
+        def parking_path(
+            index: int,
+            protected_targets: frozenset[int],
+            banned_path_nodes: frozenset[int],
+        ) -> tuple[int, ...] | None:
+            if monotonic() >= self._deadline:
+                return None
+            source = positions[index]
+            extra_blocked = banned_path_nodes - {source}
+            blocked = frozenset(occupant) | extra_blocked
+            reachable = reachable_empty_squares(source, blocked)
+            targets = reachable - protected_targets - extra_blocked
+            if not targets:
+                return None
+
+            free_after_lift = (
+                frozenset(range(BOARD_SQUARES))
+                - ((frozenset(occupant) - {source}) | extra_blocked)
+            )
+            articulation = _articulation_points(free_after_lift)
+            scored: list[tuple[tuple[int, ...], int]] = []
+            occupied_without_source = frozenset(occupant) - {source}
+            for target in targets:
+                mobility = sum(
+                    neighbor not in occupied_without_source
+                    and neighbor not in extra_blocked
+                    and neighbor != target
+                    for neighbor, _ in orthogonal_neighbors(target)
+                )
+                scored.append(
+                    (
+                        (
+                            int(target in articulation),
+                            manhattan(source, target),
+                            -mobility,
+                            -min(
+                                (manhattan(target, square) for square in protected_targets),
+                                default=0,
+                            ),
+                            target,
+                        ),
+                        target,
+                    )
+                )
+            for _score, target in sorted(scored):
+                path = find_empty_path(source, target, blocked)
+                if path is not None:
+                    return path
+            return None
+
+        def clear_corridor(
+            corridor: tuple[int, ...],
+            *,
+            from_open_end: bool,
+            protected_targets: frozenset[int],
+            banned_path_nodes: frozenset[int],
+        ) -> list[tuple[int, tuple[int, ...]]] | None:
+            forward: list[tuple[int, tuple[int, ...]]] = []
+            squares = list(corridor[1:])
+            if from_open_end:
+                squares.reverse()
+            for square in squares:
+                if monotonic() >= self._deadline:
+                    return None
+                index = occupant.get(square)
+                if index is None:
+                    continue
+                if index == NO_SQUARE:
+                    return None
+                path = parking_path(index, protected_targets, banned_path_nodes)
+                if path is None:
+                    return None
+                purpose = "stage" if problem.pieces[index].primary else "evacuate"
+                if not append_move(index, path, purpose):
+                    return None
+                forward.append((index, path))
+            return forward
+
+        def reverse_moves(forward: Sequence[tuple[int, tuple[int, ...]]]) -> bool:
+            for index, path in reversed(forward):
+                purpose = "stage" if problem.pieces[index].primary else "restore"
+                if not append_move(index, tuple(reversed(path)), purpose):
+                    return False
+            return True
+
+        # Deferred edge capture: try several low-blocker corridors.  The exact
+        # reverse of every evacuation is legal after the captured piece leaves
+        # the board, because reverse order recreates each forward occupancy.
+        if problem.captured_square is not None and problem.deferred_capture:
+            capture = problem.captured_square
+            capture_options = relaxed_corridors(
+                capture,
+                CAPTURE_EDGE_EXITS,
+                occupant,
+                NO_SQUARE,
+                max(12, self.config.corridor_candidates),
+            )
+            captured = False
+            for corridor in capture_options:
+                if monotonic() >= self._deadline:
+                    return None
+                snapshot = clone_state()
+                protected = frozenset(corridor)
+                forward = clear_corridor(
+                    corridor,
+                    from_open_end=True,
+                    protected_targets=protected,
+                    banned_path_nodes=frozenset(),
+                )
+                if forward is None:
+                    restore_state(snapshot)
+                    continue
+                if any(square in occupant for square in corridor[1:]):
+                    restore_state(snapshot)
+                    continue
+                capture_index = len(relocations)
+                capture_path = corridor
+                if occupant.get(capture) != NO_SQUARE:
+                    restore_state(snapshot)
+                    continue
+                del occupant[capture]
+                can_delay = _delay_capture_restoration and all(
+                    index != primary and problem.pieces[primary].goal not in path
+                    for index, path in forward
+                )
+                if can_delay:
+                    delayed_capture_forward = forward
+                elif not reverse_moves(forward):
+                    restore_state(snapshot)
+                    continue
+                captured = True
+                break
+            if not captured:
+                return None
+
+        source = positions[primary]
+        goal = problem.pieces[primary].goal
+        direct = find_empty_path(source, goal, occupant)
+        if direct is not None:
+            if not append_move(primary, direct, "primary"):
+                return None
+        else:
+            base = clone_state()
+            empty = frozenset(range(BOARD_SQUARES)) - frozenset(occupant)
+            components: list[frozenset[int]] = []
+            unseen = set(empty)
+            while unseen:
+                seed = min(unseen)
+                component = {seed}
+                frontier = [seed]
+                unseen.remove(seed)
+                while frontier:
+                    current = frontier.pop()
+                    for neighbor, _ in orthogonal_neighbors(current):
+                        if neighbor in unseen:
+                            unseen.remove(neighbor)
+                            component.add(neighbor)
+                            frontier.append(neighbor)
+                components.append(frozenset(component))
+            components.sort(key=lambda item: (-len(item), min(item)))
+
+            solved = False
+            for component in components:
+                if solved:
+                    break
+                articulation = _articulation_points(component)
+                stage_candidates = sorted(
+                    component - {goal},
+                    key=lambda square: (
+                        int(square in articulation),
+                        -sum(neighbor in component for neighbor, _ in orthogonal_neighbors(square)),
+                        -manhattan(square, goal),
+                        manhattan(source, square),
+                        square,
+                    ),
+                )[:16]
+                for stage in stage_candidates:
+                    if solved:
+                        break
+                    if monotonic() >= self._deadline:
+                        return None
+                    restore_state(base)
+                    corridors = relaxed_corridors(
+                        source,
+                        stage,
+                        occupant,
+                        primary,
+                        max(4, self.config.corridor_candidates),
+                    )
+                    for escape in corridors:
+                        if goal in escape or len(escape) < 2:
+                            continue
+                        restore_state(base)
+                        protected_escape = frozenset(escape) | {goal}
+                        escape_forward = clear_corridor(
+                            escape,
+                            from_open_end=True,
+                            protected_targets=protected_escape,
+                            banned_path_nodes=frozenset({goal}),
+                        )
+                        if escape_forward is None:
+                            continue
+                        if not append_move(primary, escape, "stage"):
+                            continue
+
+                        # Plan the goal corridor without reusing the escape
+                        # tunnel.  Its blockers can therefore be carried back
+                        # through the open source and tunnel into free space.
+                        corridor_occupant = dict(occupant)
+                        corridor_occupant.pop(stage, None)
+                        main = _relaxed_shortest_path(
+                            source,
+                            frozenset({goal}),
+                            corridor_occupant,
+                            NO_SQUARE,
+                            banned_nodes=frozenset(escape[1:]),
+                        )
+                        if main is None:
+                            continue
+                        protected_main = frozenset(main) | frozenset(escape)
+                        main_forward = clear_corridor(
+                            main,
+                            from_open_end=False,
+                            protected_targets=protected_main,
+                            banned_path_nodes=frozenset({goal}),
+                        )
+                        if main_forward is None:
+                            continue
+                        final_path = find_empty_path(stage, goal, occupant)
+                        if final_path is None or not append_move(
+                            primary, final_path, "primary"
+                        ):
+                            continue
+                        if not reverse_moves(main_forward):
+                            continue
+                        if not reverse_moves(escape_forward):
+                            continue
+                        solved = positions == list(problem.goal_positions)
+                        if solved:
+                            break
+            if not solved:
+                restore_state(base)
+                if delayed_capture_forward and monotonic() < self._deadline:
+                    return self._constructive_plan(
+                        problem,
+                        started,
+                        _delay_capture_restoration=False,
+                    )
+                return None
+
+        if delayed_capture_forward and not reverse_moves(delayed_capture_forward):
+            if monotonic() < self._deadline:
+                return self._constructive_plan(
+                    problem,
+                    started,
+                    _delay_capture_restoration=False,
+                )
+            return None
+
+        statistics = PlanStatistics(
+            0,
+            0,
+            len(disturbed),
+            monotonic() - started,
+            "constructive-incumbent",
+            optimal=False,
+        )
+        plan = MotionPlan(
+            problem,
+            tuple(relocations),
+            statistics,
+            capture_index,
+            capture_path,
+        )
+        try:
+            plan.validate()
+        except (PlanningError, ValueError):
+            return None
+        return plan
 
     def _search(
         self,
@@ -816,13 +1428,15 @@ class RearrangementPlanner:
         start_h = self._heuristic(problem, initial)
         queue = [
             _QueueEntry(
-                int(self.config.heuristic_weight * start_h),
+                _weighted_priority(
+                    _ZERO_OBJECTIVE, start_h, self.config.heuristic_weight
+                ),
                 next(serial),
-                0,
+                _ZERO_OBJECTIVE,
                 initial,
             )
         ]
-        best_cost = {initial: 0}
+        best_cost = {initial: _ZERO_OBJECTIVE}
         parent: dict[_SearchState, tuple[_SearchState, _SearchAction] | None] = {initial: None}
 
         while queue:
@@ -839,15 +1453,21 @@ class RearrangementPlanner:
             for action in actions:
                 if action.piece_index == NO_SQUARE:
                     next_state = _SearchState(
-                        entry.state.positions, entry.state.disturbed_mask, True
+                        entry.state.positions,
+                        entry.state.disturbed_mask,
+                        True,
+                        NO_SQUARE,
                     )
-                    candidate_cost = entry.cost + action.cost
-                    if candidate_cost >= best_cost.get(next_state, 1 << 120):
+                    candidate_cost = _add_objectives(entry.cost, action.cost)
+                    previous_cost = best_cost.get(next_state)
+                    if previous_cost is not None and candidate_cost >= previous_cost:
                         continue
                     best_cost[next_state] = candidate_cost
                     parent[next_state] = (entry.state, action)
                     heuristic = self._heuristic(problem, next_state)
-                    priority = candidate_cost + int(self.config.heuristic_weight * heuristic)
+                    priority = _weighted_priority(
+                        candidate_cost, heuristic, self.config.heuristic_weight
+                    )
                     heappush(
                         queue,
                         _QueueEntry(priority, next(serial), candidate_cost, next_state),
@@ -863,15 +1483,21 @@ class RearrangementPlanner:
                 if disturbed.bit_count() > disturbance_budget:
                     continue
                 next_state = _SearchState(
-                    tuple(positions), disturbed, entry.state.capture_removed
+                    tuple(positions),
+                    disturbed,
+                    entry.state.capture_removed,
+                    action.piece_index if mode == "exhaustive" else NO_SQUARE,
                 )
-                candidate_cost = entry.cost + action.cost
-                if candidate_cost >= best_cost.get(next_state, 1 << 120):
+                candidate_cost = _add_objectives(entry.cost, action.cost)
+                previous_cost = best_cost.get(next_state)
+                if previous_cost is not None and candidate_cost >= previous_cost:
                     continue
                 best_cost[next_state] = candidate_cost
                 parent[next_state] = (entry.state, action)
                 heuristic = self._heuristic(problem, next_state)
-                priority = candidate_cost + int(self.config.heuristic_weight * heuristic)
+                priority = _weighted_priority(
+                    candidate_cost, heuristic, self.config.heuristic_weight
+                )
                 heappush(
                     queue,
                     _QueueEntry(priority, next(serial), candidate_cost, next_state),
@@ -879,66 +1505,31 @@ class RearrangementPlanner:
                 self._generated_total += 1
         return None
 
-    def _heuristic(self, problem: PlanningProblem, state: _SearchState) -> int:
+    def _heuristic(self, problem: PlanningProblem, state: _SearchState) -> _Objective:
         if not state.capture_removed:
-            capture = problem.captured_square
-            if capture is None:
-                return PICKUP_COST
-            if problem.edge_capture_exit:
-                occupant = {
-                    square: index for index, square in enumerate(state.positions)
-                }
-                corridor = _relaxed_shortest_path(
-                    capture, CAPTURE_EDGE_EXITS, occupant, NO_SQUARE
-                )
-                blockers = 0 if corridor is None else sum(
-                    square in occupant for square in corridor[1:]
-                )
-            else:
-                occupied = frozenset(state.positions)
-                blockers = min(
-                    len(capture_clearance_squares(capture, rank) & occupied)
-                    for rank in capture_exit_ranks(capture)
-                )
-            return PICKUP_COST + blockers * STEP_COST
+            # Capture removal itself is mandatory. Other components stay zero
+            # so the bound remains admissible when blockers must move first.
+            return (0, 1, 0, 0)
         mismatched = [
             index
             for index, (current, goal) in enumerate(zip(state.positions, problem.goal_positions))
             if current != goal
         ]
         if not mismatched:
-            return 0
-        estimate = len(mismatched) * PICKUP_COST
-        estimate += sum(
-            manhattan(state.positions[index], problem.goal_positions[index]) * STEP_COST
-            for index in mismatched
+            return _ZERO_OBJECTIVE
+        # Every mismatched label needs at least one pickup and at least its
+        # Manhattan displacement in total carried steps. The previous relaxed
+        # blocker term was not admissible because it evaluated only one tied
+        # corridor and could miss a route through already-disturbed pieces.
+        return (
+            0,
+            len(mismatched),
+            sum(
+                manhattan(state.positions[index], problem.goal_positions[index])
+                for index in mismatched
+            ),
+            0,
         )
-
-        occupant = {square: index for index, square in enumerate(state.positions)}
-        unavoidable_new = 0
-        for index in mismatched:
-            if not problem.pieces[index].primary:
-                continue
-            corridor = _relaxed_shortest_path(
-                state.positions[index],
-                frozenset({problem.goal_positions[index]}),
-                occupant,
-                index,
-            )
-            if corridor is None:
-                continue
-            blockers = {
-                occupant[square]
-                for square in corridor[1:]
-                if square in occupant and occupant[square] != index
-            }
-            new_secondary = sum(
-                not problem.pieces[blocker].primary
-                and not (state.disturbed_mask & (1 << blocker))
-                for blocker in blockers
-            )
-            unavoidable_new = max(unavoidable_new, new_secondary)
-        return estimate + unavoidable_new * DISTURBANCE_COST
 
     def _successors(
         self,
@@ -974,12 +1565,13 @@ class RearrangementPlanner:
 
         # Move a primary to its exact goal as soon as the route is clear.  This
         # is the normal Plan A transition after blockers have been parked.
-        direct_primary = False
+        blocked_primary: list[int] = []
         for index in mismatched_primary:
             path = find_empty_path(state.positions[index], problem.pieces[index].goal, occupied)
             if path and len(path) > 1:
                 add(self._make_action(problem, state, index, path, "primary"))
-                direct_primary = True
+            else:
+                blocked_primary.append(index)
 
         # Restore directly reachable temporary pieces even while a primary is
         # staged away from its goal.  That is the essential Plan B ordering:
@@ -995,8 +1587,7 @@ class RearrangementPlanner:
                 blocked_secondary.append(index)
 
         blocked_obligations: list[int] = []
-        if mismatched_primary and not direct_primary:
-            blocked_obligations.extend(mismatched_primary)
+        blocked_obligations.extend(blocked_primary)
         blocked_obligations.extend(blocked_secondary)
 
         for obligation in blocked_obligations[:2]:
@@ -1081,9 +1672,32 @@ class RearrangementPlanner:
                 ):
                     add(action)
 
-        if mode == "exhaustive" or not actions:
-            # Completeness fallback: every legal one-cell slide is represented.
-            # Repeated slides span the same state graph as arbitrary macro paths.
+        if mode == "exhaustive":
+            # Cost-equivalent completeness: every reachable release square is
+            # represented by its best (turns, steps) path. Consecutive moves of
+            # one piece are omitted because their concatenation is one legal,
+            # non-worse macro action already present from the previous state.
+            for index, source in enumerate(state.positions):
+                if (
+                    not problem.pieces[index].primary
+                    and not (state.disturbed_mask & (1 << index))
+                    and state.disturbed_mask.bit_count() >= disturbance_budget
+                ):
+                    continue
+                if index == state.last_piece:
+                    continue
+                cache_key = (occupied, source)
+                paths = self._parking_path_cache.setdefault(cache_key, {})
+                for target in sorted(reachable_empty_squares(source, occupied)):
+                    if target not in paths:
+                        paths[target] = find_empty_path(source, target, occupied)
+                    path = paths[target]
+                    if path is None:
+                        continue
+                    purpose = self._purpose(problem, state, index, target)
+                    add(self._make_action(problem, state, index, path, purpose))
+        elif not actions:
+            # Keep a cheap reachability fallback in heuristic modes.
             for index, source in enumerate(state.positions):
                 if (
                     not problem.pieces[index].primary
@@ -1097,6 +1711,12 @@ class RearrangementPlanner:
                     purpose = self._purpose(problem, state, index, target)
                     add(self._make_action(problem, state, index, (source, target), purpose))
 
+        if mode == "exhaustive":
+            actions = {
+                key: action
+                for key, action in actions.items()
+                if action.piece_index != state.last_piece
+            }
         return tuple(sorted(actions.values(), key=lambda action: (action.cost, action.piece_index, action.target)))
 
     def _capture_successors(
@@ -1110,7 +1730,11 @@ class RearrangementPlanner:
 
         capture = problem.captured_square
         if capture is None:
-            return (_SearchAction(NO_SQUARE, NO_SQUARE, (), "capture", PICKUP_COST),)
+            return (
+                _SearchAction(
+                    NO_SQUARE, NO_SQUARE, (), "capture", (0, 1, 0, 0)
+                ),
+            )
         occupant = {square: index for index, square in enumerate(state.positions)}
         occupant[capture] = NO_SQUARE
         occupied = frozenset(occupant)
@@ -1132,12 +1756,7 @@ class RearrangementPlanner:
                 if not blockers:
                     turns = route_turns(corridor)
                     drags = turns + 1 if len(corridor) > 1 else 0
-                    cost = (
-                        (drags + 1) * PICKUP_COST
-                        + (len(corridor) - 1) * STEP_COST
-                        + turns * TURN_COST
-                        + clearance_risk(corridor, occupied - {capture})
-                    )
+                    cost = (0, drags + 1, len(corridor) - 1, turns)
                     return (
                         _SearchAction(
                             NO_SQUARE, corridor[-1], corridor, "capture", cost
@@ -1156,7 +1775,9 @@ class RearrangementPlanner:
                 })
                 if not blockers:
                     return (
-                        _SearchAction(NO_SQUARE, capture, (), "capture", PICKUP_COST),
+                        _SearchAction(
+                            NO_SQUARE, capture, (), "capture", (0, 1, 0, 0)
+                        ),
                     )
                 lane_options.append(
                     (len(blockers), preference, clearance | {capture}, blockers)
@@ -1202,7 +1823,27 @@ class RearrangementPlanner:
                 ):
                     add(action)
 
-        if mode == "exhaustive" or not actions:
+        if mode == "exhaustive":
+            for index, source in enumerate(state.positions):
+                if (
+                    not problem.pieces[index].primary
+                    and not (state.disturbed_mask & (1 << index))
+                    and state.disturbed_mask.bit_count() >= disturbance_budget
+                ):
+                    continue
+                if index == state.last_piece:
+                    continue
+                cache_key = (occupied, source)
+                paths = self._parking_path_cache.setdefault(cache_key, {})
+                for target in sorted(reachable_empty_squares(source, occupied)):
+                    if target not in paths:
+                        paths[target] = find_empty_path(source, target, occupied)
+                    path = paths[target]
+                    if path is None:
+                        continue
+                    purpose = self._purpose(problem, state, index, target)
+                    add(self._make_action(problem, state, index, path, purpose))
+        elif not actions:
             for index, source in enumerate(state.positions):
                 if (
                     not problem.pieces[index].primary
@@ -1216,6 +1857,12 @@ class RearrangementPlanner:
                     purpose = self._purpose(problem, state, index, target)
                     add(self._make_action(problem, state, index, (source, target), purpose))
 
+        if mode == "exhaustive":
+            actions = {
+                key: action
+                for key, action in actions.items()
+                if action.piece_index != state.last_piece
+            }
         return tuple(
             sorted(actions.values(), key=lambda action: (action.cost, action.piece_index, action.target))
         )
@@ -1403,14 +2050,8 @@ class RearrangementPlanner:
         newly_disturbed = (
             not piece.primary and not (state.disturbed_mask & (1 << piece_index))
         )
-        occupied_without_mover = frozenset(state.positions) - {state.positions[piece_index]}
-        cost = (
-            int(newly_disturbed) * DISTURBANCE_COST
-            + (route_turns(path) + 1) * PICKUP_COST
-            + (len(path) - 1) * STEP_COST
-            + route_turns(path) * TURN_COST
-            + clearance_risk(path, occupied_without_mover)
-        )
+        turns = route_turns(path)
+        cost = (int(newly_disturbed), turns + 1, len(path) - 1, turns)
         return _SearchAction(piece_index, path[-1], path, purpose, cost)
 
     @staticmethod
@@ -1462,6 +2103,8 @@ def planning_problem_from_chess(
 
     import chess
 
+    if not board.is_valid():
+        raise PlanningError(f"Invalid chess position (status={board.status()})")
     if move not in board.legal_moves:
         raise PlanningError(f"Illegal chess move: {move.uci()}")
     if getattr(board, "chess960", False):
