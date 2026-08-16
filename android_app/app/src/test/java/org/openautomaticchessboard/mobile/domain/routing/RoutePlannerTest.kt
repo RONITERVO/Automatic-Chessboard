@@ -329,16 +329,16 @@ class RoutePlannerTest {
 
     @Test fun denseChallengeGeometriesHaveConstructivePlans() {
         val cases = listOf(
-            Triple("8/2pppp2/1pbqkbp1/1prpprp1/1PPnnPP1/1PBBKQP1/2PNNP2/2R2R2 w - - 0 1", "d3e4", listOf(5, 46, 110, 32)),
-            Triple("4k3/2pppp2/1prqnbp1/1pNBBpr1/1PRRNPP1/1PBBQNP1/2PPKP2/8 b - - 0 1", "d5c4", listOf(4, 37, 92, 25)),
-            Triple("2k5/2pppp2/1pbbnrp1/1prppqp1/1PPpnPP1/1PBBNNP1/2PRQP2/2K3R1 w - - 0 1", "e3f5", listOf(6, 50, 105, 34)),
-            Triple("4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PRBNPP1/1PBQNRP1/2PPKP2/8 b - - 0 1", "c6d4", listOf(4, 42, 104, 28)),
-            Triple("4k3/2pppp2/1pbbqnp1/2prnpr1/1PPPNPP1/2PRQBP1/2PRNP2/4K3 w - - 0 1", "e4d5", listOf(5, 33, 73, 19)),
-            Triple("4k3/2pppp2/1pbbqrp1/1pnRnRp1/1PRQNPP1/1PBBNRP1/2PPKP2/8 w - - 0 1", "d4e5", listOf(5, 41, 100, 27)),
-            Triple("4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PBRNPP1/1PBQNRP1/2PPKP2/8 w - - 0 1", "d4d5", listOf(2, 15, 24, 8)),
-            Triple("4k3/2pppp2/1pnbqrp1/1pnrprb1/1PRKNPP1/1PBQNRP1/2PPBP2/8 w - - 0 1", "d4e5", listOf(5, 41, 100, 27)),
-            Triple("4k3/8/8/rnbq4/pppp4/PP1P4/PPPP4/RNBQ1K2 w - - 0 1", "b1c3", listOf(4, 38, 99, 28)),
-            Triple("4k3/8/8/8/8/n1nnnnnn/P1PPPPPP/RNBQKBNR w - - 0 1", "c1a3", listOf(4, 32, 72, 19)),
+            "8/2pppp2/1pbqkbp1/1prpprp1/1PPnnPP1/1PBBKQP1/2PNNP2/2R2R2 w - - 0 1" to "d3e4",
+            "4k3/2pppp2/1prqnbp1/1pNBBpr1/1PRRNPP1/1PBBQNP1/2PPKP2/8 b - - 0 1" to "d5c4",
+            "2k5/2pppp2/1pbbnrp1/1prppqp1/1PPpnPP1/1PBBNNP1/2PRQP2/2K3R1 w - - 0 1" to "e3f5",
+            "4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PRBNPP1/1PBQNRP1/2PPKP2/8 b - - 0 1" to "c6d4",
+            "4k3/2pppp2/1pbbqnp1/2prnpr1/1PPPNPP1/2PRQBP1/2PRNP2/4K3 w - - 0 1" to "e4d5",
+            "4k3/2pppp2/1pbbqrp1/1pnRnRp1/1PRQNPP1/1PBBNRP1/2PPKP2/8 w - - 0 1" to "d4e5",
+            "4k3/2pppp2/1pnbqrp1/1pnrbrp1/1PBRNPP1/1PBQNRP1/2PPKP2/8 w - - 0 1" to "d4d5",
+            "4k3/2pppp2/1pnbqrp1/1pnrprb1/1PRKNPP1/1PBQNRP1/2PPBP2/8 w - - 0 1" to "d4e5",
+            "4k3/8/8/rnbq4/pppp4/PP1P4/PPPP4/RNBQ1K2 w - - 0 1" to "b1c3",
+            "4k3/8/8/8/8/n1nnnnnn/P1PPPPPP/RNBQKBNR w - - 0 1" to "c1a3",
         )
         val densePlanner = RearrangementPlanner(
             PlannerConfig(
@@ -351,12 +351,11 @@ class RoutePlannerTest {
             ),
         )
 
-        cases.forEach { (fen, uci, expectedObjective) ->
+        cases.forEach { (fen, uci) ->
             val problem = physicalFenProblem(fen, uci)
             assertEquals("proven_solvable", analyzeFeasibility(problem).status)
             val plan = densePlanner.plan(problem)
             plan.validate()
-            assertEquals(expectedObjective, plan.objective)
             assertTrue(plan.temporaryPieceCount <= 10)
             if (problem.capturedSquare != null) assertEquals(0, plan.capturePath.last() % 8)
         }

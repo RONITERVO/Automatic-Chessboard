@@ -24,15 +24,18 @@ BOARD_SQUARES = 64
 NO_SQUARE = -1
 CAPTURE_EDGE_EXITS = frozenset(range(0, BOARD_SQUARES, BOARD_FILES))
 
-# Legacy scalar reporting constants. Search itself uses an explicit ordered
-# tuple, so lexicographic priority does not depend on assumed upper bounds.
-DISTURBANCE_COST = 10**12
-PICKUP_COST = 10**8
-STEP_COST = 10**4
-TURN_COST = 100
-
 _Objective = tuple[int, int, int, int]
 _ZERO_OBJECTIVE: _Objective = (0, 0, 0, 0)
+
+
+def _protocol_module():
+    """Import protocol for package and top-level execution contexts."""
+
+    if __package__:
+        from . import protocol
+    else:  # Top-level import used by the review harness.
+        import protocol
+    return protocol
 
 
 def _add_objectives(left: _Objective, right: _Objective) -> _Objective:
@@ -246,16 +249,14 @@ class MotionPlan:
 
     @property
     def drag_count(self) -> int:
-        if __package__:
-            from .protocol import split_route_runs
-        else:  # Top-level import used by the review harness.
-            from protocol import split_route_runs
-
+        protocol = _protocol_module()
         capture_drags = (
-            len(split_route_runs(self.capture_path)) if len(self.capture_path) > 1 else 0
+            len(protocol.split_route_runs(self.capture_path))
+            if len(self.capture_path) > 1
+            else 0
         )
         return capture_drags + sum(
-            len(split_route_runs(move.path)) for move in self.relocations
+            len(protocol.split_route_runs(move.path)) for move in self.relocations
         )
 
     @property
@@ -351,22 +352,13 @@ class MotionPlan:
     def protocol_commands(self) -> tuple[str, ...]:
         """Build the transactional ACB command sequence lazily to avoid cycles."""
 
-        if __package__:
-            from .protocol import (
-                commit_plan_command, drag_command, plan_command, remove_command,
-                split_route_runs,
-            )
-        else:  # Top-level import used by the review harness.
-            from protocol import (
-                commit_plan_command, drag_command, plan_command, remove_command,
-                split_route_runs,
-            )
+        protocol = _protocol_module()
 
         # A BOARD proof follows transaction opening and every physical drag.
         # The Nano already validates all 64 switches locally; these snapshots
         # independently let Windows detect stale, reordered, or lost commands.
         commands = [
-            plan_command(
+            protocol.plan_command(
                 self.problem.move_uci,
                 self.problem.captured_square,
                 castling_side=self.problem.castling_side,
@@ -376,18 +368,20 @@ class MotionPlan:
 
         def append_capture() -> None:
             if len(self.capture_path) > 1:
-                for run in split_route_runs(self.capture_path):
-                    commands.extend((drag_command(run), "BOARD"))
-            commands.extend((remove_command(self.problem.captured_square), "BOARD"))
+                for run in protocol.split_route_runs(self.capture_path):
+                    commands.extend((protocol.drag_command(run), "BOARD"))
+            commands.extend(
+                (protocol.remove_command(self.problem.captured_square), "BOARD")
+            )
 
         for index, move in enumerate(self.relocations):
             if index == self.capture_removal_index:
                 append_capture()
-            for run in split_route_runs(move.path):
-                commands.extend((drag_command(run), "BOARD"))
+            for run in protocol.split_route_runs(move.path):
+                commands.extend((protocol.drag_command(run), "BOARD"))
         if self.capture_removal_index == len(self.relocations):
             append_capture()
-        commands.append(commit_plan_command())
+        commands.append(protocol.commit_plan_command())
         return tuple(commands)
 
     def describe(self) -> str:
@@ -951,7 +945,7 @@ class RearrangementPlanner:
         # bounded optimizer times out, production still receives a validated
         # plan.  Exact mode never returns this unproved incumbent.
         incumbent = (
-            self._constructive_plan(problem, started)
+            self._constructive_incumbent(problem, started)
             if self.config.constructive_fallback and not self.config.exact_search
             else None
         )
@@ -1040,6 +1034,20 @@ class RearrangementPlanner:
             f"{self._expanded_total} states, {elapsed:.2f}s, "
             f"at most {maximum_budget} temporary pieces{reachability}"
         )
+
+    def _constructive_incumbent(
+        self, problem: PlanningProblem, started: float
+    ) -> MotionPlan | None:
+        """Build an incumbent while reserving half the deadline for search."""
+
+        overall_deadline = self._deadline
+        self._deadline = min(
+            overall_deadline, started + self.config.time_limit_s / 2.0
+        )
+        try:
+            return self._constructive_plan(problem, started)
+        finally:
+            self._deadline = overall_deadline
 
     def _constructive_plan(
         self,

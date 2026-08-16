@@ -383,7 +383,7 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         }
 
         val incumbent = if (config.constructiveFallback && !config.exactSearch) {
-            constructivePlan(problem, started)
+            constructiveIncumbent(problem, started)
         } else {
             null
         }
@@ -450,52 +450,62 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         )
     }
 
-    private fun constructivePlan(
-        problem: PlanningProblem,
-        started: Long,
-        delayCaptureRestoration: Boolean = true,
-    ): MotionPlan? {
-        val moving = problem.pieces.indices.filter {
-            problem.pieces[it].primary && problem.pieces[it].start != problem.pieces[it].goal
-        }
-        if (moving.size != 1 || problem.pieces.any {
-                !it.primary && it.start != it.goal
-            }
-        ) return null
-        if (problem.deferredCapture && !problem.edgeCaptureExit) return null
-        if (System.nanoTime() >= deadlineNanos) return null
+    private data class ConstructiveSnapshot(
+        val positions: IntArray,
+        val occupant: MutableMap<Int, Int>,
+        val relocations: MutableList<Relocation>,
+        val disturbed: MutableSet<Int>,
+        val captureIndex: Int?,
+        val capturePath: List<Int>,
+        val delayedCaptureForward: List<Pair<Int, List<Int>>>,
+    )
 
-        val primary = moving.single()
+    private data class ConstructiveParkingCandidate(
+        val articulation: Int,
+        val steps: Long,
+        val negativeMobility: Int,
+        val negativeProtectedDistance: Long,
+        val target: Int,
+    )
+
+    private inner class ConstructiveState(
+        val problem: PlanningProblem,
+        val primary: Int,
+    ) {
         var positions = problem.initialPositions
         var occupant = positions.mapIndexed { index, square -> square to index }.toMap().toMutableMap()
-        if (problem.capturedSquare != null && problem.deferredCapture) {
-            occupant[problem.capturedSquare] = -1
-        }
         var relocations = mutableListOf<Relocation>()
+        var disturbed = mutableSetOf<Int>()
         var captureIndex: Int? = null
         var capturePath = emptyList<Int>()
-        var disturbed = mutableSetOf<Int>()
         var delayedCaptureForward = emptyList<Pair<Int, List<Int>>>()
 
-        data class Snapshot(
-            val positions: IntArray,
-            val occupant: MutableMap<Int, Int>,
-            val relocations: MutableList<Relocation>,
-            val disturbed: MutableSet<Int>,
-        )
+        init {
+            if (problem.capturedSquare != null && problem.deferredCapture) {
+                occupant[problem.capturedSquare] = -1
+            }
+        }
 
-        fun snapshot() = Snapshot(
+        fun snapshot() = ConstructiveSnapshot(
             positions.copyOf(),
             occupant.toMutableMap(),
             relocations.toMutableList(),
             disturbed.toMutableSet(),
+            captureIndex,
+            capturePath.toList(),
+            delayedCaptureForward.map { (index, path) -> index to path.toList() },
         )
 
-        fun restore(value: Snapshot) {
-            positions = value.positions.copyOf()
-            occupant = value.occupant.toMutableMap()
-            relocations = value.relocations.toMutableList()
-            disturbed = value.disturbed.toMutableSet()
+        fun restore(snapshot: ConstructiveSnapshot) {
+            positions = snapshot.positions.copyOf()
+            occupant = snapshot.occupant.toMutableMap()
+            relocations = snapshot.relocations.toMutableList()
+            disturbed = snapshot.disturbed.toMutableSet()
+            captureIndex = snapshot.captureIndex
+            capturePath = snapshot.capturePath.toList()
+            delayedCaptureForward = snapshot.delayedCaptureForward.map { (index, path) ->
+                index to path.toList()
+            }
         }
 
         fun appendMove(index: Int, path: List<Int>, purpose: String): Boolean {
@@ -535,20 +545,13 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                 ((occupant.keys - source) + extraBlocked)
             val articulation = articulationPoints(freeAfterLift)
             val occupiedWithoutSource = occupant.keys - source
-            data class Candidate(
-                val articulation: Int,
-                val steps: Long,
-                val negativeMobility: Int,
-                val negativeProtectedDistance: Long,
-                val target: Int,
-            )
             val candidates = targets.map { target ->
                 val mobility = neighbors(target).count {
                     it.square !in occupiedWithoutSource &&
                         it.square !in extraBlocked &&
                         it.square != target
                 }
-                Candidate(
+                ConstructiveParkingCandidate(
                     if (target in articulation) 1 else 0,
                     manhattan(source, target),
                     -mobility,
@@ -556,14 +559,15 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
                     target,
                 )
             }.sortedWith(
-                compareBy<Candidate> { it.articulation }
+                compareBy<ConstructiveParkingCandidate> { it.articulation }
                     .thenBy { it.steps }
                     .thenBy { it.negativeMobility }
                     .thenBy { it.negativeProtectedDistance }
                     .thenBy { it.target },
             )
-            candidates.forEach { candidate ->
-                findEmptyPath(source, candidate.target, blocked)?.let { return it }
+            for (candidate in candidates) {
+                val path = findEmptyPath(source, candidate.target, blocked)
+                if (path != null) return path
             }
             return null
         }
@@ -577,9 +581,9 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
             val forward = mutableListOf<Pair<Int, List<Int>>>()
             val squares = corridor.drop(1).toMutableList()
             if (fromOpenEnd) squares.reverse()
-            squares.forEach { square ->
+            for (square in squares) {
                 if (System.nanoTime() >= deadlineNanos) return null
-                val index = occupant[square] ?: return@forEach
+                val index = occupant[square] ?: continue
                 if (index == -1) return null
                 val path = parkingPath(index, protectedTargets, bannedPathNodes) ?: return null
                 val purpose = if (problem.pieces[index].primary) "stage" else "evacuate"
@@ -590,186 +594,245 @@ class RearrangementPlanner(private val config: PlannerConfig = PlannerConfig()) 
         }
 
         fun reverseMoves(forward: List<Pair<Int, List<Int>>>): Boolean {
-            forward.asReversed().forEach { (index, path) ->
+            for ((index, path) in forward.asReversed()) {
                 val purpose = if (problem.pieces[index].primary) "stage" else "restore"
                 if (!appendMove(index, path.asReversed(), purpose)) return false
             }
             return true
         }
 
-        if (problem.capturedSquare != null && problem.deferredCapture) {
-            val capture = problem.capturedSquare
-            val captureOptions = relaxedCorridors(
-                capture,
-                CAPTURE_EDGE_EXITS,
-                occupant,
-                -1,
-                maxOf(12, config.corridorCandidates),
+        fun validatedPlan(started: Long): MotionPlan? {
+            val plan = MotionPlan(
+                problem,
+                relocations,
+                PlanStatistics(
+                    0,
+                    0,
+                    disturbed.size,
+                    (System.nanoTime() - started) / 1_000_000L,
+                    "constructive-incumbent",
+                ),
+                captureIndex,
+                capturePath,
             )
-            var captured = false
-            for (corridor in captureOptions) {
-                if (System.nanoTime() >= deadlineNanos) return null
-                val before = snapshot()
-                val protected = corridor.toSet()
-                val forward = clearCorridor(
-                    corridor,
-                    true,
-                    protected,
-                    emptySet(),
+            return try {
+                plan.validate()
+                plan
+            } catch (_: PlanningException) {
+                null
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+    }
+
+    private fun constructiveIncumbent(problem: PlanningProblem, started: Long): MotionPlan? {
+        val overallDeadline = deadlineNanos
+        deadlineNanos = minOf(
+            overallDeadline,
+            started + config.timeLimitMillis * 500_000L,
+        )
+        return try {
+            constructivePlan(problem, started)
+        } finally {
+            deadlineNanos = overallDeadline
+        }
+    }
+
+    private fun constructivePrimary(problem: PlanningProblem): Int? {
+        val moving = problem.pieces.indices.filter {
+            problem.pieces[it].primary && problem.pieces[it].start != problem.pieces[it].goal
+        }
+        if (moving.size != 1) return null
+        if (problem.pieces.any { !it.primary && it.start != it.goal }) return null
+        return moving.single()
+    }
+
+    private fun prepareDeferredCapture(
+        state: ConstructiveState,
+        delayCaptureRestoration: Boolean,
+    ): Boolean {
+        val capture = state.problem.capturedSquare ?: return true
+        if (!state.problem.deferredCapture) return true
+        val captureOptions = relaxedCorridors(
+            capture,
+            CAPTURE_EDGE_EXITS,
+            state.occupant,
+            -1,
+            maxOf(12, config.corridorCandidates),
+        )
+        for (corridor in captureOptions) {
+            if (System.nanoTime() >= deadlineNanos) return false
+            val before = state.snapshot()
+            val forward = state.clearCorridor(
+                corridor,
+                true,
+                corridor.toSet(),
+                emptySet(),
+            )
+            if (forward == null || corridor.drop(1).any { it in state.occupant }) {
+                state.restore(before)
+                continue
+            }
+            if (state.occupant[capture] != -1) {
+                state.restore(before)
+                continue
+            }
+            state.captureIndex = state.relocations.size
+            state.capturePath = corridor
+            state.occupant.remove(capture)
+            val canDelay = delayCaptureRestoration && forward.all { (index, path) ->
+                index != state.primary && state.problem.pieces[state.primary].goal !in path
+            }
+            if (canDelay) {
+                state.delayedCaptureForward = forward
+            } else if (!state.reverseMoves(forward)) {
+                state.restore(before)
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun emptyComponents(occupied: Set<Int>): List<Set<Int>> {
+        val unseen = ((0 until BOARD_SQUARES).toSet() - occupied).toMutableSet()
+        val components = mutableListOf<Set<Int>>()
+        while (unseen.isNotEmpty()) {
+            val seed = unseen.min()
+            val component = mutableSetOf(seed)
+            val frontier = ArrayDeque(listOf(seed))
+            unseen.remove(seed)
+            while (frontier.isNotEmpty()) {
+                neighbors(frontier.removeLast()).forEach { neighbor ->
+                    if (unseen.remove(neighbor.square)) {
+                        component += neighbor.square
+                        frontier += neighbor.square
+                    }
+                }
+            }
+            components += component
+        }
+        return components.sortedWith(compareByDescending<Set<Int>> { it.size }.thenBy { it.min() })
+    }
+
+    private fun stageCandidates(
+        component: Set<Int>,
+        source: Int,
+        goal: Int,
+    ): List<Int> {
+        val articulation = articulationPoints(component)
+        return (component - goal).sortedWith(
+            compareBy<Int> { if (it in articulation) 1 else 0 }
+                .thenByDescending { square ->
+                    neighbors(square).count { it.square in component }
+                }
+                .thenByDescending { manhattan(it, goal) }
+                .thenBy { manhattan(source, it) }
+                .thenBy { it },
+        ).take(16)
+    }
+
+    private fun stagedPrimarySearch(
+        state: ConstructiveState,
+        source: Int,
+        goal: Int,
+    ): Boolean {
+        val base = state.snapshot()
+        for (component in emptyComponents(state.occupant.keys)) {
+            for (stage in stageCandidates(component, source, goal)) {
+                if (System.nanoTime() >= deadlineNanos) return false
+                state.restore(base)
+                val corridors = relaxedCorridors(
+                    source,
+                    setOf(stage),
+                    state.occupant,
+                    state.primary,
+                    maxOf(4, config.corridorCandidates),
                 )
-                if (forward == null || corridor.drop(1).any { it in occupant }) {
-                    restore(before)
-                    continue
-                }
-                captureIndex = relocations.size
-                capturePath = corridor
-                if (occupant[capture] != -1) {
-                    restore(before)
-                    continue
-                }
-                occupant.remove(capture)
-                val canDelay = delayCaptureRestoration && forward.all { (index, path) ->
-                    index != primary && problem.pieces[primary].goal !in path
-                }
-                if (canDelay) {
-                    delayedCaptureForward = forward
-                } else if (!reverseMoves(forward)) {
-                    restore(before)
-                    continue
-                }
-                captured = true
-                break
-            }
-            if (!captured) return null
-        }
+                for (escape in corridors) {
+                    if (goal in escape || escape.size < 2) continue
+                    state.restore(base)
+                    val escapeForward = state.clearCorridor(
+                        escape,
+                        true,
+                        escape.toSet() + goal,
+                        setOf(goal),
+                    ) ?: continue
+                    if (!state.appendMove(state.primary, escape, "stage")) continue
 
-        val source = positions[primary]
-        val goal = problem.pieces[primary].goal
-        val direct = findEmptyPath(source, goal, occupant.keys)
-        if (direct != null) {
-            if (!appendMove(primary, direct, "primary")) return null
-        } else {
-            val base = snapshot()
-            val empty = (0 until BOARD_SQUARES).toSet() - occupant.keys
-            val components = mutableListOf<Set<Int>>()
-            val unseen = empty.toMutableSet()
-            while (unseen.isNotEmpty()) {
-                val seed = unseen.min()
-                val component = mutableSetOf(seed)
-                val frontier = ArrayDeque(listOf(seed))
-                unseen.remove(seed)
-                while (frontier.isNotEmpty()) {
-                    neighbors(frontier.removeLast()).forEach { neighbor ->
-                        if (unseen.remove(neighbor.square)) {
-                            component += neighbor.square
-                            frontier += neighbor.square
-                        }
-                    }
-                }
-                components += component
-            }
-            components.sortWith(compareByDescending<Set<Int>> { it.size }.thenBy { it.min() })
-
-            var solved = false
-            for (component in components) {
-                if (solved) break
-                val articulation = articulationPoints(component)
-                val stageCandidates = (component - goal).sortedWith(
-                    compareBy<Int> { if (it in articulation) 1 else 0 }
-                        .thenByDescending { square ->
-                            neighbors(square).count { it.square in component }
-                        }
-                        .thenByDescending { manhattan(it, goal) }
-                        .thenBy { manhattan(source, it) }
-                        .thenBy { it },
-                ).take(16)
-                for (stage in stageCandidates) {
-                    if (solved) break
-                    if (System.nanoTime() >= deadlineNanos) return null
-                    restore(base)
-                    val corridors = relaxedCorridors(
+                    val corridorOccupant = state.occupant.toMutableMap()
+                    corridorOccupant.remove(stage)
+                    val main = relaxedShortestPath(
                         source,
-                        setOf(stage),
-                        occupant,
-                        primary,
-                        maxOf(4, config.corridorCandidates),
-                    )
-                    for (escape in corridors) {
-                        if (goal in escape || escape.size < 2) continue
-                        restore(base)
-                        val protectedEscape = escape.toSet() + goal
-                        val escapeForward = clearCorridor(
-                            escape,
-                            true,
-                            protectedEscape,
-                            setOf(goal),
-                        ) ?: continue
-                        if (!appendMove(primary, escape, "stage")) continue
-
-                        val corridorOccupant = occupant.toMutableMap()
-                        corridorOccupant.remove(stage)
-                        val main = relaxedShortestPath(
-                            source,
-                            setOf(goal),
-                            corridorOccupant,
-                            -1,
-                            bannedNodes = escape.drop(1).toSet(),
-                        ) ?: continue
-                        val protectedMain = main.toSet() + escape
-                        val mainForward = clearCorridor(
-                            main,
-                            false,
-                            protectedMain,
-                            setOf(goal),
-                        ) ?: continue
-                        val finalPath = findEmptyPath(stage, goal, occupant.keys)
-                        if (finalPath == null || !appendMove(primary, finalPath, "primary")) {
-                            continue
-                        }
-                        if (!reverseMoves(mainForward)) continue
-                        if (!reverseMoves(escapeForward)) continue
-                        solved = positions.contentEquals(problem.goalPositions)
-                        if (solved) break
+                        setOf(goal),
+                        corridorOccupant,
+                        -1,
+                        bannedNodes = escape.drop(1).toSet(),
+                    ) ?: continue
+                    val mainForward = state.clearCorridor(
+                        main,
+                        false,
+                        main.toSet() + escape,
+                        setOf(goal),
+                    ) ?: continue
+                    val finalPath = findEmptyPath(stage, goal, state.occupant.keys)
+                    if (finalPath == null || !state.appendMove(state.primary, finalPath, "primary")) {
+                        continue
                     }
+                    if (!state.reverseMoves(mainForward)) continue
+                    if (!state.reverseMoves(escapeForward)) continue
+                    if (state.positions.contentEquals(state.problem.goalPositions)) return true
                 }
-            }
-            if (!solved) {
-                restore(base)
-                if (delayedCaptureForward.isNotEmpty() && System.nanoTime() < deadlineNanos) {
-                    return constructivePlan(problem, started, false)
-                }
-                return null
             }
         }
+        state.restore(base)
+        return false
+    }
 
-        if (delayedCaptureForward.isNotEmpty() && !reverseMoves(delayedCaptureForward)) {
+    private fun routeConstructivePrimary(state: ConstructiveState): Boolean {
+        val source = state.positions[state.primary]
+        val goal = state.problem.pieces[state.primary].goal
+        val direct = findEmptyPath(source, goal, state.occupant.keys)
+        return if (direct != null) {
+            state.appendMove(state.primary, direct, "primary")
+        } else {
+            stagedPrimarySearch(state, source, goal)
+        }
+    }
+
+    private fun constructivePlan(
+        problem: PlanningProblem,
+        started: Long,
+        delayCaptureRestoration: Boolean = true,
+    ): MotionPlan? {
+        val primary = constructivePrimary(problem) ?: return null
+        if (problem.deferredCapture && !problem.edgeCaptureExit) return null
+        if (System.nanoTime() >= deadlineNanos) return null
+        val state = ConstructiveState(problem, primary)
+
+        if (!prepareDeferredCapture(state, delayCaptureRestoration)) return null
+        if (!routeConstructivePrimary(state)) {
+            return if (
+                state.delayedCaptureForward.isNotEmpty() &&
+                System.nanoTime() < deadlineNanos
+            ) {
+                constructivePlan(problem, started, false)
+            } else {
+                null
+            }
+        }
+        if (
+            state.delayedCaptureForward.isNotEmpty() &&
+            !state.reverseMoves(state.delayedCaptureForward)
+        ) {
             return if (System.nanoTime() < deadlineNanos) {
                 constructivePlan(problem, started, false)
             } else {
                 null
             }
         }
-        val plan = MotionPlan(
-            problem,
-            relocations,
-            PlanStatistics(
-                0,
-                0,
-                disturbed.size,
-                (System.nanoTime() - started) / 1_000_000L,
-                "constructive-incumbent",
-            ),
-            captureIndex,
-            capturePath,
-        )
-        return try {
-            plan.validate()
-            plan
-        } catch (_: PlanningException) {
-            null
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        return state.validatedPlan(started)
     }
 
     private fun search(

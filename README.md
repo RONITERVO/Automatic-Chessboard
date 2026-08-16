@@ -315,8 +315,9 @@ physical diagonal-clearance constraint is satisfied conservatively. Turning
 paths are split at square centres into straight sensor-verified `DRAG` commands.
 The search minimizes disturbed pieces first, then actual magnet pickups,
 distance, and turns. Hardware-validated side-adjacent pieces do not penalize an
-otherwise empty orthogonal route. Time, node, parking, corridor, temporary-
-piece, and recursion limits prevent unbounded optimization work. Before search,
+otherwise empty orthogonal route. Time, node, parking, corridor,
+temporary-piece, and recursion limits prevent unbounded optimization work.
+Before search,
 the planner classifies the exact 8×8 labeled-pebble reachability cases; ordinary
 chess positions have enough empty squares to be structurally reachable. If
 bounded optimization cannot finish, a reversible dense-board constructor can

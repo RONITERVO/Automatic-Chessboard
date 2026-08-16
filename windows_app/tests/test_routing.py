@@ -613,6 +613,39 @@ class RearrangementPlannerTests(unittest.TestCase):
         self.assertEqual(plan.statistics.search_mode, "exhaustive")
         self.assertEqual((plan.pickup_count, plan.carried_steps), (3, 8))
 
+    def test_constructive_incumbent_reserves_half_the_deadline_for_search(self):
+        class SearchStarted(RuntimeError):
+            pass
+
+        class DeadlineProbePlanner(RearrangementPlanner):
+            started = 0.0
+            constructive_deadline = 0.0
+            search_deadline = 0.0
+
+            def _constructive_plan(self, problem, started, **_kwargs):
+                self.started = started
+                self.constructive_deadline = self._deadline
+                return None
+
+            def _search(self, *_args, **_kwargs):
+                self.search_deadline = self._deadline
+                raise SearchStarted
+
+        planner = DeadlineProbePlanner(PlannerConfig(time_limit_s=2.0))
+        problem = PlanningProblem(
+            (PieceTask("main", sq("a1"), sq("a2"), primary=True),)
+        )
+
+        with self.assertRaises(SearchStarted):
+            planner.plan(problem)
+
+        self.assertAlmostEqual(
+            planner.constructive_deadline - planner.started, 1.0, places=4
+        )
+        self.assertAlmostEqual(
+            planner.search_deadline - planner.started, 2.0, places=4
+        )
+
     def test_exact_macro_search_improves_a_focused_first_goal(self):
         problem = PlanningProblem(
             (
@@ -667,6 +700,9 @@ class ChessAdapterTests(unittest.TestCase):
         )
         move = chess.Move.from_uci("d3e4")
         self.assertIn(move, board.legal_moves)
+        status = board.status()
+        self.assertTrue(status & chess.STATUS_TOO_MANY_BLACK_PAWNS)
+        self.assertTrue(status & chess.STATUS_TOO_MANY_BLACK_PIECES)
         self.assertFalse(board.is_valid())
 
         with self.assertRaisesRegex(PlanningError, "Invalid chess position"):

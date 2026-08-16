@@ -70,12 +70,13 @@ Search duration, node count, temporary pieces, corridor/parking branch width,
 and dependency depth are bounded. An exact structural classifier distinguishes
 proven impossibility from bounded-search failure. For the normal one-primary
 move shape, a deterministic dense-board constructor supplies a reversible,
-replay-validated incumbent if bounded optimization cannot finish; it is marked
-non-optimal. Optional exact macro A* supports small developer cases. No
-unverified move is ever returned. Captures, en passant, promotion occupancy, and both
-standard castling sides are adapted before search. Capture removal is a search
-transition containing a tracked carried
-path to any available `a1`-`a8` exit. A winding empty route requires no temporary
+replay-validated incumbent. It may replace a completed bounded-search result
+when its lexicographic objective is better, or be returned if bounded
+optimization cannot finish; it is marked non-optimal. Optional exact macro A*
+supports small developer cases. No unverified move is ever returned. Captures,
+en passant, promotion occupancy, and both standard castling sides are adapted
+before search. Capture removal is a search transition containing a tracked
+carried path to any available `a1`-`a8` exit. A winding empty route requires no temporary
 piece movement; only a genuinely disconnected edge invokes ordinary recursive
 parking. Version 5.0.1 has no legacy routing branch.
 
