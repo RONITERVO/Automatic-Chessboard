@@ -112,6 +112,25 @@ class SimulatorTests(unittest.TestCase):
         self.assertIn(36, occupied)
         transport.close()
 
+    def test_start_is_busy_during_play_but_restarts_from_game_over(self):
+        lines = []
+        transport = SimulatorTransport(lines.append, lambda _status: None)
+        transport.start()
+
+        transport.send("START W APP")
+        self.wait_for(lines, lambda values: "SESSION W" in values)
+        transport.send("START B APP")
+        self.wait_for(lines, lambda values: "ERR BUSY" in values)
+
+        transport.send("GAMEOVER 1-0")
+        self.wait_for(lines, lambda values: "OK GAMEOVER" in values)
+        transport.send("START B APP")
+        self.wait_for(lines, lambda values: "SESSION B" in values)
+
+        self.assertEqual(lines.count("OK START W"), 1)
+        self.assertEqual(lines.count("OK START B"), 1)
+        transport.close()
+
     def test_emergency_halt(self):
         lines = []
 

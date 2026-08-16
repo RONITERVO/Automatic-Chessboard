@@ -372,6 +372,8 @@ class SimulatorTransport:
         elif upper.startswith("START "):
             if self._fault:
                 self._emit("ERR FAULT")
+            elif self._sequence != 1:
+                self._emit("ERR BUSY")
             else:
                 self._board.reset()
                 self._physical_squares = set(self._board.piece_map())
@@ -612,8 +614,13 @@ class SimulatorTransport:
             self._sequence = 1
             self._emit("STOPPED")
         elif upper.startswith("GAMEOVER"):
-            self._sequence = 9
-            self._emit("OK GAMEOVER")
+            if not self._remote_mode:
+                self._emit("ERR NO SESSION")
+            else:
+                self._remote_mode = False
+                self._app_board = False
+                self._sequence = 1
+                self._emit("OK GAMEOVER")
         else:
             self._emit("ERR COMMAND")
 

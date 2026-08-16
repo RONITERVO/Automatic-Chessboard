@@ -34,6 +34,32 @@ data class GameSnapshot(
     val engineThinking: Boolean,
 )
 
+/** Tracks one asynchronous START acknowledgement and makes stale timeouts harmless. */
+internal class StartSessionGate {
+    private var generation = 0L
+    var pending = false
+        private set
+
+    fun begin(): Long {
+        pending = true
+        return ++generation
+    }
+
+    fun acknowledge() {
+        if (pending) {
+            pending = false
+            generation++
+        }
+    }
+
+    fun invalidate() {
+        pending = false
+        generation++
+    }
+
+    fun matches(token: Long): Boolean = pending && token == generation
+}
+
 class GameController(
     private val engine: StockfishEngine,
     private val channel: GameBoardChannel,
@@ -70,6 +96,7 @@ class GameController(
     private var routeExclusive = false
     private var routeGeneration = 0
     private var routeTimeoutToken = 0
+    private val startSession = StartSessionGate()
     @Volatile private var closed = false
     var elo = 2000
     var thinkMillis = 800L
@@ -124,7 +151,9 @@ class GameController(
         awaitingPromotionConfirmation = false
         status = "Calibration requested. Keep hands clear."
         publish()
+        val startToken = startSession.begin()
         channel.sendCommand(Protocol.startGameCommand(humanWhite, appControlled)).getOrThrow()
+        armStartTimeout(startToken)
     }.onFailure {
         if (!closed) {
             invalidateGameSession()
@@ -157,8 +186,18 @@ class GameController(
             return
         }
         when (event.kind) {
-            "SETUP" -> status = "Set all starting pieces, then press physical Button A."
-            "SESSION" -> status = "Remote game started"
+            "SETUP" -> {
+                startSession.acknowledge()
+                status = "Set all starting pieces, then press physical Button A."
+            }
+            "SESSION" -> {
+                startSession.acknowledge()
+                status = "Remote game started"
+            }
+            "OK" -> if (event.args.firstOrNull() == "START") {
+                startSession.acknowledge()
+                status = "Board accepted the game; calibration is starting."
+            }
             "TURN" -> when (event.args.firstOrNull()) {
                 "COMPUTER" -> when {
                     !active -> status = "Ignored computer turn: no remote game is active."
@@ -184,7 +223,10 @@ class GameController(
                 appMoveReady = false
                 status = "REMOTE HALT SENT — inspect locally"
             }
-            "ERR" -> status = "Board error: ${event.args.joinToString(" ")}"
+            "ERR" -> if (startSession.pending) {
+                val detail = event.args.joinToString(" ").ifBlank { "unknown error" }
+                failPendingStart("Could not start game: board rejected START ($detail).")
+            } else status = "Board error: ${event.args.joinToString(" ")}"
             "STOPPED" -> {
                 val stopMessage = stopStatusOverride
                 stopStatusOverride = null
@@ -653,7 +695,7 @@ class GameController(
         if (!isConnected && routePhase != RoutePhase.NONE) {
             failRoute("Board connection was lost during route execution", attemptStop = false)
             publish()
-        } else if (!isConnected && appControlled && active) {
+        } else if (!isConnected && active) {
             resetRoute()
             pendingEngineMove = null
             selectedSource = null
@@ -661,7 +703,7 @@ class GameController(
             waitingVisualConfirmation = false
             appMoveReady = false
             invalidateGameSession()
-            status = "Connection lost in app-controlled play. Inspect the board and start a new calibrated game."
+            status = "Connection lost during companion play. Inspect the board and start a new calibrated game."
             publish()
         }
     }
@@ -797,7 +839,42 @@ $moves $result
 
     private fun publish() { if (!closed) onChanged(snapshot) }
 
+    private fun armStartTimeout(token: Long) {
+        main.postDelayed({
+            if (closed || !startSession.matches(token)) return@postDelayed
+            val stopResult = channel.sendCommand("STOP")
+            val message = stopResult.fold(
+                onSuccess = {
+                    "The board did not acknowledge START. STOP was requested as a precaution; " +
+                        "inspect the board before starting a new calibrated game."
+                },
+                onFailure = {
+                    "The board did not acknowledge START and STOP could not be delivered. " +
+                        "Inspect the board, reconnect, and recalibrate before continuing."
+                },
+            )
+            stopStatusOverride = message.takeIf { stopResult.isSuccess }
+            failPendingStart(message)
+            publish()
+        }, START_ACK_TIMEOUT_MS)
+    }
+
+    private fun failPendingStart(message: String) {
+        resetRoute()
+        invalidateGameSession()
+        engineThinking = false
+        pendingEngineMove = null
+        pendingMoveIsHuman = false
+        selectedSource = null
+        physicalMoveComplete = false
+        waitingVisualConfirmation = false
+        appMoveReady = false
+        awaitingPromotionConfirmation = false
+        status = message
+    }
+
     private fun invalidateGameSession() {
+        startSession.invalidate()
         gameGeneration++
         active = false
     }
@@ -820,5 +897,6 @@ $moves $result
         private const val ROUTE_PLANNING_TIMEOUT_MS = 8_000L
         private const val ROUTE_CONTROL_TIMEOUT_MS = 8_000L
         private const val ROUTE_MOTION_TIMEOUT_MS = 75_000L
+        private const val START_ACK_TIMEOUT_MS = 8_000L
     }
 }
