@@ -197,7 +197,9 @@ export function BoardScene({ snapshot, session, xrStore, enterVR, enterAR }) {
           onDoubleClick={(event) => {
             event.stopPropagation();
             const id = event.object?.userData?.partId;
-            if (id && PARTS[id]) setSelectedPart(id);
+            if (id && PARTS[id]) {
+              setSelectedPart((currentId) => currentId === id ? null : id);
+            }
           }}
         />
         <primitive object={wiring.root} />

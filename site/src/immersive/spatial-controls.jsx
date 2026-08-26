@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { toggleSpatialMode } from "./board-space.js";
 import { PanelFace } from "./panel-texture.jsx";
 
 const CONTROL_Y = 10.4;
@@ -22,7 +23,11 @@ export function PhysicalButton({
     <group
       position={position}
       onPointerEnter={(event) => { event.stopPropagation(); setHovered(true); }}
-      onPointerLeave={() => setHovered(false)}
+      onPointerLeave={() => {
+        setHovered(false);
+        pressedRef.current = false;
+        setPressed(false);
+      }}
       onPointerDown={(event) => {
         event.stopPropagation();
         event.nativeEvent?.stopImmediatePropagation?.();
@@ -186,7 +191,15 @@ export function SpatialControls({ snapshot, session, mode, setMode, resetCamera,
           ["X-RAY", "INSIDE", 5, "xray"],
           ["WIRE", "BUILD", 14, "wiring"],
         ].map(([label, sublabel, x, value]) => (
-          <PhysicalButton key={value} label={label} sublabel={sublabel} position={[x, 0, 0]} size={[8, 1.05, 3.2]} active={mode === value} onPress={() => setMode(value)} />
+          <PhysicalButton
+            key={value}
+            label={label}
+            sublabel={sublabel}
+            position={[x, 0, 0]}
+            size={[8, 1.05, 3.2]}
+            active={mode === value}
+            onPress={() => setMode((currentMode) => toggleSpatialMode(currentMode, value))}
+          />
         ))}
         <PhysicalButton label="VIEW" sublabel="RESET" position={[23, 0, 0]} size={[6, 1.05, 3.2]} onPress={resetCamera} />
       </group>
