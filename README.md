@@ -15,7 +15,7 @@ documented in this repository. See [design lineage and
 attribution](ATTRIBUTION.md) and the repository's
 [multi-license map](LICENSE.md) before redistributing it.
 
-The [interactive 3D build explorer](https://ronitervo.github.io/Automatic-Chessboard/) turns the complete assembly into a rotatable, zoomable, parts-level build checklist and includes a rewindable simulation of the compiled production Nano firmware. Visitors can follow power-on, calibration, piece sensing, Micro-Max decisions, STEP/DIR motion, and magnet control before assembling hardware. The standalone lab exposes Bluetooth as disconnected and does not request a real device. It is published automatically from `site/` after changes reach `main`.
+The [immersive 3D simulator](https://ronitervo.github.io/Automatic-Chessboard/) presents the complete assembly, chess pieces, setup process, physical controls, LCD, Arduino signal flow, wiring, and full-history replay in one shared React Three Fiber world. Visitors can use mouse, touch, or supported WebXR hands/controllers at real-world scale while the compiled production Nano HEX drives power-on, calibration, reed sensing, Micro-Max decisions, STEP/DIR motion, and magnet control. The standalone experience exposes Bluetooth as disconnected and never requests a real device. It is published automatically from `site/` after changes reach `main`.
 
 ## Hardware assumptions
 

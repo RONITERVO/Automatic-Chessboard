@@ -499,6 +499,11 @@ export class AvrFirmwareRuntime {
     });
   }
 
+  placePiece(square, piece) {
+    this.board.setPiece(square, piece);
+    this.record("sensor", `${piece} placed on ${square.toUpperCase()} · reed closed`);
+  }
+
   humanMove(from, to, { captureSquare = null, rook = null, promotionPiece = null } = {}) {
     const piece = this.board.pieces.get(from);
     if (!piece) return false;

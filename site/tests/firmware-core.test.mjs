@@ -35,6 +35,10 @@ assert.equal(booted.bluetoothConnected, false);
 assert.equal(booted.sensedOccupied.length, 0, "an empty simulated board leaves every reed input open");
 assert.ok(booted.serialLines.includes("READY 5.0.1"));
 
+runtime.placePiece("e2", "wp");
+assert.equal(runtime.state().pieces.e2, "wp", "individual setup pieces close their real simulated reed channel");
+assert.ok(runtime.takeEvents().some((event) => event.kind === "sensor" && event.message.includes("E2")));
+
 runtime.pressButton("A");
 runtime.runCycles(manifest.clockHz / 2);
 assert.equal(runtime.state().sequence, 2, "an unknown persisted head enters position recovery");
