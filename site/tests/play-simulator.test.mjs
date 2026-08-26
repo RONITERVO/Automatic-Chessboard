@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { Chess } from "chess.js";
-import { chooseComputerMove, findLegalMove, planOrthogonalRoute, squareToCoords } from "../src/play-simulator.js";
+import { chooseComputerMove, findLegalMove, planOrthogonalRoute, resolveFirmwareBase, squareToCoords } from "../src/play-simulator.js";
 
 assert.deepEqual(squareToCoords("a1"), { file: 0, rank: 0 });
 assert.deepEqual(squareToCoords("h8"), { file: 7, rank: 7 });
+assert.equal(
+  resolveFirmwareBase("https://ronitervo.github.io/Automatic-Chessboard/"),
+  "https://ronitervo.github.io/Automatic-Chessboard/firmware/",
+  "firmware files resolve from the deployed document rather than the worker assets directory",
+);
 
 const openRoute = planOrthogonalRoute("e2", "e4", new Set(["e2"]));
 assert.deepEqual(openRoute, ["e2", "e3", "e4"], "open files use square-centre transport");
