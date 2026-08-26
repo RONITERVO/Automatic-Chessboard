@@ -10,7 +10,7 @@
     "build": "npm run firmware:prepare && vite build",
     "preview": "vite preview",
     "validate": "node validate.mjs",
-    "test": "npm run firmware:prepare && node tests/play-simulator.test.mjs && node tests/firmware-core.test.mjs"
+    "test": "npm run firmware:prepare && node tests/play-simulator.test.mjs && node tests/firmware-core.test.mjs && node tests/firmware-ai-search.test.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
