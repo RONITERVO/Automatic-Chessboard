@@ -17,3 +17,9 @@ export function boardPositionToSquare(x, z) {
   if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
   return `${FILES[file]}${RANKS[rank]}`;
 }
+
+export function toggleSpatialMode(currentMode, requestedMode) {
+  return requestedMode !== "play" && currentMode === requestedMode
+    ? "play"
+    : requestedMode;
+}

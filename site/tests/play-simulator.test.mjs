@@ -9,7 +9,7 @@ import {
   resolveFirmwareBase,
   squareToCoords,
 } from "../src/play-simulator.js";
-import { boardPositionToSquare, squareToBoardPosition } from "../src/immersive/board-space.js";
+import { boardPositionToSquare, squareToBoardPosition, toggleSpatialMode } from "../src/immersive/board-space.js";
 import { compactFrame, createStartingPieces, getGuidedAction, shouldRecordFrame } from "../src/firmware-session.js";
 
 assert.deepEqual(squareToCoords("a1"), { file: 0, rank: 0 });
@@ -25,6 +25,9 @@ assert.deepEqual(squareToBoardPosition("h8"), [13.125, 9.22, 13.125]);
 assert.equal(boardPositionToSquare(-13.125, -13.125), "a1");
 assert.equal(boardPositionToSquare(13.125, 13.125), "h8");
 assert.equal(boardPositionToSquare(18, 0), null, "dragging beyond the physical board does not invent a square");
+assert.equal(toggleSpatialMode("play", "brain"), "brain", "an inspection mode can be selected");
+assert.equal(toggleSpatialMode("brain", "brain"), "play", "pressing an active inspection mode returns to the board");
+assert.equal(toggleSpatialMode("brain", "xray"), "xray", "pressing a different inspection mode switches directly");
 assert.equal(Object.keys(createStartingPieces()).length, 32);
 assert.deepEqual(getGuidedAction({ power: false }), { label: "POWER ON", disabled: false, action: "power" });
 assert.equal(getGuidedAction({ power: true, sequence: 4, pieces: {} }).action, "pieces");

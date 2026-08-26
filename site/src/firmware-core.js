@@ -227,10 +227,12 @@ class BoardPeripheral {
   }
 
   refreshInputs() {
-    const sequence = this.runtime.readByte("sequence");
-    const calibrating = sequence === 3;
-    this.limitA = calibrating && this.rawX <= 0.5;
-    this.limitB = calibrating && this.limitA && this.rawY >= -0.5;
+    // The switches are physical inputs, so they remain available during every
+    // firmware state. Captures deliberately re-home while sequence is still
+    // player_black; gating them to the calibration screen makes that recovery
+    // run past both virtual switches and end in a false motion fault.
+    this.limitA = this.rawX <= 0.5;
+    this.limitB = this.limitA && this.rawY >= -0.5;
     this.portB.setPin(3, !(this.userButtonA || this.limitA));
     this.portB.setPin(2, this.bluetoothRxLevel);
     this.adc.channelValues[6] = this.userButtonB || this.limitB ? 0 : 5;
