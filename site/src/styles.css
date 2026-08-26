@@ -455,6 +455,21 @@ button svg {
   background: rgba(255, 220, 96, 0.18);
 }
 
+#virtual-board .virtual-square.is-manual-source {
+  cursor: pointer;
+  box-shadow: inset 0 0 0 3px rgba(255, 220, 96, 0.78);
+}
+
+#virtual-board .virtual-square.is-manual-target:not(.is-legal)::after {
+  position: absolute;
+  inset: 40%;
+  border-radius: 50%;
+  background: rgba(255, 220, 96, 0.72);
+  box-shadow: 0 0 14px rgba(255, 220, 96, 0.55);
+  content: "";
+  pointer-events: none;
+}
+
 #virtual-motion-head {
   position: absolute;
   z-index: 5;
