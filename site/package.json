@@ -4,13 +4,17 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:open": "vite --open",
-    "build": "vite build",
+    "firmware:prepare": "node scripts/ensure-firmware.mjs",
+    "dev": "npm run firmware:prepare && vite",
+    "dev:open": "npm run firmware:prepare && vite --open",
+    "build": "npm run firmware:prepare && vite build",
     "preview": "vite preview",
-    "validate": "node validate.mjs"
+    "validate": "node validate.mjs",
+    "test": "npm run firmware:prepare && node tests/play-simulator.test.mjs && node tests/firmware-core.test.mjs"
   },
   "dependencies": {
+    "avr8js": "^0.21.0",
+    "chess.js": "^1.4.0",
     "three": "0.185.1"
   },
   "devDependencies": {

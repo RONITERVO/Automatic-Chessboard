@@ -15,7 +15,7 @@ documented in this repository. See [design lineage and
 attribution](ATTRIBUTION.md) and the repository's
 [multi-license map](LICENSE.md) before redistributing it.
 
-The [interactive 3D build explorer](https://ronitervo.github.io/Automatic-Chessboard/) turns the complete assembly into a rotatable, zoomable, parts-level build checklist. It is published automatically from `site/` after changes reach `main`.
+The [interactive 3D build explorer](https://ronitervo.github.io/Automatic-Chessboard/) turns the complete assembly into a rotatable, zoomable, parts-level build checklist and includes a rewindable simulation of the compiled production Nano firmware. Visitors can follow power-on, calibration, piece sensing, Micro-Max decisions, STEP/DIR motion, and magnet control before assembling hardware. The standalone lab exposes Bluetooth as disconnected and does not request a real device. It is published automatically from `site/` after changes reach `main`.
 
 ## Hardware assumptions
 

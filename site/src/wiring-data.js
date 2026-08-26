@@ -73,14 +73,14 @@ export const WIRING_STEPS = Object.freeze([
     key: "motor-1",
     icon: "motor",
     codes: ["D2→DIR", "D3→STEP", "RST+SLP→5V", "MS1/2/3→GND", "EN→GND", "1A/1B→COIL·A", "2A/2B→COIL·B", "100µF +→VMOT", "100µF −→GND", "ILIM≤0.40A", "VREF≈0.22V"],
-    connectionIds: ["M1-01", "M1-02", ...range("M1-", 5, 12)],
+    connectionIds: ["M1-01", "M1-02", ...range("M1-", 5, 16)],
     focus: ["controller", "drivers", "driverCaps", "motors"],
   },
   {
     key: "motor-2",
     icon: "motor",
     codes: ["D4→DIR", "D5→STEP", "RST+SLP→5V", "MS1/2/3→GND", "EN→GND", "1A/1B→COIL·A", "2A/2B→COIL·B", "100µF +→VMOT", "100µF −→GND", "ILIM≤0.40A", "VREF≈0.22V"],
-    connectionIds: ["M2-01", "M2-02", ...range("M2-", 5, 12)],
+    connectionIds: ["M2-01", "M2-02", ...range("M2-", 5, 16)],
     focus: ["controller", "drivers", "driverCaps", "motors"],
   },
   {

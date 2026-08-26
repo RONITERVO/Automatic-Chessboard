@@ -113,6 +113,42 @@ try {
   }
   Write-Host $result.TrimEnd()
 
+  # Export the symbol table beside the ELF/HEX outputs. The browser firmware
+  # lab uses these SRAM addresses to display the production firmware's live
+  # state without adding instrumentation bytes to the flash-constrained Nano.
+  $propertiesArguments = @(
+    "compile"
+    "--fqbn", $Fqbn
+    "--show-properties"
+  )
+  if ($profileBuildFlags) {
+    $propertiesArguments += @("--build-property", "build.extra_flags=$profileBuildFlags")
+  }
+  $propertiesArguments += $stagedSketch
+  $properties = & $cli @propertiesArguments 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not resolve the AVR toolchain for the $HardwareProfile symbol table."
+  }
+  $compilerPathMatch = [regex]::Match(
+    $properties,
+    "(?m)^compiler\.path=(.+?)\r?$"
+  )
+  if (-not $compilerPathMatch.Success) {
+    throw "The Arduino build did not report compiler.path."
+  }
+  $compilerPath = $compilerPathMatch.Groups[1].Value.Trim()
+  $nmName = if ($IsWindows -or $env:OS -eq "Windows_NT") { "avr-nm.exe" } else { "avr-nm" }
+  $nm = Join-Path $compilerPath $nmName
+  if (-not (Test-Path -LiteralPath $nm)) {
+    throw "avr-nm was not found at $nm."
+  }
+  $elf = Join-Path $output "$sketchName.ino.elf"
+  $symbols = Join-Path $output "$sketchName.ino.nm"
+  & $nm -S --size-sort $elf | Set-Content -LiteralPath $symbols -Encoding ascii
+  if ($LASTEXITCODE -ne 0) {
+    throw "$HardwareProfile symbol-table export failed."
+  }
+
   $flashMatch = [regex]::Match($result, "Sketch uses (\d+) bytes")
   $ramMatch = [regex]::Match($result, "Global variables use (\d+) bytes")
   if (-not $flashMatch.Success -or -not $ramMatch.Success) {

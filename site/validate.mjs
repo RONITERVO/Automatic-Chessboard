@@ -4,10 +4,13 @@ import { PARTS, PURCHASABLE_PART_IDS } from "./src/catalog.js";
 import { COREXY_LAYOUT, createBoardModel } from "./src/model.js";
 import { WIRING_STEPS } from "./src/wiring-data.js";
 
-const [html, model, app, wiring, connectionsCsv, sensorMapCsv] = await Promise.all([
+const [html, model, app, playSimulator, firmwareCore, firmwareWorker, wiring, connectionsCsv, sensorMapCsv] = await Promise.all([
   readFile(new URL("./index.html", import.meta.url), "utf8"),
   readFile(new URL("./src/model.js", import.meta.url), "utf8"),
   readFile(new URL("./src/app.js", import.meta.url), "utf8"),
+  readFile(new URL("./src/play-simulator.js", import.meta.url), "utf8"),
+  readFile(new URL("./src/firmware-core.js", import.meta.url), "utf8"),
+  readFile(new URL("./src/firmware-worker.js", import.meta.url), "utf8"),
   readFile(new URL("./src/wiring.js", import.meta.url), "utf8"),
   readFile(new URL("../hardware/connections.csv", import.meta.url), "utf8"),
   readFile(new URL("../hardware/sensor-map.csv", import.meta.url), "utf8"),
@@ -33,12 +36,21 @@ const visibleText = body
   .replace(/\s+/g, "");
 if (visibleText) failures.push("The page body contains visible text.");
 
-for (const selector of ["#scene", "#toolbar", "#progress", "#part-actions", "#wiring-guide"]) {
+for (const selector of ["#scene", "#toolbar", "#progress", "#part-actions", "#wiring-guide", "#play-panel", "#virtual-board"]) {
   if (!html.includes(selector.slice(1))) failures.push(`Missing interface element ${selector}.`);
 }
 
 for (const capability of ["OrbitControls", "OutlinePass", "setXray", "state.purchased", "localStorage", "dblclick", "createWiringGuide"]) {
   if (!app.includes(capability)) failures.push(`Missing interaction capability ${capability}.`);
+}
+for (const capability of ["new Chess", "planOrthogonalRoute", "chooseComputerMove", "new Worker", "timeline", "human-move"]) {
+  if (!playSimulator.includes(capability)) failures.push(`Missing virtual play capability ${capability}.`);
+}
+for (const capability of ["AvrFirmwareRuntime", "avrInstruction", "AVRTWI", "EEPROMMemoryBackend", "stepPulses", "bluetoothConnected"]) {
+  if (!firmwareCore.includes(capability)) failures.push(`Missing production firmware capability ${capability}.`);
+}
+for (const capability of ["automatic-chessboard-nano.hex", "place-start", "pause", "speed"]) {
+  if (!firmwareWorker.includes(capability)) failures.push(`Missing firmware worker capability ${capability}.`);
 }
 
 if (!app.includes("controls.autoRotate = false")) failures.push("The 3D camera must remain under manual user control.");
