@@ -132,6 +132,31 @@ export function resolveFirmwareBase(baseUri) {
   return new URL("firmware/", baseUri).href;
 }
 
+export function getManualAiMove(state) {
+  const uci = state?.aiMove ?? "";
+  if (state?.sequence !== 8 || !/^[a-h][1-8][a-h][1-8]$/.test(uci)) return null;
+  const move = { from: uci.slice(0, 2), to: uci.slice(2, 4) };
+  return state.pieces?.[move.from] ? move : null;
+}
+
+export function createBoardRenderKey(state, ui) {
+  return JSON.stringify({
+    pieces: state.pieces ?? {},
+    heldPiece: state.heldPiece ?? null,
+    head: state.head ?? null,
+    magnet: Boolean(state.magnet),
+    moving: Boolean(state.moving),
+    sequence: state.sequence ?? null,
+    humanMoveReady: Boolean(state.humanMoveReady),
+    aiMove: state.aiMove ?? "",
+    orientation: ui.orientation,
+    historical: ui.historical,
+    selected: ui.selected,
+    legalTargets: [...ui.legalTargets].sort(),
+    lastMove: ui.lastMove ? { from: ui.lastMove.from, to: ui.lastMove.to } : null,
+  });
+}
+
 export function createPlaySimulator({ panel, board, status, history, announce }) {
   const worker = new Worker(new URL("./firmware-worker.js", import.meta.url), { type: "module" });
   const game = new Chess();
@@ -167,6 +192,7 @@ export function createPlaySimulator({ panel, board, status, history, announce })
   const timelineSpeed = document.querySelector("#timeline-speed");
   const speeds = [1, 4, 16, 0.5];
   let speedIndex = 0;
+  let lastBoardRenderKey = "";
 
   function displayedFrame() {
     return viewIndex >= 0 ? frames[viewIndex] : liveFrame;
@@ -179,6 +205,17 @@ export function createPlaySimulator({ panel, board, status, history, announce })
   }
 
   function renderBoard(state) {
+    const historical = viewIndex >= 0;
+    const manualAiMove = getManualAiMove(state);
+    const renderKey = createBoardRenderKey(state, {
+      orientation,
+      historical,
+      selected,
+      legalTargets,
+      lastMove,
+    });
+    if (renderKey === lastBoardRenderKey) return;
+    lastBoardRenderKey = renderKey;
     const pieces = state.pieces ?? {};
     const fragment = document.createDocumentFragment();
     const files = orientation === "white" ? [...FILES] : [...FILES].reverse();
@@ -193,12 +230,19 @@ export function createPlaySimulator({ panel, board, status, history, announce })
         squareButton.dataset.square = square;
         squareButton.setAttribute("role", "gridcell");
         const pieceName = pieceCode ? `${pieceCode[0] === "w" ? "white" : "black"} ${PIECE_NAMES[pieceCode[1]]}` : "empty";
-        squareButton.setAttribute("aria-label", `${square} ${pieceName}`);
+        const manualRole = square === manualAiMove?.from
+          ? ", manual move source"
+          : (square === manualAiMove?.to ? ", manual move destination" : "");
+        squareButton.setAttribute("aria-label", `${square} ${pieceName}${manualRole}`);
         squareButton.textContent = PIECES[pieceCode] ?? "";
-        squareButton.disabled = viewIndex >= 0 || state.sequence !== 5 || state.humanMoveReady;
+        const humanSquareEnabled = state.sequence === 5 && !state.humanMoveReady;
+        const manualSquareEnabled = manualAiMove && (square === manualAiMove.from || square === manualAiMove.to);
+        squareButton.disabled = historical || (!humanSquareEnabled && !manualSquareEnabled);
         squareButton.classList.toggle("is-selected", square === selected);
         squareButton.classList.toggle("is-legal", legalTargets.has(square));
         squareButton.classList.toggle("is-last", lastMove && (lastMove.from === square || lastMove.to === square));
+        squareButton.classList.toggle("is-manual-source", square === manualAiMove?.from);
+        squareButton.classList.toggle("is-manual-target", square === manualAiMove?.to);
         squareButton.addEventListener("click", () => selectSquare(square));
         fragment.append(squareButton);
       }
@@ -287,7 +331,7 @@ export function createPlaySimulator({ panel, board, status, history, announce })
       const from = state.aiMove.slice(0, 2);
       const to = state.aiMove.slice(2, 4);
       return state.pieces?.[from]
-        ? [`PLACE ${from.toUpperCase()}→${to.toUpperCase()}`, false, "ai-manual"]
+        ? [`AUTO PLACE ${from.toUpperCase()}→${to.toUpperCase()}`, false, "ai-manual"]
         : ["PRESS A · CHECK", false, "A"];
     }
     if ([7, 10].includes(state.sequence)) return ["PRESS B · MENU", false, "B"];
@@ -372,7 +416,25 @@ export function createPlaySimulator({ panel, board, status, history, announce })
 
   function selectSquare(square) {
     const state = displayedFrame().state;
-    if (!enabled || viewIndex >= 0 || state.sequence !== 5 || state.humanMoveReady || game.turn() !== "w") return;
+    if (!enabled || viewIndex >= 0) return;
+    const manualAiMove = getManualAiMove(state);
+    if (manualAiMove) {
+      if (selected === manualAiMove.from && square === manualAiMove.to) {
+        worker.postMessage({ type: "manual-move", ...manualAiMove });
+        selected = null;
+        legalTargets.clear();
+      } else if (square === manualAiMove.from) {
+        selected = square;
+        legalTargets = new Set([manualAiMove.to]);
+        announce(`${square} selected; place it on ${manualAiMove.to}`);
+      } else {
+        selected = null;
+        legalTargets.clear();
+      }
+      render();
+      return;
+    }
+    if (state.sequence !== 5 || state.humanMoveReady || game.turn() !== "w") return;
     if (selected && legalTargets.has(square)) {
       const candidate = findLegalMove(game, { from: selected, to: square, promotion: "q" });
       if (!candidate) return;
@@ -461,6 +523,9 @@ export function createPlaySimulator({ panel, board, status, history, announce })
       worker.postMessage({ type: "place-start", pieces: startingPieces() });
     } else if (action === "ai-manual") {
       worker.postMessage({ type: "manual-move", from: state.aiMove.slice(0, 2), to: state.aiMove.slice(2, 4) });
+      selected = null;
+      legalTargets.clear();
+      render();
     }
   });
   flipButton.addEventListener("click", () => {
