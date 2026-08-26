@@ -506,6 +506,22 @@ export class AvrFirmwareRuntime {
     this.record("sensor", `${piece} placed on ${square.toUpperCase()} · reed closed`);
   }
 
+  setupMove(from, to) {
+    const piece = this.board.pieces.get(from);
+    if (!piece || from === to) return false;
+    const displaced = to ? this.board.pieces.get(to) : null;
+    this.board.setPiece(from, null);
+    this.record("sensor", `${from.toUpperCase()} opened · setup piece lifted`);
+    if (to) {
+      this.board.setPiece(to, piece);
+      this.record("sensor", `${to.toUpperCase()} closed · setup piece placed`);
+      if (displaced) this.record("piece", `${displaced} returned to setup rack`);
+    } else {
+      this.record("piece", `${piece} returned to setup rack`);
+    }
+    return true;
+  }
+
   humanMove(from, to, { captureSquare = null, rook = null, promotionPiece = null } = {}) {
     const piece = this.board.pieces.get(from);
     if (!piece) return false;

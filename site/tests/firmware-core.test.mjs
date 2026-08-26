@@ -54,6 +54,12 @@ runtime.board.blackMotor = 0;
 runtime.board.refreshInputs();
 assert.equal(runtime.state().limitB, true, "capture homing can reach the second switch outside the calibration screen");
 
+runtime.board.setPieces({ e4: "wp", e2: "bp" });
+assert.equal(runtime.setupMove("e4", "e2"), true, "setup can move a piece that is already on the board");
+assert.deepEqual(runtime.state().pieces, { e2: "wp" }, "setup replacement returns the displaced piece to the side rack");
+assert.equal(runtime.setupMove("e2", null), true, "setup can remove an extra piece from the board");
+assert.deepEqual(runtime.state().pieces, {}, "off-board setup drops clear the occupied reed square");
+
 const captureRuntime = new AvrFirmwareRuntime(hexText, manifest);
 captureRuntime.runCycles(manifest.clockHz * 4);
 const writeByte = (name, value) => {
