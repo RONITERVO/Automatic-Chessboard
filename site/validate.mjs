@@ -47,7 +47,7 @@ if (!main.includes("createRoot") || !main.includes("<App")) failures.push("The i
 for (const capability of ["Canvas", "createXRStore", "<XR", "FirmwareSession", "data-sequence"]) {
   if (!immersiveApp.includes(capability)) failures.push(`Missing immersive application capability ${capability}.`);
 }
-for (const capability of ["OrbitControls", "XROrigin", "createBoardModel", "createWiringGuide", "setXray", "BOARD_SCALE", "onDoubleClick"]) {
+for (const capability of ["OrbitControls", "XROrigin", "createBoardModel", "createWiringGuide", "setXray", "setPartVisible", "BUILD_STORAGE_KEY", "window.open", "BOARD_SCALE", "onDoubleClick"]) {
   if (!boardScene.includes(capability)) failures.push(`Missing three-dimensional scene capability ${capability}.`);
 }
 for (const capability of ["onPointerDown", "worldToLocal", "InteractiveBoardPieces", "SetupRacks", "legalTargets"]) {

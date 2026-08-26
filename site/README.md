@@ -12,6 +12,7 @@ The model is authored in centimetres and mounted into the scene at `0.01` scale,
 - During play, press or drag a piece once. Legal destinations illuminate on the physical tiles. The same interaction handles the firmware's manual AI-placement fallback, including knight moves.
 - Use the physical timeline to step, play, scrub any recorded point, and return to the live Arduino. Meaningful events and motion stay frame-accurate; unchanged idle data is shared and sampled at a lower cadence for long sessions.
 - Switch among `PLAY`, `BRAIN`, `X-RAY`, and `WIRE`. Brain mode exposes live reed input, AVR program counter and loop, firmware state, Micro-Max, STEP pulses, moving head, and magnet output inside the exploded board. Wiring mode animates all source-of-truth harness stages.
+- Double-press a modeled component to open its spatial build card. Its physical controls open the source/recommendation, persist an owned mark, hide the part, or close the card; the rear build dock reports progress and restores all hidden parts.
 - Press `VR` or `AR` on a supported secure-context browser. Unsupported browsers keep the complete desktop/touch experience and report why XR could not start.
 
 The simulation executes the compiled production Nano HEX with AVR8js. It models the PCF8574/I²C LCD backpack, four 16-channel reed multiplexers, physical buttons/endstops, EEPROM, CoreXY STEP/DIR outputs, electromagnet, and UART telemetry at their electrical boundaries. Motor movement follows the step pulses and timing emitted by the real firmware.

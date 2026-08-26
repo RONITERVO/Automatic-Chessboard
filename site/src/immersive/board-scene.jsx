@@ -6,7 +6,7 @@ import { useXR, XROrigin } from "@react-three/xr";
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { PARTS } from "../catalog.js";
-import { animateModel, BOARD_LAYOUT, createBoardModel, setXray } from "../model.js";
+import { animateModel, BOARD_LAYOUT, createBoardModel, setPartVisible, setXray } from "../model.js";
 import { createWiringGuide } from "../wiring.js";
 import { BrainSignals } from "./brain-signals.jsx";
 import { InteractiveBoardPieces } from "./board-pieces.jsx";
@@ -19,6 +19,19 @@ const CAMERA_HOME = new THREE.Vector3(0.44, 1.25, 0.18);
 const PORTRAIT_CAMERA_HOME = new THREE.Vector3(0.58, 1.45, 0.92);
 const CAMERA_TARGET = new THREE.Vector3(0, 0.82, -0.68);
 const PORTRAIT_CAMERA_TARGET = new THREE.Vector3(0, 0.94, -0.68);
+const BUILD_STORAGE_KEY = "automatic-chessboard-build-v1";
+
+function loadBuildState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BUILD_STORAGE_KEY) || "{}");
+    return {
+      purchased: new Set((saved.purchased ?? []).filter((id) => PARTS[id])),
+      hidden: new Set((saved.hidden ?? []).filter((id) => PARTS[id])),
+    };
+  } catch {
+    return { purchased: new Set(), hidden: new Set() };
+  }
+}
 
 function SceneEnvironment() {
   const { gl, scene } = useThree();
@@ -100,19 +113,22 @@ function WiringExperience({ guide, step, setStep, visible }) {
   );
 }
 
-function SelectedPart({ id, clear }) {
+function SelectedPart({ id, purchased, clear, open, togglePurchased, hide }) {
   const part = id ? PARTS[id] : null;
   if (!part) return null;
   return (
     <group name="selected-component-card">
       <PanelFace
         title="PHYSICAL COMPONENT"
-        lines={[part.name, id.toUpperCase(), "DOUBLE-PRESS MODEL TO CHANGE"]}
+        lines={[part.name, id.toUpperCase(), purchased ? "OWNED · SAVED ON THIS DEVICE" : "BUILD COMPONENT"]}
         size={[28, 8]}
         position={[0, 20, 12]}
         colors={{ background: "#0a1016", border: part.color, foreground: "#cbd9df", accent: "#ffffff", font: "700 38px ui-monospace, SFMono-Regular, Consolas, monospace" }}
       />
-      <PhysicalButton label="CLOSE" sublabel="PART" position={[18, 16, 12]} onPress={clear} />
+      <PhysicalButton label="OPEN" sublabel="SOURCE" position={[-14, 16, 12]} onPress={open} />
+      <PhysicalButton label={purchased ? "OWNED ✓" : "MARK"} sublabel="PURCHASED" position={[-5, 16, 12]} active={purchased} onPress={togglePurchased} />
+      <PhysicalButton label="HIDE" sublabel="PART" position={[5, 16, 12]} onPress={hide} />
+      <PhysicalButton label="CLOSE" sublabel="PART" position={[14, 16, 12]} onPress={clear} />
     </group>
   );
 }
@@ -123,6 +139,7 @@ export function BoardScene({ snapshot, session, xrStore, enterVR, enterAR }) {
   const [resetVersion, setResetVersion] = useState(0);
   const [wiringStep, setWiringStep] = useState(0);
   const [selectedPart, setSelectedPart] = useState(null);
+  const [buildState, setBuildState] = useState(loadBuildState);
   const boardRoot = useRef();
   const model = useMemo(() => {
     const root = createBoardModel();
@@ -144,6 +161,14 @@ export function BoardScene({ snapshot, session, xrStore, enterVR, enterAR }) {
     setXray(immersiveMode);
     return () => setXray(false);
   }, [immersiveMode]);
+
+  useEffect(() => {
+    for (const id of Object.keys(PARTS)) setPartVisible(id, !buildState.hidden.has(id));
+    localStorage.setItem(BUILD_STORAGE_KEY, JSON.stringify({
+      purchased: [...buildState.purchased],
+      hidden: [...buildState.hidden],
+    }));
+  }, [buildState]);
 
   useFrame(() => animateModel(mode === "xray" || mode === "wiring" ? 1 : (mode === "brain" ? 0.38 : 0)));
 
@@ -188,7 +213,33 @@ export function BoardScene({ snapshot, session, xrStore, enterVR, enterAR }) {
         />
         <BrainSignals snapshot={snapshot} visible={mode === "brain" || mode === "xray"} />
         <WiringExperience guide={wiring.guide} step={wiringStep} setStep={setWiringStep} visible={mode === "wiring"} />
-        <SelectedPart id={selectedPart} clear={() => setSelectedPart(null)} />
+        <SelectedPart
+          id={selectedPart}
+          purchased={buildState.purchased.has(selectedPart)}
+          clear={() => setSelectedPart(null)}
+          open={() => window.open(PARTS[selectedPart]?.url, "_blank", "noopener,noreferrer")}
+          togglePurchased={() => setBuildState((current) => {
+            const purchased = new Set(current.purchased);
+            if (purchased.has(selectedPart)) purchased.delete(selectedPart);
+            else purchased.add(selectedPart);
+            return { ...current, purchased };
+          })}
+          hide={() => {
+            setBuildState((current) => ({ ...current, hidden: new Set([...current.hidden, selectedPart]) }));
+            setSelectedPart(null);
+          }}
+        />
+        <group position={[0, 10.4, -33]} name="build-state-controls">
+          <PhysicalButton label={`${buildState.purchased.size}/${Object.keys(PARTS).length}`} sublabel="OWNED" position={[15.5, 0, 0]} size={[6.2, 1.05, 3.2]} disabled />
+          <PhysicalButton
+            label={buildState.hidden.size ? `${buildState.hidden.size} HIDDEN` : "ALL PARTS"}
+            sublabel={buildState.hidden.size ? "RESTORE" : "VISIBLE"}
+            position={[22.5, 0, 0]}
+            size={[6.2, 1.05, 3.2]}
+            disabled={!buildState.hidden.size}
+            onPress={() => setBuildState((current) => ({ ...current, hidden: new Set() }))}
+          />
+        </group>
       </group>
 
       <CameraRig enabled={orbitEnabled} resetVersion={resetVersion} onEnabledChange={setOrbitEnabled} />
