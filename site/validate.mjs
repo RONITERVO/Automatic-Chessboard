@@ -4,10 +4,16 @@ import { PARTS, PURCHASABLE_PART_IDS } from "./src/catalog.js";
 import { COREXY_LAYOUT, createBoardModel } from "./src/model.js";
 import { WIRING_STEPS } from "./src/wiring-data.js";
 
-const [html, model, app, playSimulator, firmwareCore, firmwareWorker, wiring, connectionsCsv, sensorMapCsv] = await Promise.all([
+const [html, model, main, immersiveApp, boardScene, boardPieces, spatialControls, brainSignals, firmwareSession, playSimulator, firmwareCore, firmwareWorker, wiring, connectionsCsv, sensorMapCsv] = await Promise.all([
   readFile(new URL("./index.html", import.meta.url), "utf8"),
   readFile(new URL("./src/model.js", import.meta.url), "utf8"),
-  readFile(new URL("./src/app.js", import.meta.url), "utf8"),
+  readFile(new URL("./src/main.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/immersive/App.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/immersive/board-scene.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/immersive/board-pieces.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/immersive/spatial-controls.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/immersive/brain-signals.jsx", import.meta.url), "utf8"),
+  readFile(new URL("./src/firmware-session.js", import.meta.url), "utf8"),
   readFile(new URL("./src/play-simulator.js", import.meta.url), "utf8"),
   readFile(new URL("./src/firmware-core.js", import.meta.url), "utf8"),
   readFile(new URL("./src/firmware-worker.js", import.meta.url), "utf8"),
@@ -36,28 +42,42 @@ const visibleText = body
   .replace(/\s+/g, "");
 if (visibleText) failures.push("The page body contains visible text.");
 
-for (const selector of ["#scene", "#toolbar", "#progress", "#part-actions", "#wiring-guide", "#play-panel", "#virtual-board"]) {
-  if (!html.includes(selector.slice(1))) failures.push(`Missing interface element ${selector}.`);
+if (!html.includes('id="root"') || !html.includes("./src/main.jsx")) failures.push("Missing React application mount.");
+if (!main.includes("createRoot") || !main.includes("<App")) failures.push("The immersive React application is not mounted.");
+for (const capability of ["Canvas", "createXRStore", "<XR", "FirmwareSession", "data-sequence"]) {
+  if (!immersiveApp.includes(capability)) failures.push(`Missing immersive application capability ${capability}.`);
 }
-
-for (const capability of ["OrbitControls", "OutlinePass", "setXray", "state.purchased", "localStorage", "dblclick", "createWiringGuide"]) {
-  if (!app.includes(capability)) failures.push(`Missing interaction capability ${capability}.`);
+for (const capability of ["OrbitControls", "XROrigin", "createBoardModel", "createWiringGuide", "setXray", "setPartVisible", "BUILD_STORAGE_KEY", "window.open", "BOARD_SCALE", "onDoubleClick"]) {
+  if (!boardScene.includes(capability)) failures.push(`Missing three-dimensional scene capability ${capability}.`);
+}
+for (const capability of ["onPointerDown", "worldToLocal", "InteractiveBoardPieces", "SetupRacks", "legalTargets"]) {
+  if (!boardPieces.includes(capability)) failures.push(`Missing physical piece interaction capability ${capability}.`);
+}
+for (const capability of ["PhysicalButton", "TimelineTrack", "setReplayIndex", "enterVR", "enterAR"]) {
+  if (!spatialControls.includes(capability)) failures.push(`Missing spatial control capability ${capability}.`);
+}
+for (const capability of ["INPUT", "AVR LOOP", "MICRO-MAX", "STEP PULSES", "MovingHead"]) {
+  if (!brainSignals.includes(capability)) failures.push(`Missing Arduino brain visualization capability ${capability}.`);
+}
+for (const capability of ["useSyncExternalStore", "place-piece", "selectSetupPiece", "toggleTimelinePlayback", "getGuidedAction"]) {
+  const source = capability === "useSyncExternalStore" ? immersiveApp : firmwareSession;
+  if (!source.includes(capability)) failures.push(`Missing firmware session capability ${capability}.`);
 }
 for (const capability of ["new Chess", "planOrthogonalRoute", "chooseComputerMove", "new Worker", "timeline", "human-move"]) {
-  if (!playSimulator.includes(capability)) failures.push(`Missing virtual play capability ${capability}.`);
+  const source = capability === "new Worker" || capability === "timeline" || capability === "human-move" ? firmwareSession : playSimulator;
+  if (!source.includes(capability)) failures.push(`Missing virtual play capability ${capability}.`);
 }
 for (const capability of ["AvrFirmwareRuntime", "avrInstruction", "AVRTWI", "EEPROMMemoryBackend", "stepPulses", "bluetoothConnected"]) {
   if (!firmwareCore.includes(capability)) failures.push(`Missing production firmware capability ${capability}.`);
 }
-for (const capability of ["automatic-chessboard-nano.hex", "place-start", "pause", "speed"]) {
+for (const capability of ["automatic-chessboard-nano.hex", "place-start", "place-piece", "pause", "speed"]) {
   if (!firmwareWorker.includes(capability)) failures.push(`Missing firmware worker capability ${capability}.`);
 }
 
-if (!app.includes("controls.autoRotate = false")) failures.push("The 3D camera must remain under manual user control.");
-for (const automaticCameraBehavior of ["autoRotateSpeed", "focusPart(", "camera.position.lerp", "controls.target.lerp"]) {
-  if (app.includes(automaticCameraBehavior)) failures.push(`Automatic camera behavior is not allowed: ${automaticCameraBehavior}.`);
+for (const automaticCameraBehavior of ["autoRotate", "autoRotateSpeed", "focusPart(", "camera.position.lerp", "controls.target.lerp"]) {
+  if (boardScene.includes(automaticCameraBehavior)) failures.push(`Automatic camera behavior is not allowed: ${automaticCameraBehavior}.`);
 }
-if (html.includes("toggle-rotate")) failures.push("The interface must not offer automatic camera rotation.");
+if (html.includes("canvas id=\"scene\"") || html.includes("virtual-board")) failures.push("The app must not retain a duplicate 2D board.");
 
 for (const mechanicalDetail of ["395 mm gantry", "2.2 mm tiles"]) {
   if (!model.includes(mechanicalDetail)) failures.push(`Missing realistic mechanics detail ${mechanicalDetail}.`);

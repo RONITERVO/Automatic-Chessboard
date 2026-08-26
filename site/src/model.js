@@ -64,6 +64,12 @@ const ENCLOSURE_VISUAL = Object.freeze({
   wall: 0.24,
 });
 
+export const BOARD_LAYOUT = Object.freeze({
+  squareSize: 3.75,
+  surfaceY: 9.22,
+  outerSize: ENCLOSURE_VISUAL.outer,
+});
+
 function roundedBox(width, height, depth, material, radius = 0.12, segments = 3) {
   const mesh = new THREE.Mesh(new RoundedBoxGeometry(width, height, depth, segments, radius), material);
   mesh.castShadow = true;
@@ -400,7 +406,7 @@ function reedSwitch(x, z, parent) {
   parent.add(tag(group, "reedSwitches"));
 }
 
-function pieceProfile(type) {
+export function pieceProfile(type) {
   const profiles = {
     pawn: [[0, 0], [.78, .08], [.86, .22], [.7, .42], [.48, .72], [.42, 1.05], [.58, 1.3], [.52, 1.52], [.32, 1.68], [.42, 1.95], [0, 2.12]],
     rook: [[0, 0], [.84, .08], [.9, .26], [.68, .42], [.58, 1.55], [.76, 1.68], [.76, 2.08], [.5, 2.08], [.5, 2.28], [0, 2.28]],
@@ -723,10 +729,10 @@ function createCaseBase(parent) {
   }
 }
 
-export function createBoardModel(scene) {
+export function createBoardModel(scene = null) {
   const root = new THREE.Group();
   root.name = "automatic-chessboard";
-  scene.add(root);
+  if (scene) scene.add(root);
 
   const mechanics = makeSection("mechanics", new THREE.Vector3(0, -2.2, 0));
   const sensors = makeSection("sensors", new THREE.Vector3(0, 3.8, 0));

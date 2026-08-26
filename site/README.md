@@ -1,46 +1,48 @@
-# Interactive build explorer
+# Immersive Automatic Chessboard simulator
 
-This directory contains the parts-level 3D build explorer and production-firmware simulation lab published through GitHub Pages. The assembly is generated with Three.js geometry at runtime, so no opaque binary CAD asset is required and every selectable component group remains reviewable in source control.
+This Vite + React Three Fiber application presents the Automatic Chessboard as one continuous three-dimensional object. The procedural hardware model, chess pieces, setup trays, LCD, buttons, Arduino signal view, wiring guide, and rewind controls all occupy the same world. There is no duplicate flat chessboard UI.
 
-## Interaction map
+The model is authored in centimetres and mounted into the scene at `0.01` scale, so one scene unit is one metre in WebXR. It sits at real table height and the same R3F pointer handlers accept desktop mouse rays, touch input, XR controllers, tracked hands, gaze, and transient XR pointers.
 
-- Drag to orbit, use the wheel or pinch gesture to zoom, and right-drag to pan.
-- Select a component to highlight it and reveal its icon-only action dock without changing the camera.
-- Open its exact recommendation, mark it purchased, hide it temporarily, or clear the selection from that dock.
-- Double-click a component to open its recommendation directly.
-- The top-left controls reset the view, explode the assembly, make the board transparent, and restore temporarily hidden parts.
-- The chess-knight control opens an ATmega328P lab that executes the compiled production Nano HEX with AVR8js. It does not reimplement the firmware state machine or Micro-Max opponent in JavaScript.
-- The lab models the board peripherals at their electrical boundaries: the PCF8574/I²C LCD backpack, the four 16-channel reed multiplexers, both buttons/endstops, EEPROM, CoreXY STEP/DIR lines, the electromagnet output, and USB UART telemetry.
-- Power-on, position recovery, sequential two-switch calibration, setup placement, human sensor gestures, Micro-Max thinking, automatic movement, and manual-placement fallbacks are visible in one event trace. The timeline can pause, step, scrub, and replay every recorded observable state from power-on.
-- Motor animation is derived from the firmware's emitted STEP pulses at its compiled 16 MHz timing. The mechanism is functional rather than rigid-body physics: it shows what the controller commanded, not belt stretch, inertia, missed steps, magnetic field strength, or collisions.
-- Bluetooth deliberately remains disconnected in this standalone mode. A byte/transport adapter boundary is present for a future user-authorized Web Bluetooth bridge, but this page never requests or connects to a device.
-- Camera movement is always manual: there is no automatic rotation, selection zoom, wiring-step reframing, or camera tweening.
-- Guided wiring opens a 17-stage animated harness sequence. It starts with power removed, builds protected 24 V and regulated 5 V first, maps the four 16-channel sensor banks, then adds interfaces, the magnet switch, motor drivers, and only finally the three protected 24 V load branches.
-- The progress ring toggles the visibility of purchased components.
-- Purchase and hidden-part state is stored locally in the browser under `automatic-chessboard-build-v1`.
+## Experience
 
-The main build view contains no visible explanatory paragraphs. Guided wiring and the firmware lab use compact state, LCD, and signal readouts. Accessible names and live announcement regions preserve keyboard and screen-reader usability.
+- Orbit with drag, zoom with the wheel or pinch, and pan with the secondary pointer gesture.
+- Press the modeled `POWER`, `A`, `B`, or illuminated next-action control exactly as on the physical board.
+- During setup, select or drag each piece from the two physical side trays to its expected reed square. `AUTO/FINISH SETUP` remains available when a visitor wants to continue without placing all 32 pieces manually.
+- During play, press or drag a piece once. Legal destinations illuminate on the physical tiles. The same interaction handles the firmware's manual AI-placement fallback, including knight moves.
+- Use the physical timeline to step, play, scrub any recorded point, and return to the live Arduino. Meaningful events and motion stay frame-accurate; unchanged idle data is shared and sampled at a lower cadence for long sessions.
+- Switch among `PLAY`, `BRAIN`, `X-RAY`, and `WIRE`. Brain mode exposes live reed input, AVR program counter and loop, firmware state, Micro-Max, STEP pulses, moving head, and magnet output inside the exploded board. Wiring mode animates all source-of-truth harness stages.
+- Double-press a modeled component to open its spatial build card. Its physical controls open the source/recommendation, persist an owned mark, hide the part, or close the card; the rear build dock reports progress and restores all hidden parts.
+- Press `VR` or `AR` on a supported secure-context browser. Unsupported browsers keep the complete desktop/touch experience and report why XR could not start.
 
-The wiring animation imports `hardware/connections.csv` and `hardware/sensor-map.csv` directly during the build. `validate.mjs` rejects a missing, duplicated, or unknown point-to-point connection and rejects anything other than 64 unique MUX channels and logical squares.
+The simulation executes the compiled production Nano HEX with AVR8js. It models the PCF8574/I²C LCD backpack, four 16-channel reed multiplexers, physical buttons/endstops, EEPROM, CoreXY STEP/DIR outputs, electromagnet, and UART telemetry at their electrical boundaries. Motor movement follows the step pulses and timing emitted by the real firmware.
 
-## Development
+Bluetooth is deliberately disconnected in standalone mode. The worker already has a byte/transport boundary for a future user-authorized Web Bluetooth adapter, but the page does not request or connect to hardware today.
 
-### Visual Studio Code
+This is a command-accurate hardware visualization, not a rigid-body physics simulation. It does not claim to model belt stretch, inertia, missed steps, magnetic field strength, piece collisions, or real-world tolerances.
 
-Open the repository root in VS Code, then use **Terminal > Run Task > Site: Start development server**. This starts Vite in the `site` directory, opens the local site in the default browser, and reloads it as source files change. Stop it with `Ctrl+C` in the dedicated terminal.
+## Architecture
 
-The Live Server extension is not suitable for this site because it serves files without processing the Three.js package imports or the raw CSV imports used by the wiring guide.
+- `src/firmware-core.js` and `src/firmware-worker.js`: real AVR runtime and peripheral adapter.
+- `src/firmware-session.js`: framework-facing orchestration, chess rules, guided actions, announcements, and complete replay history.
+- `src/model.js` and `src/wiring.js`: reviewable procedural hardware and harness geometry sourced from the hardware CSV files.
+- `src/immersive/`: the shared R3F scene, spatial controls, physical pieces, Arduino signal visualization, responsive camera, and WebXR input surface.
+- `src/main.jsx`: React application entry point.
 
-### Command line
+The boundary is intentional: hardware complexity stays in the adapter, orchestration stays independent of rendering, and scene components only translate state into visible objects and pointer actions.
+
+## Development and verification
 
 ```powershell
 ./firmware/build.ps1 -HardwareProfile nano
 cd site
 npm install
 npm run validate
-npm run dev
+npm test
+npm run build
+npm run dev -- --host 127.0.0.1 --base /Automatic-Chessboard/
 ```
 
-Run the firmware command from the repository root before entering `site`. `npm run dev` and `npm run build` export the resulting HEX and ELF symbol addresses into generated `site/public/firmware/` assets. GitHub Pages performs the same resource-budgeted Nano compile before building the site, so the lab cannot silently ship a stale hand-maintained firmware copy.
+Open `http://127.0.0.1:5173/Automatic-Chessboard/`. Test the running page in a real browser at that deployment subpath; a successful build alone is not an interaction test. The GitHub Pages workflow performs the resource-budgeted Nano compile before building the site, so it cannot silently deploy a stale hand-maintained firmware copy.
 
-Use `npm run dev:open` to start Vite and open the browser automatically. `npm run build` creates the deployable `dist` directory. Component recommendation URLs and accessibility names are centralized in `src/catalog.js`.
+The validation gate preserves the 23 modeled component groups, 84 wiring connections, 64 unique reed channels, CoreXY geometry, production-firmware boundary, spatial interaction surface, brain visualization, and absence of a duplicate 2D board.
