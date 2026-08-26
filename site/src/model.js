@@ -629,6 +629,10 @@ function createElectronics(parent) {
   axialPart(parent, 2.4, 3.2, 20.0, "bluetooth", materials.resistor);
   axialPart(parent, 3.3, 3.2, 18.9, "bluetooth", materials.resistor);
   axialPart(parent, 4.7, 3.2, 18.9, "bluetooth", materials.resistor);
+  axialPart(parent, -14.5, 3.2, 21.2, "drivers", materials.resistor);
+  axialPart(parent, -14.5, 3.2, 19.2, "drivers", materials.resistor);
+  axialPart(parent, 14.5, 3.2, 21.2, "drivers", materials.resistor);
+  axialPart(parent, 14.5, 3.2, 19.2, "drivers", materials.resistor);
 
   const harnesses = [
     [materials.wireRed, [new THREE.Vector3(8, 2.2, 22), new THREE.Vector3(7, 1.2, 14), new THREE.Vector3(3.4, 5.2, 2.1)]],

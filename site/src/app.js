@@ -8,6 +8,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { PARTS, PURCHASABLE_PART_IDS } from "./catalog.js";
 import { WIRING_ICON_PATHS } from "./wiring-data.js";
 import { createWiringGuide } from "./wiring.js";
+import { createPlaySimulator } from "./play-simulator.js";
 import {
   animateModel,
   createBoardModel,
@@ -33,6 +34,8 @@ const wiringIndex = document.querySelector("#wiring-step-index");
 const wiringIconPath = document.querySelector("#wiring-step-icon-path");
 const wiringPinCodes = document.querySelector("#wiring-pin-codes");
 const wiringTrack = document.querySelector("#wiring-step-track");
+const playPanel = document.querySelector("#play-panel");
+const playButton = document.querySelector("#toggle-play");
 const storageKey = "automatic-chessboard-build-v1";
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -144,6 +147,7 @@ const state = {
   exploded: false,
   xray: false,
   wiring: false,
+  playing: false,
   wiringStep: THREE.MathUtils.clamp(saved.wiringStep, 0, wiringGuide.steps.length - 1),
   wiringUnlocked: THREE.MathUtils.clamp(Math.max(saved.wiringUnlocked, saved.wiringStep), 0, wiringGuide.steps.length - 1),
   explodeAmount: 0,
@@ -162,6 +166,33 @@ function announce(message) {
   announcer.textContent = "";
   requestAnimationFrame(() => { announcer.textContent = message; });
 }
+
+const playSimulator = createPlaySimulator({
+  panel: playPanel,
+  board: document.querySelector("#virtual-board"),
+  status: document.querySelector("#play-status"),
+  routeOutput: document.querySelector("#play-route"),
+  history: document.querySelector("#play-history"),
+  announce,
+});
+
+function togglePlay(enabled = !state.playing) {
+  if (enabled === state.playing) return;
+  if (enabled && state.wiring) toggleWiring(false);
+  state.playing = enabled;
+  viewport.classList.toggle("is-playing", enabled);
+  togglePressed(playButton, enabled);
+  playSimulator.setEnabled(enabled);
+  clearSelection();
+  if (enabled) {
+    setPartVisible("pieces", false);
+    setPartVisible("pieceMagnets", false);
+  } else {
+    applyVisibility();
+  }
+}
+
+playButton.addEventListener("click", () => togglePlay());
 
 function updateProgress() {
   const count = state.purchased.size;
@@ -298,6 +329,7 @@ function retreatWiring() {
 
 function toggleWiring(enabled = !state.wiring) {
   if (enabled === state.wiring) return;
+  if (enabled && state.playing) togglePlay(false);
   state.wiring = enabled;
   viewport.classList.toggle("is-wiring", enabled);
   togglePressed(wiringButton, enabled);
@@ -395,13 +427,13 @@ function raycast(event) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
-  if (state.wiring) return;
+  if (state.wiring || state.playing) return;
   pointerWasDown = true;
   pointerStart.set(event.clientX, event.clientY);
 });
 
 canvas.addEventListener("pointerup", (event) => {
-  if (state.wiring) return;
+  if (state.wiring || state.playing) return;
   if (!pointerWasDown) return;
   pointerWasDown = false;
   if (pointerStart.distanceTo(new THREE.Vector2(event.clientX, event.clientY)) > 6) return;
@@ -411,13 +443,13 @@ canvas.addEventListener("pointerup", (event) => {
 });
 
 canvas.addEventListener("dblclick", (event) => {
-  if (state.wiring) return;
+  if (state.wiring || state.playing) return;
   const id = raycast(event);
   if (id) window.open(PARTS[id].url, "_blank", "noopener,noreferrer");
 });
 
 canvas.addEventListener("pointermove", (event) => {
-  if (state.wiring) return;
+  if (state.wiring || state.playing) return;
   if (event.pointerType === "touch") return;
   hoveredId = raycast(event);
   viewport.classList.toggle("has-hover", Boolean(hoveredId));
@@ -436,6 +468,7 @@ window.addEventListener("keydown", (event) => {
   if (state.wiring && event.key === "ArrowRight") advanceWiring();
   if (state.wiring && event.key === "ArrowLeft") retreatWiring();
   if (event.key === "Escape" && state.wiring) toggleWiring(false);
+  else if (event.key === "Escape" && state.playing) togglePlay(false);
   else if (event.key === "Escape") clearSelection();
   if (event.key === "Home") resetView();
   if (!state.wiring && event.key === "Enter" && state.selected) window.open(PARTS[state.selected].url, "_blank", "noopener,noreferrer");

@@ -5,11 +5,19 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "*.ino"
+      - "*.h"
+      - "*.cpp"
+      - "firmware/build.ps1"
       - ".github/workflows/pages.yml"
   pull_request:
     branches: [main]
     paths:
       - "site/**"
+      - "*.ino"
+      - "*.h"
+      - "*.cpp"
+      - "firmware/build.ps1"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -25,12 +33,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2
+      - name: Compile production Nano firmware for the browser lab
+        shell: pwsh
+        run: ./firmware/build.ps1 -HardwareProfile nano -InstallDependencies
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci
+        working-directory: site
+      - run: npm test
         working-directory: site
       - run: npm run validate
         working-directory: site

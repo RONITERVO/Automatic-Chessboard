@@ -17,6 +17,7 @@ Thumbs.db
 .DS_Store
 site/node_modules/
 site/dist/
+site/public/firmware/automatic-chessboard-nano.json
 
 # Android local/build products
 android_app/local.properties

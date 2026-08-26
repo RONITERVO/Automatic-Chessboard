@@ -44,6 +44,10 @@ const anchors = Object.freeze({
   "R4 1k": vector(2.4, 3.2, 20.0),
   "R5 1k": vector(3.3, 3.2, 18.9),
   "R6 2k": vector(4.7, 3.2, 18.9),
+  "R7 10k": vector(-14.5, 3.2, 21.2),
+  "R8 10k": vector(-14.5, 3.2, 19.2),
+  "R9 10k": vector(14.5, 3.2, 21.2),
+  "R10 10k": vector(14.5, 3.2, 19.2),
 });
 
 const muxAnchors = [-12, -4, 4, 12].map((x) => vector(x, 3.2, 23.7));
