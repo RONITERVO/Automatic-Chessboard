@@ -128,6 +128,10 @@ function hex(value, width = 4) {
   return `0x${Math.max(0, value ?? 0).toString(16).toUpperCase().padStart(width, "0")}`;
 }
 
+export function resolveFirmwareBase(baseUri) {
+  return new URL("firmware/", baseUri).href;
+}
+
 export function createPlaySimulator({ panel, board, status, history, announce }) {
   const worker = new Worker(new URL("./firmware-worker.js", import.meta.url), { type: "module" });
   const game = new Chess();
@@ -439,6 +443,8 @@ export function createPlaySimulator({ panel, board, status, history, announce })
     status.textContent = "FIRMWARE LAB ERROR";
     announce(event.message || "Firmware worker failed");
   });
+
+  worker.postMessage({ type: "initialize", firmwareBase: resolveFirmwareBase(document.baseURI) });
 
   power.addEventListener("click", () => worker.postMessage({ type: "power", enabled: !liveFrame.state.power }));
   buttonA.addEventListener("click", () => worker.postMessage({ type: "button", button: "A" }));

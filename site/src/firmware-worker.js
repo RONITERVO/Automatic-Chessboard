@@ -1,8 +1,8 @@
 import { AvrFirmwareRuntime } from "./firmware-core.js";
 
-const firmwareBase = `${import.meta.env.BASE_URL}firmware/`;
 let hexText = "";
 let manifest = null;
+let initialized = false;
 
 let runtime = null;
 let retainedEeprom = null;
@@ -105,18 +105,28 @@ function handleMessage(event) {
   }
 }
 
-async function initialize() {
+async function initialize(firmwareBase) {
+  if (initialized) return;
+  initialized = true;
+  const baseUrl = new URL(firmwareBase, self.location.href);
   const [hexResponse, manifestResponse] = await Promise.all([
-    fetch(`${firmwareBase}automatic-chessboard-nano.hex`),
-    fetch(`${firmwareBase}automatic-chessboard-nano.json`),
+    fetch(new URL("automatic-chessboard-nano.hex", baseUrl)),
+    fetch(new URL("automatic-chessboard-nano.json", baseUrl)),
   ]);
-  if (!hexResponse.ok || !manifestResponse.ok) throw new Error("Production Nano firmware assets could not be loaded");
+  if (!hexResponse.ok || !manifestResponse.ok) {
+    throw new Error(`Production Nano firmware assets could not be loaded (HEX ${hexResponse.status}, manifest ${manifestResponse.status})`);
+  }
   [hexText, manifest] = await Promise.all([hexResponse.text(), manifestResponse.json()]);
-  self.addEventListener("message", handleMessage);
   self.postMessage({ type: "ready", manifest });
   pump();
 }
 
-initialize().catch((error) => {
-  self.postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
+self.addEventListener("message", (event) => {
+  if (event.data.type === "initialize") {
+    initialize(event.data.firmwareBase).catch((error) => {
+      self.postMessage({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
+    });
+    return;
+  }
+  if (manifest) handleMessage(event);
 });
