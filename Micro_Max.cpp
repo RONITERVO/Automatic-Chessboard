@@ -16,6 +16,16 @@
 #define I 8000
 
 #define MYRAND_MAX 65535     /* 16bit pseudo random generator */
+// The compiled Nano D() frame is 89 bytes and only about 800 bytes of SRAM are
+// free when search begins. A seventh active search body would leave too little
+// room for callers and interrupts; its entry is allowed only to return the
+// static evaluation. The Mega profile has enough SRAM for the original limit.
+#if defined(ACB_PROFILE_MKS_GEN_L_V1)
+#define MICRO_MAX_RECURSION_LIMIT 30
+#else
+#define MICRO_MAX_RECURSION_LIMIT 6
+#endif
+
 long  N, T;                  /* N=evaluated positions+S, T=recursion limit */
 short Q, O, K, R, k = 16;    /* k=moving side */
 char *p, c[5], Z;            /* p=pointer to c, c=user input, computer output, Z=recursion counter */
@@ -58,7 +68,7 @@ short D(short q, short l, short e, unsigned char E, unsigned char z, unsigned ch
   short m = 0, v, i, P, V, s;
   unsigned char t, p, u, x, y, X, Y, H, B, j, d, h, F, G, C;
   signed char r;
-  if (++Z > 30) {                                   /* stack underrun check */
+  if (++Z > MICRO_MAX_RECURSION_LIMIT) {            /* stack underrun check */
     --Z; return e;
   }
   q--;                                          /* adj. window: delay bonus */
