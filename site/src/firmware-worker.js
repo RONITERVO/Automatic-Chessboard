@@ -88,6 +88,9 @@ function handleMessage(event) {
   } else if (powered && message.type === "place-piece") {
     runtime.placePiece(message.square, message.piece);
     postFrame(true);
+  } else if (powered && message.type === "setup-move") {
+    runtime.setupMove(message.from, message.to);
+    postFrame(true);
   } else if (powered && message.type === "human-move") {
     const accepted = runtime.humanMove(message.from, message.to, {
       captureSquare: message.captureSquare,

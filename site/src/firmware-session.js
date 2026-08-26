@@ -52,6 +52,25 @@ export function createStartingPieces() {
   return pieces;
 }
 
+export function startingPositionMatches(pieces = {}) {
+  const expected = createStartingPieces();
+  const entries = Object.entries(expected);
+  return Object.keys(pieces).length === entries.length
+    && entries.every(([square, piece]) => pieces[square] === piece);
+}
+
+export function getSetupRackPieces(pieces = {}) {
+  const expected = createStartingPieces();
+  const deficits = {};
+  for (const piece of Object.values(expected)) deficits[piece] = (deficits[piece] ?? 0) + 1;
+  for (const piece of Object.values(pieces)) deficits[piece] = (deficits[piece] ?? 0) - 1;
+  return Object.entries(expected).filter(([square, piece]) => {
+    if (pieces[square] === piece || deficits[piece] <= 0) return false;
+    deficits[piece] -= 1;
+    return true;
+  });
+}
+
 export function getGuidedAction(state) {
   if (!state.power) return { label: "POWER ON", disabled: false, action: "power" };
   if (state.sequence === 0) return { label: "BOOTING", disabled: true, action: "wait" };
@@ -60,9 +79,14 @@ export function getGuidedAction(state) {
   if (state.sequence === 3) return { label: "CALIBRATING", disabled: true, action: "wait" };
   if (state.sequence === 4) {
     const count = Object.keys(state.pieces ?? {}).length;
-    return count < 32
-      ? { label: `${count ? "FINISH" : "AUTO"} SETUP · ${count}/32`, disabled: false, action: "pieces" }
-      : { label: "PRESS A · CHECK 32", disabled: false, action: "A" };
+    if (startingPositionMatches(state.pieces)) {
+      return { label: "PRESS A · START", disabled: false, action: "A" };
+    }
+    return {
+      label: count ? `RESET START · ${count}→32` : "AUTO SETUP · 0/32",
+      disabled: false,
+      action: "pieces",
+    };
   }
   if (state.sequence === 5) return state.humanMoveReady
     ? { label: "PRESS A · END TURN", disabled: false, action: "A" }
@@ -206,6 +230,12 @@ export class FirmwareSession {
     const previousFrame = this.frames.at(-1);
     const compact = compactFrame(frame, previousFrame);
     this.liveFrame = compact;
+    if (compact.state.sequence === 4 && previousFrame?.state.sequence !== 4) {
+      this.game.reset();
+      this.lastAppliedAiMove = "";
+      this.lastMove = null;
+      this.clearSelection(false);
+    }
     if (this.viewIndex < 0) this.applyAiMove(compact.state);
     if (!shouldRecordFrame(compact, previousFrame)) {
       this.updateSnapshot();
@@ -237,6 +267,7 @@ export class FirmwareSession {
       this.game.reset();
       this.lastAppliedAiMove = "";
       this.lastMove = null;
+      this.clearSelection(false);
       this.worker.postMessage({ type: "place-start", pieces: createStartingPieces() });
     } else if (guide.action === "ai-manual") {
       const move = getManualAiMove(state);
@@ -254,6 +285,27 @@ export class FirmwareSession {
         this.worker.postMessage({ type: "place-piece", square, piece });
         this.clearSelection(false);
         this.say(`${piece[0] === "w" ? "White" : "Black"} ${PIECE_NAMES[piece[1]]} placed on ${square.toUpperCase()}`);
+        return true;
+      }
+      this.clearSelection();
+      return false;
+    }
+    if (state.sequence === 4) {
+      if (this.selected && state.pieces?.[this.selected]) {
+        if (square === this.selected) {
+          this.clearSelection();
+          return true;
+        }
+        return this.moveSetupPiece(this.selected, square);
+      }
+      const piece = state.pieces?.[square];
+      if (piece) {
+        const expected = createStartingPieces();
+        this.selected = square;
+        this.legalTargets = new Set(Object.entries(expected)
+          .filter(([target, expectedPiece]) => expectedPiece === piece && state.pieces?.[target] !== piece)
+          .map(([target]) => target));
+        this.say(`${square.toUpperCase()} selected; move it to a highlighted start square or off the board`);
         return true;
       }
       this.clearSelection();
@@ -306,6 +358,21 @@ export class FirmwareSession {
       promotionPiece: candidate.promotion ? "wq" : null,
     });
     this.clearSelection();
+    return true;
+  }
+
+  moveSetupPiece(from, to) {
+    const state = this.liveFrame.state;
+    if (this.viewIndex >= 0 || state.sequence !== 4 || !state.pieces?.[from] || from === to) {
+      this.clearSelection();
+      return false;
+    }
+    const piece = state.pieces[from];
+    this.worker.postMessage({ type: "setup-move", from, to });
+    this.clearSelection(false);
+    this.say(to
+      ? `${piece[0] === "w" ? "White" : "Black"} ${PIECE_NAMES[piece[1]]} moved ${from.toUpperCase()} to ${to.toUpperCase()}`
+      : `${piece[0] === "w" ? "White" : "Black"} ${PIECE_NAMES[piece[1]]} moved off the board`);
     return true;
   }
 

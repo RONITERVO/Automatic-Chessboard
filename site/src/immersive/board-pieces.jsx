@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { BOARD_LAYOUT, pieceProfile } from "../model.js";
-import { createStartingPieces } from "../firmware-session.js";
+import { getSetupRackPieces } from "../firmware-session.js";
 import { boardPositionToSquare, FILES, RANKS, squareToBoardPosition } from "./board-space.js";
 
 const TYPES = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
@@ -35,6 +35,7 @@ function DraggablePiece({
   boardRoot,
   boardPlane,
   setOrbitEnabled,
+  allowOffBoard = false,
 }) {
   const [dragPoint, setDragPoint] = useState(null);
   const dragPointRef = useRef(null);
@@ -82,7 +83,7 @@ function DraggablePiece({
     setDragPoint(null);
     if (draggedRef.current) {
       const square = boardPositionToSquare(local.x, local.z);
-      if (square) completeSelection(square);
+      if (square || allowOffBoard) completeSelection(square);
     }
     draggedRef.current = false;
   };
@@ -143,8 +144,7 @@ function SquareMarker({ square, snapshot, onSelect }) {
 
 function SetupRacks({ snapshot, session, boardRoot, boardPlane, setOrbitEnabled }) {
   if (snapshot.state.sequence !== 4 || snapshot.historical) return null;
-  const expected = createStartingPieces();
-  const remaining = Object.entries(expected).filter(([square, code]) => snapshot.state.pieces?.[square] !== code);
+  const remaining = getSetupRackPieces(snapshot.state.pieces);
   const colors = { w: [], b: [] };
   remaining.forEach((entry) => colors[entry[1][0]].push(entry));
   return (
@@ -197,10 +197,13 @@ export function InteractiveBoardPieces({ snapshot, session, boardRoot, boardPlan
           homePosition={squareToBoardPosition(square)}
           selected={snapshot.selected === square}
           beginSelection={() => session.selectSquare(square)}
-          completeSelection={(destination) => session.selectSquare(destination)}
           boardRoot={boardRoot}
           boardPlane={boardPlane}
           setOrbitEnabled={setOrbitEnabled}
+          allowOffBoard={snapshot.state.sequence === 4}
+          completeSelection={(destination) => snapshot.state.sequence === 4
+            ? session.moveSetupPiece(square, destination)
+            : session.selectSquare(destination)}
         />
       ))}
       {held.map(([id, code, position]) => (

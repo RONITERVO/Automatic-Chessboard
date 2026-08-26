@@ -10,7 +10,15 @@ import {
   squareToCoords,
 } from "../src/play-simulator.js";
 import { boardPositionToSquare, squareToBoardPosition, toggleSpatialMode } from "../src/immersive/board-space.js";
-import { compactFrame, createStartingPieces, getGuidedAction, shouldRecordFrame } from "../src/firmware-session.js";
+import {
+  compactFrame,
+  createStartingPieces,
+  FirmwareSession,
+  getGuidedAction,
+  getSetupRackPieces,
+  shouldRecordFrame,
+  startingPositionMatches,
+} from "../src/firmware-session.js";
 
 assert.deepEqual(squareToCoords("a1"), { file: 0, rank: 0 });
 assert.deepEqual(squareToCoords("h8"), { file: 7, rank: 7 });
@@ -31,6 +39,18 @@ assert.equal(toggleSpatialMode("brain", "xray"), "xray", "pressing a different i
 assert.equal(Object.keys(createStartingPieces()).length, 32);
 assert.deepEqual(getGuidedAction({ power: false }), { label: "POWER ON", disabled: false, action: "power" });
 assert.equal(getGuidedAction({ power: true, sequence: 4, pieces: {} }).action, "pieces");
+const startingPieces = createStartingPieces();
+assert.equal(startingPositionMatches(startingPieces), true, "the exact starting board is ready to play");
+assert.equal(getGuidedAction({ power: true, sequence: 4, pieces: startingPieces }).action, "A");
+const misplacedPieces = { ...startingPieces, e4: startingPieces.e2 };
+delete misplacedPieces.e2;
+assert.equal(startingPositionMatches(misplacedPieces), false, "32 pieces in the wrong position cannot start a game");
+assert.equal(getGuidedAction({ power: true, sequence: 4, pieces: misplacedPieces }).action, "pieces");
+assert.deepEqual(getSetupRackPieces(misplacedPieces), [], "a misplaced board piece must be moved instead of duplicated from the rack");
+delete misplacedPieces.e4;
+assert.deepEqual(getSetupRackPieces(misplacedPieces), [["e2", "wp"]], "a physically missing piece remains available on the setup rack");
+const overcrowdedPieces = { ...startingPieces, e3: "wp", e4: "wp", d4: "bp", d5: "bp" };
+assert.match(getGuidedAction({ power: true, sequence: 4, pieces: overcrowdedPieces }).label, /36→32/);
 assert.equal(getGuidedAction({ power: true, sequence: 8, aiMove: "b8c6", pieces: { b8: "bn" } }).action, "ai-manual");
 const recorded = { bootNumber: 1, events: [], state: { power: true, sequence: 5, runtimeMs: 1000, pieces: { e2: "wp" }, lcd: ["YOUR MOVE", "A=END TURN"] } };
 const idle = { bootNumber: 1, events: [], state: { power: true, sequence: 5, runtimeMs: 1125, pieces: { e2: "wp" }, lcd: ["YOUR MOVE", "A=END TURN"] } };
@@ -75,5 +95,25 @@ game.move("e4");
 const computerMove = chooseComputerMove(game);
 assert.ok(computerMove, "the virtual opponent returns a move");
 assert.doesNotThrow(() => game.move(computerMove), "the virtual opponent always returns a legal move");
+
+const workerMessages = [];
+const fakeWorker = {
+  addEventListener() {},
+  postMessage(message) { workerMessages.push(message); },
+  terminate() {},
+};
+const setupSession = new FirmwareSession({ baseUri: "https://example.test/", workerFactory: () => fakeWorker });
+const setupBoard = { ...startingPieces, e4: startingPieces.e2 };
+delete setupBoard.e2;
+setupSession.game.move("e4");
+setupSession.addFrame({ state: { power: true, sequence: 4, pieces: setupBoard, runtimeMs: 1 }, events: [], bootNumber: 1 });
+assert.deepEqual(setupSession.game.history(), [], "entering setup starts a fresh chess rules session after an aborted game");
+assert.equal(setupSession.selectSquare("e4"), true, "pieces already on the board can be selected during setup");
+assert.deepEqual([...setupSession.getSnapshot().legalTargets], ["e2"], "setup highlights the selected piece's missing home square");
+assert.equal(setupSession.moveSetupPiece("e4", "e2"), true, "a selected board piece can be repositioned during setup");
+assert.deepEqual(workerMessages.at(-1), { type: "setup-move", from: "e4", to: "e2" });
+assert.equal(setupSession.moveSetupPiece("e4", null), true, "an extra board piece can be moved back to the setup rack");
+assert.deepEqual(workerMessages.at(-1), { type: "setup-move", from: "e4", to: null });
+setupSession.destroy();
 
 console.log("Virtual chess simulator tests passed.");
