@@ -1,6 +1,12 @@
 # Automatic Chessboard for Android
 
-This is the phone-first companion for matching firmware 5.0.1.
+Version 5.1.0 uses [human-confirmed input](../firmware/HUMAN_MOVE_INPUT.md).
+Start positions are trusted. Move your piece, press A to detect, then A again
+to accept the displayed move. B edits an incorrect proposal. Game occupancy is
+software-tracked, so raw reed mismatches never block robot turns.
+
+
+This is the phone-first companion for matching firmware 5.1.0.
 It covers the Windows
 companion's current Bluetooth workflow while keeping Android, chess rules,
 Stockfish, protocol handling, and screen rendering separate enough to extend.
@@ -13,7 +19,7 @@ Stockfish, protocol handling, and screen rendering separate enough to extend.
 | Monitor | Logical pieces, all 64 occupancy sensors, missing/extra squares, carriage estimate, magnet command, controls, memory, uptime, stale-state health |
 | Move | Tap a square for head-only movement or tap an occupied source plus empty target to carry a piece; in-app calibration and fresh e6 telemetry verification are required |
 | Align board | Measure two user-chosen squares with precise X/Y nudges and copy exact `global.h` source values; head-only is the safe default and a magnetic marker is optional |
-| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, reed-verified or app-controlled play, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
+| Play | Full legal rules through chesslib, official Stockfish 18, human White/Black, human-confirmed or app-controlled play, collision-safe blocker rearrangement, castling/en-passant/promotion, paged move history, PGN export |
 | Diagnostics | Connection, INFO, TELEM, BOARD, controls, Stockfish, and camera checks; no motion commands |
 | Camera | Local phone cameras, encrypted HTTPS streams, or unencrypted RTSP streams supported by Android; explicit JPEG snapshots only |
 | Developer | Structured and raw-equivalent protocol timeline, pagination, documented-command allowlist, motion lock plus confirmation, simulator `SIMMOVE` |
@@ -24,7 +30,7 @@ The firmware restricts direct manual carries to square centres on the same file,
 rank, or diagonal. The Play planner continues to handle knights and other
 turning moves as separate orthogonal square-centre `DRAG` operations.
 
-On the Play page, **Moves: Reeds** keeps the existing sensor-verified workflow.
+On the Play page, **Moves: Human** uses the two-press physical confirmation workflow.
 Tap it before starting to select **Moves: App** for absent or unreliable reed
 switches. Confirm the standard starting position, then select every human move
 by tapping its source and destination; the mechanism executes both human and AI
@@ -38,9 +44,8 @@ The phone plans automatic moves as labeled board
 rearrangements. It can evacuate and restore blockers, stage the main piece while
 a return corridor is used, and recursively free trapped blockers. Carried paths
 are orthogonal and turning paths become separate straight drags at square
-centres. After capture removal and every drag, Reed mode verifies all 64 physical
-switches; App mode verifies the Nano's independently maintained virtual occupancy
-and then requires whole-board visual confirmation after the completed chess move.
+centres. After capture removal and every drag, both modes verify the Nano's independently maintained software occupancy. App mode also
+requires whole-board visual confirmation after the completed chess move.
 A timeout or disconnect after physical motion stops the session and requires
 inspection; it is never retried from an assumed state.
 
@@ -51,7 +56,7 @@ when every edge exit is disconnected.
 
 The **Route** button on the Play page adjusts the bounded search duration and
 maximum number of temporarily moved pieces without adding a scrolling settings
-page. Version 5.0.1 always uses the verified route transaction and refuses motion
+page. Version 5.1.0 always uses the verified route transaction and refuses motion
 until app and Nano report the same exact software version.
 
 No page contains a `ScrollView`, horizontally scrolling container, or vertically

@@ -166,37 +166,21 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertIn(square_index("e4"), model.observed)
         self.assertIn(square_index("e4"), model.expected)
 
-    def test_pre_plan_pre_drag_and_post_drag_sensor_faults(self):
-        stale = MotionlessRouteExecutor({square_index("a1")})
-        stale.set_observed({square_index("a2")})
-        assert_error(self, "PLAN STATE", lambda: stale.begin("PLAN a1a2---"))
+    def test_sensor_noise_cannot_block_any_route_phase(self):
+        model = MotionlessRouteExecutor({square_index("a1")})
+        model.set_observed({square_index("h8")})
+        self.assertEqual("PLAN READY", model.begin("PLAN a1a2---"))
+        model.set_observed(set())
+        model.drag("DRAG a1a2", observed_after={square_index("a1")})
+        self.assertEqual("DONE a1a2", model.commit())
+        self.assertEqual(frozenset({square_index("a2")}), model.expected)
+        self.assertFalse(model.fault)
 
-        pre_drag = MotionlessRouteExecutor({square_index("a1")})
-        pre_drag.begin("PLAN a1a2---")
-        pre_drag.set_observed(set())
-        assert_error(self, "PLAN STATE", lambda: pre_drag.drag("DRAG a1a2"))
-        self.assertTrue(pre_drag.active)
-
-        post_drag = MotionlessRouteExecutor({square_index("a1")})
-        post_drag.begin("PLAN a1a2---")
-        assert_error(
-            self,
-            "SENSORS",
-            lambda: post_drag.drag("DRAG a1a2", observed_after={square_index("a1")}),
-        )
-        self.assertTrue(post_drag.fault)
-        self.assertFalse(post_drag.active)
-
-        capture_fault = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
-        capture_fault.begin("PLAN e4d5-d5")
-        assert_error(
-            self,
-            "SENSORS",
-            lambda: capture_fault.remove_capture(
-                observed_after={square_index("e4"), square_index("d5")},
-            ),
-        )
-        self.assertTrue(capture_fault.fault)
+        capture = MotionlessRouteExecutor({square_index("e4"), square_index("d5")})
+        capture.begin("PLAN e4d5-d5")
+        capture.remove_capture(observed_after={square_index("e4"), square_index("d5")})
+        self.assertFalse(capture.fault)
+        self.assertNotIn(square_index("d5"), capture.expected)
 
     def test_source_target_and_malformed_requests_are_rejected(self):
         source_empty = MotionlessRouteExecutor(set())
@@ -228,7 +212,7 @@ class RouteTransactionModelTests(unittest.TestCase):
         self.assertTrue(model.fault)
         assert_error(self, "NOT READY", lambda: model.begin("PLAN a1a2---"))
 
-    def test_no_plan_and_final_sensor_branches(self):
+    def test_no_plan_and_no_final_sensor_gate(self):
         idle = MotionlessRouteExecutor({square_index("a1")})
         assert_error(self, "NO PLAN", lambda: idle.drag("DRAG a1a2"))
         assert_error(self, "NO PLAN", idle.commit)
@@ -237,7 +221,7 @@ class RouteTransactionModelTests(unittest.TestCase):
         final.begin("PLAN a1a2---")
         final.drag("DRAG a1a2")
         final.set_observed(set())
-        assert_error(self, "FINAL SENSORS", final.commit)
+        self.assertEqual("DONE a1a2", final.commit())
 
 
 if __name__ == "__main__":

@@ -69,10 +69,10 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                 emit("STOPPED", 30)
             }
             "REJECT" -> {
-                sequence = 16
-                emit("UNDO REQUIRED", 30)
+                sequence = 14
+                emit("OK REJECT", 30)
             }
-            "ACCEPT" -> {
+            "ACCEPT", "ACCEPT q", "ACCEPT r", "ACCEPT b", "ACCEPT n" -> {
                 sequence = 15
                 emit("TURN COMPUTER", 30)
             }
@@ -99,7 +99,6 @@ class SimulatorTransport(private val listener: BoardTransport.Listener) : BoardT
                     trolleyY = 6
                     sequence = if (appBoard) 15 else if (humanSide == "W") 14 else 15
                     emit("OK START $humanSide", 30)
-                    if (!appBoard) emit("SETUP PRESS A", 30)
                     emit("SESSION $humanSide", 60)
                     emit(if (humanSide == "W") "TURN HUMAN" else "TURN COMPUTER", 120)
                 }

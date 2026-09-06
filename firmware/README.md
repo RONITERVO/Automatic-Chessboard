@@ -6,6 +6,16 @@ and a compact standalone chess opponent. Full chess rules, Stockfish, rich
 monitoring, and configurable development workloads belong on a connected phone
 or computer.
 
+## Release 5.1.0: human-confirmed input
+
+See [Human-confirmed play](HUMAN_MOVE_INPUT.md) for the current game flow.
+Starting positions are trusted, A detects then confirms a human move, B corrects
+it, and robot moves use software occupancy. Sensor mismatches never gate games.
+Phone, Windows, and firmware must all use 5.1.0.
+
+The release notes below describe earlier versions; their reed-verification
+requirements are superseded by 5.1.0.
+
 ## Release 5.0.1 behavior
 
 Firmware and both companions now use one exact release contract. A companion
@@ -232,7 +242,7 @@ castles, exact commit/cancel behavior, emergency halt, and injected stale or
 failed sensor transitions. No model code is compiled into the Nano.
 
 `non_motion_serial_test.py` samples a connected Nano using a hard allowlist of
-only `HELLO 5.0.1`, `INFO`, `TELEM`, and `BOARD`. It checks exact release identity,
+only `HELLO 5.1.0`, `INFO`, `TELEM`, and `BOARD`. It checks exact release identity,
 framing, magnet-off telemetry, and repeated serial stability. Reed
 occupancy is recorded but deliberately not judged. The probe cannot send an
 upload, calibration, movement, magnet, transaction, stop, or emergency command.
@@ -266,10 +276,8 @@ a certified safety function.
 
 ## Resource policy
 
-The 5.0 Nano build uses 29534 bytes of flash and 1091 bytes of global SRAM.
-`build.ps1` rejects growth beyond 29900/1115 bytes, leaving 1186 bytes of
-physical flash and 957 bytes for stack/local runtime state. Despite full-board
-standalone bin routing, 5.0 saves 268 flash bytes and 24 global SRAM bytes versus
-4.8. The packed
-three-snapshot board representation uses 24 bytes instead of 192 bytes and is
-reused as either reed-derived or command-derived occupancy.
+The 5.1.0 Nano build uses 29834 flash bytes and 1099 global SRAM bytes.
+`build.ps1` enforces the unchanged 29900/1115 budgets. This leaves 886 bytes of
+physical flash and 949 bytes for runtime stack/local state. The three packed
+occupancy buffers use 24 bytes; the existing Micro-Max piece table is reused
+for companion move suggestions without another board allocation.

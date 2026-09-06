@@ -1,5 +1,5 @@
 /*
- * Automatic Chessboard firmware 5.0.1.
+ * Automatic Chessboard firmware 5.1.0.
  *
  * Substantially modified from "Automated Chessboard" by Greg06:
  * https://www.instructables.com/Automated-Chessboard/
@@ -27,7 +27,7 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 #endif
 #include "Micro_Max.h"
 
-#define FIRMWARE_VERSION "5.0.1"
+#define FIRMWARE_VERSION "5.1.0"
 
 // All mutable firmware state is centralized here. global.h contains only
 // types, configuration constants, enums, and extern declarations so changing
@@ -35,15 +35,13 @@ SoftwareWire acbLcdWire(LCD_SOFTWARE_SDA, LCD_SOFTWARE_SCL);
 BoardState reed_sensor_status = {{0}};
 BoardState reed_sensor_record = {{0}};
 BoardState turn_start_status = {{0}};
-byte lifted_squares[2] = {NO_SQUARE, NO_SQUARE};
-byte lifted_count = 0;
+byte alignment_offsets[2] = {0, 0};
+byte move_edit_stage = 0;
 byte move_from = NO_SQUARE;
 byte move_to = NO_SQUARE;
 byte last_sensor_square = NO_SQUARE;
 boolean last_sensor_occupied = false;
 boolean human_move_ready = false;
-boolean sensor_tracking_error = false;
-boolean pending_move_displayed = false;
 byte trolley_coordinate_X = CALIBRATION_PARK_FILE;
 byte trolley_coordinate_Y = CALIBRATION_PARK_RANK;
 boolean trolley_homed = false;
@@ -76,7 +74,7 @@ const byte HOST_INPUT_OVERFLOWED = 1;
 const byte HOST_VERSION_AGREED = 2;
 HostInputBuffer usb_host_input = {{0}, 0, 0};
 HostInputBuffer bluetooth_host_input = {{0}, 0, 0};
-// 0=standalone, 1=reed-verified companion, 2=app-authoritative companion.
+// 0=standalone, 1=human-confirmed input, 2=app-executed human moves.
 // A byte replaces the former boolean without increasing global SRAM.
 byte remote_mode = 0;
 boolean remote_human_white = true;
@@ -190,8 +188,7 @@ void setup() {
   loadPersistedTrolleyPosition();
   showPersistedTrolleyPosition();
   AI_reset();
-  scanSensors();
-  syncSensorState();
+  seedStartingPosition();
 #if defined(ACB_PROFILE_MKS_GEN_L_V1)
   digitalWrite(MOTOR_WHITE_ENABLE,
                MOTOR_ENABLE_ACTIVE_LOW ? LOW : HIGH);
@@ -242,10 +239,9 @@ void loop() {
         lcd.print(F("HEAD AT e6"));
         delay(1000);
         sequence = after_calibration;
-        if (sequence == setup_check) showSetupCheck();
+        if (sequence == setup_check) { seedStartingPosition(); beginHumanTurn(); }
         else if (sequence == remote_setup_check) {
-          if (remote_mode == 2) beginRemoteSession();
-          else showRemoteSetupCheck();
+          beginRemoteSession();
         }
         else showMainMenu();
       }
@@ -256,23 +252,13 @@ void loop() {
       break;
 
     case setup_check:
-      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        if (startingPositionIsValid()) {
-          beginHumanTurn();
-        }
-        else {
-          showStartingMismatch();
-        }
-      }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        returnToMainMenu();
-      }
+      seedStartingPosition();
+      beginHumanTurn();
       break;
 
     case player_white:
-      updateSensorsAndTrackMove();
-      if (human_move_ready && !pending_move_displayed) showPendingMove();
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) finishHumanTurn();
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) editHumanMove();
       break;
 
     case player_black:
@@ -280,41 +266,19 @@ void loop() {
         sequence = fault_screen;
         showMotionFault();
       }
-      else if (!physicalSensorsMatchExpected()) {
-        sequence = ai_sensor_check;
-        showAiSensorMismatch();
-      }
-      else {
-        syncSensorState();
+      else if (sequence != manual_ai_wait) {
+        copySensorTable(reed_sensor_status, reed_sensor_record);
         beginHumanTurn();
       }
       break;
 
-    case undo_required:
-      scanSensors();
-      if (recordMatchesTurnStart()) {
-        syncSensorState();
-        beginHumanTurn();
-      }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        returnToMainMenu();
-      }
-      break;
-
-    case ai_sensor_check:
+    case manual_ai_wait:
       if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        if (physicalSensorsMatchExpected()) {
-          if (move_from != NO_SQUARE) prepareManualAiPlacement();
-          else {
-            syncSensorState();
-            beginHumanTurn();
-          }
-        }
-        else showAiSensorMismatch();
+        copySensorTable(reed_sensor_status, reed_sensor_record);
+        if (move_from != NO_SQUARE) prepareManualAiPlacement();
+        else beginHumanTurn();
       }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        returnToMainMenu();
-      }
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) returnToMainMenu();
       break;
 
     case game_over_screen:
@@ -333,20 +297,12 @@ void loop() {
       break;
 
     case remote_setup_check:
-      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        if (startingPositionIsValid()) beginRemoteSession();
-        else showStartingMismatch();
-      }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        stopRemoteSession();
-      }
+      beginRemoteSession();
       break;
 
     case remote_human:
-      updateSensorsAndTrackMove();
-      if (human_move_ready && !pending_move_displayed) showRemotePendingMove();
-      if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
-      else if (buttonPressed(BUTTON_A_LIMIT_WHITE)) finishRemoteHumanTurn();
+      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) finishRemoteHumanTurn();
+      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) editHumanMove();
       break;
 
     case remote_wait_host:
@@ -358,30 +314,6 @@ void loop() {
       // A partially rearranged board then requires visual/sensor recovery before
       // another game; it is never silently committed as a chess move.
       if (buttonPressed(BUTTON_B_LIMIT_BLACK)) stopRemoteSession();
-      break;
-
-    case remote_undo_required:
-      scanSensors();
-      if (recordMatchesTurnStart()) {
-        syncSensorState();
-        beginRemoteHumanTurn();
-      }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        stopRemoteSession();
-      }
-      break;
-
-    case remote_sensor_check:
-      if (buttonPressed(BUTTON_A_LIMIT_WHITE)) {
-        if (physicalSensorsMatchExpected()) {
-          syncSensorState();
-          finishRemoteComputerTurn();
-        }
-        else showRemoteSensorMismatch();
-      }
-      else if (buttonPressed(BUTTON_B_LIMIT_BLACK)) {
-        stopRemoteSession();
-      }
       break;
 
     case remote_promotion_wait:

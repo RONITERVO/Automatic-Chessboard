@@ -116,4 +116,16 @@ assert.equal(setupSession.moveSetupPiece("e4", null), true, "an extra board piec
 assert.deepEqual(workerMessages.at(-1), { type: "setup-move", from: "e4", to: null });
 setupSession.destroy();
 
+const confirmedSession = new FirmwareSession({ baseUri: "https://example.test/", workerFactory: () => fakeWorker });
+confirmedSession.pendingHumanMove = { from: "e2", to: "e4" };
+confirmedSession.handleWorkerMessage({ data: { type: "move-result", accepted: true } });
+assert.deepEqual(confirmedSession.game.history(), [], "placing a piece does not commit the software move");
+confirmedSession.applyAiMove({ humanMove: "d2d4", aiMove: "b8c6" });
+assert.deepEqual(confirmedSession.game.history(), ["d4", "Nc6"], "the browser follows the confirmed firmware move, including corrections");
+assert.equal(confirmedSession.pendingHumanMove, null);
+assert.equal(getGuidedAction({ power: true, sequence: 5, humanMoveReady: false }).action, "A");
+assert.match(getGuidedAction({ power: true, sequence: 5, humanMoveReady: true }).label, /CONFIRM/);
+assert.equal(getGuidedAction({ power: true, sequence: 5, lcd: ["AI THINKING"] }).disabled, true);
+confirmedSession.destroy();
+
 console.log("Virtual chess simulator tests passed.");

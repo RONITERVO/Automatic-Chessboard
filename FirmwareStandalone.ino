@@ -17,7 +17,14 @@ boolean buttonPressed(byte pin) {
 
   unsigned long started = millis();
   while (readControlPin(pin) == LOW) {
-    if (millis() - started > 2000UL) return false;
+    if (millis() - started > 2000UL) {
+      if (pin == BUTTON_B_LIMIT_BLACK && (sequence == player_white || sequence == remote_human)) {
+        if (remote_mode) stopRemoteSession();
+        else returnToMainMenu();
+        while (readControlPin(pin) == LOW) processHostSerial();
+      }
+      return false;
+    }
   }
   delay(20);
   return true;
@@ -49,25 +56,6 @@ void showCalibration() {
   lcd.print(F("KEEP HANDS CLEAR"));
 }
 
-void showSetupCheck() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("SET START PIECES"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=CHECK B=MENU"));
-}
-
-void showStartingMismatch() {
-  byte occupied = countOccupied(reed_sensor_record);
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(F("START MISMATCH"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("FOUND:"));
-  printTwoDigits(occupied);
-  lcd.print(F(" A=TRY"));
-}
-
 void showMotionFault() {
   setMagnet(false);
   lcd.clear();
@@ -84,7 +72,7 @@ void showCalibrationReferenceFault() {
   lcd.print(F("CAL REQUIRED"));
 }
 
-void showAiSensorMismatch() {
+void showManualAiMove() {
   lcd.clear();
   lcd.setCursor(0, 0);
   if (move_from == NO_SQUARE) {
@@ -96,7 +84,7 @@ void showAiSensorMismatch() {
     printSquare(move_from);
   }
   lcd.setCursor(0, 1);
-  lcd.print(F("A=CHECK B=MENU"));
+  lcd.print(F("A=READY B=MENU"));
 }
 
 void prepareManualAiPlacement() {
@@ -105,10 +93,7 @@ void prepareManualAiPlacement() {
   byte to_file = lastM[2] - 'a' + 1;
   byte to_rank = lastM[3] - '0';
   move_from = NO_SQUARE;
-  // physicalSensorsMatchExpected() has just refreshed reed_sensor_record with
-  // the manually cleared capture square. Retry the same direct-then-routed
-  // policy as an ordinary standalone AI move; do not force a reachable knight
-  // or blocked straight move into a second manual phase.
+  // The player confirmed capture removal. Retry using software occupancy.
   if (carriedPathClear(from_file, from_rank, to_file, to_rank, 0, 0) ||
       carriedRouteClear(from_file, from_rank, to_file, to_rank, NO_SQUARE)) {
     beginAiTurn();
@@ -116,19 +101,18 @@ void prepareManualAiPlacement() {
   }
   setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
   setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
-  showAiSensorMismatch();
+  showManualAiMove();
 }
 
 void showPendingMove() {
-  pending_move_displayed = true;
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(F("MOVE "));
+  lcd.print(move_edit_stage == 1 ? F("FROM ") : move_edit_stage == 2 ? F("TO ") : F("MOVE "));
   printSquare(move_from);
   lcd.print('-');
   printSquare(move_to);
   lcd.setCursor(0, 1);
-  lcd.print(F("A=END TURN"));
+  lcd.print(move_edit_stage ? F("A=SET B=NEXT") : F("A=YES B=EDIT"));
 }
 
 void beginAiTurn() {
@@ -149,31 +133,11 @@ void beginHumanTurn() {
   lcd.setCursor(0, 0);
   lcd.print(F("YOUR MOVE"));
   lcd.setCursor(0, 1);
-  lcd.print(F("A=END TURN"));
+  lcd.print(F("A=DETECT B=EDIT"));
 }
 
 void finishHumanTurn() {
-  if (sensor_tracking_error) {
-    sequence = undo_required;
-    lcd.clear();
-    lcd.print(F("TOO MANY CHANGES"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("UNDO B=MENU"));
-    return;
-  }
-
-  if (!human_move_ready) {
-    lcd.clear();
-    lcd.print(F("MOVE NOT READY"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("LIFT THEN PLACE"));
-    delay(1200);
-    lcd.clear();
-    lcd.print(F("YOUR MOVE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("A=END TURN"));
-    return;
-  }
+  if (!confirmHumanMove()) return;
 
   squareToMoveChars(move_from, move_to);
   lcd.clear();
@@ -181,13 +145,11 @@ void finishHumanTurn() {
   lcd.setCursor(0, 1);
   printMove(mov);
 
-  byte ai_result = AI_HvsC();
+  byte ai_result = AI_HvsC(reed_sensor_status.rows);
+  copySensorTable(reed_sensor_status, reed_sensor_record);
   if (ai_result == AI_INVALID_MOVE) {
-    sequence = undo_required;
-    lcd.clear();
-    lcd.print(F("INVALID MOVE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("UNDO B=MENU"));
+    move_edit_stage = 1;
+    showPendingMove();
     return;
   }
   if (ai_result == AI_GAME_OVER) {

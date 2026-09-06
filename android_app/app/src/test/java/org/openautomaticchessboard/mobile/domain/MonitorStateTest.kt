@@ -10,14 +10,14 @@ class MonitorStateTest {
     @Test fun mismatchIsVisibleAndActionable() {
         val state = MonitorState(
             connected = true, lastSeenMs = 10_000,
-            firmware = FirmwareInfo("ACB2", "3.29", "NANO", setOf("BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.1.0", "NANO", emptySet()),
             sensorSquares = (MonitorState.initialOccupancy - 12) + 28,
             expectedSquares = MonitorState.initialOccupancy,
         )
         assertEquals(setOf(12), state.missingSquares())
         assertEquals(setOf(28), state.unexpectedSquares())
-        assertEquals(HealthLevel.WARN, state.health(10_100).second)
-        assertTrue(state.guidance().contains("differ"))
+        assertEquals(HealthLevel.GOOD, state.health(10_100).second)
+        assertTrue(state.guidance().contains("diagnostic only"))
     }
 
     @Test fun incompatibleFirmwareIsBadWhenOccupancyMatches() {
@@ -61,7 +61,7 @@ class MonitorStateTest {
         val state = MonitorState(
             connected = true,
             lastSeenMs = now,
-            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("TELEM", "BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.1.0", "NANO", setOf("TELEM", "BOARD")),
             telemetry = Telemetry(
                 protocol = "ACB3", sequence = 1, homed = false, remoteMode = false,
                 motionFault = false, magnetOn = false, trolleyX = 8, trolleyY = 1,
@@ -79,7 +79,7 @@ class MonitorStateTest {
         val now = 20_000L
         val base = MonitorState(
             connected = true, lastSeenMs = now,
-            firmware = FirmwareInfo("ACB3", "5.0.1", "NANO", setOf("BOARD")),
+            firmware = FirmwareInfo("ACB3", "5.1.0", "NANO", setOf("BOARD")),
             sensorSquares = MonitorState.initialOccupancy,
             sensorUpdatedMs = 1_000L,
         )
