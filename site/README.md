@@ -8,8 +8,8 @@ The model is authored in centimetres and mounted into the scene at `0.01` scale,
 
 - Orbit with drag, zoom with the wheel or pinch, and pan with the secondary pointer gesture.
 - Press the modeled `POWER`, `A`, `B`, or illuminated next-action control exactly as on the physical board.
-- During setup, select or drag each piece from the two physical side trays to its expected reed square. `AUTO/FINISH SETUP` remains available when a visitor wants to continue without placing all 32 pieces manually.
-- During play, press or drag a piece once. Legal destinations illuminate on the physical tiles. The same interaction handles the firmware's manual AI-placement fallback, including knight moves.
+- Pieces start in the ordinary chess position. The firmware trusts that position after calibration, without a reed setup check.
+- During play, move a piece, press A to detect, then press A again to confirm the LCD proposal. B edits the source and destination. Robot moves use software occupancy; sensor mismatches never interrupt the game. Manual fallback asks for human confirmation.
 - Use the physical timeline to step, play, scrub any recorded point, and return to the live Arduino. Meaningful events and motion stay frame-accurate; unchanged idle data is shared and sampled at a lower cadence for long sessions.
 - Switch among `PLAY`, `BRAIN`, `X-RAY`, and `WIRE`. Brain mode exposes live reed input, AVR program counter and loop, firmware state, Micro-Max, STEP pulses, moving head, and magnet output inside the exploded board. Wiring mode animates all source-of-truth harness stages.
 - Double-press a modeled component to open its spatial build card. Its physical controls open the source/recommendation, persist an owned mark, hide the part, or close the card; the rear build dock reports progress and restores all hidden parts.

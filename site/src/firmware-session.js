@@ -88,9 +88,10 @@ export function getGuidedAction(state) {
       action: "pieces",
     };
   }
+  if (state.lcd?.[0]?.startsWith("AI THINKING")) return { label: "AI THINKING", disabled: true, action: "wait" };
   if (state.sequence === 5) return state.humanMoveReady
-    ? { label: "PRESS A · END TURN", disabled: false, action: "A" }
-    : { label: "MOVE A WHITE PIECE", disabled: true, action: "move" };
+    ? { label: state.moveEditStage ? "PRESS A · SET SQUARE" : "PRESS A · CONFIRM MOVE", disabled: false, action: "A" }
+    : { label: "PRESS A · DETECT MOVE", disabled: false, action: "A" };
   if (state.sequence === 6) return { label: "ARDUINO MOVING", disabled: true, action: "wait" };
   const manualMove = getManualAiMove(state);
   if (manualMove) return {
@@ -197,15 +198,9 @@ export class FirmwareSession {
       this.addFrame(event.data);
     } else if (event.data.type === "move-result") {
       if (event.data.accepted && this.pendingHumanMove) {
-        this.lastMove = this.game.move({
-          from: this.pendingHumanMove.from,
-          to: this.pendingHumanMove.to,
-          promotion: this.pendingHumanMove.promotion ?? "q",
-        });
         this.lastAppliedAiMove = "";
-        this.say(`You moved ${this.lastMove.san}`);
-      }
-      this.pendingHumanMove = null;
+        this.say("Piece placed. Press A to detect, then A again to confirm the displayed move.");
+      } else this.pendingHumanMove = null;
       this.updateSnapshot();
     } else if (event.data.type === "fatal") {
       this.error = event.data.message;
@@ -215,8 +210,14 @@ export class FirmwareSession {
 
   applyAiMove(state) {
     const uci = state.aiMove;
-    if (!/^[a-h][1-8][a-h][1-8]$/.test(uci ?? "") || uci === this.lastAppliedAiMove || this.game.turn() !== "b") return;
+    if (!/^[a-h][1-8][a-h][1-8]$/.test(uci ?? "") || uci === this.lastAppliedAiMove) return;
     try {
+      if (this.game.turn() === "w") {
+        const human = state.humanMove ?? "";
+        if (!/^[a-h][1-8][a-h][1-8]$/.test(human)) return;
+        this.game.move({ from: human.slice(0, 2), to: human.slice(2, 4), promotion: "q" });
+        this.pendingHumanMove = null;
+      }
       this.lastMove = this.game.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: "q" });
       this.lastAppliedAiMove = uci;
       this.announcement = `Production Micro-Max chose ${this.lastMove.san}`;
@@ -230,7 +231,8 @@ export class FirmwareSession {
     const previousFrame = this.frames.at(-1);
     const compact = compactFrame(frame, previousFrame);
     this.liveFrame = compact;
-    if (compact.state.sequence === 4 && previousFrame?.state.sequence !== 4) {
+    if ((compact.state.sequence === 4 && previousFrame?.state.sequence !== 4) ||
+        (compact.state.sequence === 3 && [1, 2].includes(previousFrame?.state.sequence))) {
       this.game.reset();
       this.lastAppliedAiMove = "";
       this.lastMove = null;
@@ -316,7 +318,7 @@ export class FirmwareSession {
       if (this.selected === manualMove.from && square === manualMove.to) {
         this.worker.postMessage({ type: "manual-move", ...manualMove });
         this.clearSelection(false);
-        this.say(`${manualMove.from.toUpperCase()} placed on ${manualMove.to.toUpperCase()}; press A to verify the reeds`);
+        this.say(`${manualMove.from.toUpperCase()} placed on ${manualMove.to.toUpperCase()}; press A to confirm placement`);
         return true;
       }
       if (square === manualMove.from) {
@@ -328,7 +330,7 @@ export class FirmwareSession {
       this.clearSelection();
       return false;
     }
-    if (state.sequence !== 5 || state.humanMoveReady || this.game.turn() !== "w") return false;
+    if (state.sequence !== 5 || state.humanMoveReady || this.pendingHumanMove || this.game.turn() !== "w") return false;
     if (this.selected && this.legalTargets.has(square)) return this.commitHumanMove(this.selected, square);
     const piece = this.game.get(square);
     if (piece?.color === "w") {

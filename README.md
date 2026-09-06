@@ -61,7 +61,7 @@ When motors, piece magnets, or trustworthy reed readings are unavailable, run:
 The workflow compiles the Nano firmware, enforces its memory budgets, exhaustively
 tests the motionless `PLAN` / `DRAG` / `COMMIT` occupancy model, runs Windows and
 Android planner/protocol/simulator tests, builds both apps, and optionally samples
-the real Nano over USB. The COM probe is allowlisted to `HELLO 5.0.1`, `INFO`,
+the real Nano over USB. The COM probe is allowlisted to `HELLO 5.1.0`, `INFO`,
 `TELEM`, and `BOARD`; it validates BOARD framing but does not require any particular
 occupancy. It never uploads firmware or requests calibration, motor steps, magnet
 power, or a chess move.
@@ -99,22 +99,20 @@ D10, Button B/black limit uses analog-only A6 with a required external 10 kOhm
 pull-up to 5 V. The HC-08 RX input must receive 3.3 V logic through a divider.
 See `windows_app/README.md` for the complete wiring and first-start procedure.
 
-Firmware 5.0.1 keeps the standalone two-button/LCD and Micro-Max play
-experience while adding a small transactional executor for host-planned
-collision-safe rearrangements. Windows can evacuate and restore blockers, stage
-the main piece, and recursively clear trapped pieces; the Nano accepts only
-straight orthogonal drags and proves the complete sensor frame before and after
-each one. Capture removal is an explicit verified transaction step. An
-`EDGEEXIT` companion routes the captured piece through empty square centres to
-any available position beside `a1` through `a8`, moving another piece only when
-all eight exits are genuinely disconnected. En passant, promotion
-occupancy, and standard castling are included. Version 5.0.1 deliberately removes
-the legacy `PLAY`, `PING`, and `STATUS` paths: both companion and Nano must run
-the same release and complete the exact `HELLO 5.0.1` exchange before any normal
-control or motion command is accepted. `STOP` and the single-byte `!` emergency
-halt remain available before agreement for best-effort recovery.
+Firmware 5.1.0 makes software occupancy authoritative. The reed matrix is read
+only when a human requests move detection with Button A. The LCD proposes the
+move; a second A press accepts it, while B opens square correction. Starting
+pieces and robot moves are never checked against the reeds. A false reading
+cannot stop a game. Both apps use the same workflow and exact `HELLO 5.1.0`
+release handshake. See [Human-confirmed play](firmware/HUMAN_MOVE_INPUT.md) for
+controls, correction, captures, and companion behavior.
 
-For local Micro-Max play, firmware 5.0.1 automatically carries knights and
+Host-planned rearrangements still use straight orthogonal drags, explicit
+capture removal, and independently tracked software occupancy. En passant,
+promotion, and standard castling are included. Motor faults, calibration,
+magnet timeout, `STOP`, and the single-byte `!` halt retain their behavior.
+
+For local Micro-Max play, firmware 5.1.0 automatically carries knights and
 blocked direct moves through the shortest available sequence of empty,
 orthogonally adjacent square centres. It retains manual placement only when no
 empty route connects the move endpoints. If a capture itself cannot reach the
@@ -287,32 +285,20 @@ castling retain explicit horizontal/vertical segments to reach their
 necessary off-board or temporarily obstructed destinations.
 Standalone carries also preflight every traversed square; diagonal steps
 require both shared orthogonal corner squares to be empty. An unsafe direct
-carry becomes a manual, sensor-verified move before the magnet is energized.
+carry becomes a manual, human-confirmed move before the magnet is energized.
 
-If the local Micro-Max opponent selects a knight move, the LCD shows the exact
-`MANUAL` instruction instead of attempting unsafe travel. Move that piece by
-hand and press A; the Nano verifies the reed-switch occupancy before continuing
-the same game. B returns to the menu.
+Knights and blocked direct moves use shortest empty orthogonal routes. When
+no route exists, the LCD requests manual placement. Complete the displayed move
+and press A; the Nano trusts that confirmation and continues without scanning.
 
-Before an automatic standalone capture, the Nano runs a bounded breadth-first
-search through empty orthogonal square centres to any free `a1`-`a8` exit. It
-therefore takes winding routes around unrelated pieces without moving them. If
-the captured piece is disconnected from every exit, standalone play uses the
-same `MANUAL` instruction and sensor-verified continuation instead of risking a
-collision. Connected play can additionally evacuate and restore pieces when no
-empty route exists.
-Manual captures are deliberately two-stage: remove the displayed captured
-square and press A. If the remaining AI carry is queen-aligned and every
-traversed square and diagonal corner is clear, the Nano resumes that move
-automatically. Otherwise it displays the complete `MANUAL` move for the player
-to perform before pressing A again. This lets occupancy-only reed switches
-prove that the destination was actually emptied before the AI piece replaced
-it.
+Captures first search all a-file bin exits. If the captured piece is trapped,
+remove the displayed piece and press A. The Nano retries the remaining carry
+using software occupancy and requests a second manual placement only if needed.
 
 For connected play, `windows_app/routing.py` searches labeled board
 configurations. It uses only orthogonal square-to-square carried paths, so the
 physical diagonal-clearance constraint is satisfied conservatively. Turning
-paths are split at square centres into straight sensor-verified `DRAG` commands.
+paths are split at square centres into straight `DRAG` commands verified against software occupancy.
 The search minimizes disturbed pieces first, then actual magnet pickups,
 distance, and turns. Hardware-validated side-adjacent pieces do not penalize an
 otherwise empty orthogonal route. Time, node, parking, corridor,

@@ -7,8 +7,8 @@
 #ifndef AUTOMATIC_CHESSBOARD_GLOBAL_H
 #define AUTOMATIC_CHESSBOARD_GLOBAL_H
 
-// Reed occupancy is stored as one byte per rank: bit 0=file a, bit 7=file h.
-// A set bit means a magnet-equipped piece is present. Three packed snapshots
+// Software occupancy and the human-input snapshot use one byte per rank:
+// bit 0=file a, bit 7=file h. Three packed buffers
 // use 24 bytes instead of 192, leaving substantially more SRAM for Micro-Max.
 struct BoardState {
   byte rows[8];
@@ -17,15 +17,12 @@ extern BoardState reed_sensor_status;
 extern BoardState reed_sensor_record;
 extern BoardState turn_start_status;
 const byte NO_SQUARE = 255;
-extern byte lifted_squares[2];
-extern byte lifted_count;
+extern byte move_edit_stage;
 extern byte move_from;
 extern byte move_to;
 extern byte last_sensor_square;
 extern boolean last_sensor_occupied;
 extern boolean human_move_ready;
-extern boolean sensor_tracking_error;
-extern boolean pending_move_displayed;
 
 // Every successful reference pass parks at e6. Rank 6 is deliberately clear
 // of the second (black) calibration switch lane, so the next calibration can
@@ -54,7 +51,7 @@ enum {
   player_white = 5,
   player_black = 6,
   undo_required = 7,
-  ai_sensor_check = 8,
+  manual_ai_wait = 8,
   game_over_screen = 9,
   fault_screen = 10,
   reserved_service_menu = 11,

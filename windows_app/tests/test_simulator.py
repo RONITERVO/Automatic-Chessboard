@@ -34,7 +34,7 @@ class SimulatorTests(unittest.TestCase):
         self.wait_for(
             lines,
             lambda values: values.count("ERR VERSION") >= 2 and
-            "INFO ACB3 5.0.1 SIM" in values and "STOPPED" in values,
+            "INFO ACB3 5.1.0 SIM" in values and "STOPPED" in values,
         )
         self.assertNotIn("CALIBRATED e6", lines)
         transport.close()
@@ -43,7 +43,7 @@ class SimulatorTests(unittest.TestCase):
         lines = []
         transport = _SimulatorTransport(lines.append, lambda _status: None)
         transport.start()
-        transport.send("hello 5.0.1")
+        transport.send("hello 5.1.0")
         transport.send("CALIBRATE")
         self.wait_for(lines, lambda values: values.count("ERR VERSION") >= 2)
         self.assertNotIn("CALIBRATED e6", lines)
@@ -82,7 +82,7 @@ class SimulatorTests(unittest.TestCase):
             for prefix in ("INFO ACB3", "TELEM ACB3", "BOARD ")
         ))
         info = next(value for value in lines if value.startswith("INFO ACB3"))
-        self.assertEqual(info, "INFO ACB3 5.0.1 SIM")
+        self.assertEqual(info, "INFO ACB3 5.1.0 SIM")
         transport.close()
 
     def test_app_board_mode_routes_both_sides_without_reed_events(self):

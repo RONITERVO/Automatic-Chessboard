@@ -32,6 +32,15 @@ function postFrame(force = false) {
 function powerOn() {
   if (powered) return;
   runtime = new AvrFirmwareRuntime(hexText, manifest, { eeprom: retainedEeprom });
+  const pieces = {};
+  for (const [file, piece] of [..."rnbqkbnr"].entries()) {
+    const name = String.fromCharCode(97 + file);
+    pieces[name + "1"] = "w" + piece;
+    pieces[name + "2"] = "wp";
+    pieces[name + "7"] = "bp";
+    pieces[name + "8"] = "b" + piece;
+  }
+  runtime.board.setPieces(pieces);
   powered = true;
   paused = false;
   bootNumber++;

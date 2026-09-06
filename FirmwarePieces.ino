@@ -276,11 +276,13 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
     manual_move = true;
   }
   if (manual_move && capture_rank) {
-    // Verify a manual capture in two observable phases. The target must first
-    // become empty; only then may the player place the AI piece there.
+    // Ask the player to remove the capture, then retry the route after A.
+    // Confirmation updates software occupancy; no reed proof is required.
     move_from = (8 - capture_rank) * 8 + arrival_column;
     setBoardSquare(reed_sensor_status, 8 - capture_rank,
                    arrival_column, false);
+    sequence = manual_ai_wait;
+    showManualAiMove();
     return true;
   }
 
@@ -336,10 +338,15 @@ boolean computerPlayerMovement(const char *move_text, char move_flags) {
       setBoardSquare(reed_sensor_status, castling_row, 3, true);
     }
   }
+  if (manual_move) {
+    sequence = manual_ai_wait;
+    showManualAiMove();
+  }
   return true;
 }
 
 boolean blackPlayerMovement() {
   move_from = NO_SQUARE;
+  copySensorTable(reed_sensor_status, reed_sensor_record);
   return computerPlayerMovement(lastM, 'L');
 }

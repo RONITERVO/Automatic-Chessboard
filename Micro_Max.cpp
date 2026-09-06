@@ -168,8 +168,73 @@ void AI_reset() {
 }
 
 // Validate the human move, calculate the black reply, and apply it internally.
+byte AI_pieceAt(byte square) {
+  return b[(square & 7) + (square >> 3) * 16];
+}
+
+// Companion games use their full rules engine. Keep the existing piece table
+// current for LCD suggestions without allocating a second board on the Nano.
+void AI_applyRemoteMove(const char *move, char promotion) {
+  byte from = (8 - (move[1] - '0')) * 16 + move[0] - 'a';
+  byte to = (8 - (move[3] - '0')) * 16 + move[2] - 'a';
+  byte piece = b[from], type = piece & 7;
+  if (type < 3 && (from & 7) != (to & 7) && !b[to])
+    b[(from & 0x70) | (to & 7)] = 0;
+  if (type == 4 && abs((int)to - from) == 2) {
+    byte rook = (from & 0x70) | (to > from ? 7 : 0);
+    b[(from + to) / 2] = b[rook] | 32;
+    b[rook] = 0;
+  }
+  if (type < 3 && (to < 8 || to >= 112)) {
+    byte promoted = promotion == 'n' ? 3 : promotion == 'b' ? 5 : promotion == 'r' ? 6 : 7;
+    piece = (piece & 24) | promoted;
+  }
+  b[from] = 0;
+  b[to] = piece | 32;
+}
+
+void AI_copyOccupancy(byte *rows) {
+  for (byte row = 0; row < 8; row++) {
+    rows[row] = 0;
+    for (byte file = 0; file < 8; file++)
+      if (b[row * 16 + file]) rows[row] |= 1 << file;
+  }
+}
+
+// A compact suggestion filter, not the final legality check. Micro-Max (or
+// the companion rules engine) still validates the explicitly confirmed move.
+boolean AI_movePossible(byte from, byte to, boolean white) {
+  byte piece = AI_pieceAt(from), target = AI_pieceAt(to);
+  byte side = white ? 8 : 16;
+  if (from == to || !(piece & side) || (target & side)) return false;
+  signed char dx = (to & 7) - (from & 7);
+  signed char dy = (to >> 3) - (from >> 3);
+  byte ax = abs(dx), ay = abs(dy), type = piece & 7;
+  if (type < 3) {
+    signed char forward = white ? -1 : 1;
+    if (ax == 1 && dy == forward)
+      return target || ((from >> 3) == (white ? 3 : 4) &&
+          (AI_pieceAt((from & 56) | (to & 7)) & 7) == (white ? 2 : 1));
+    if (dx || target) return false;
+    if (dy == forward) return true;
+    return dy == 2 * forward && (from >> 3) == (white ? 6 : 1) &&
+           !AI_pieceAt(from + 8 * forward);
+  }
+  if (type == 3) return (ax == 1 && ay == 2) || (ax == 2 && ay == 1);
+  if (type == 4 && ax <= 1 && ay <= 1) return true;
+  if (type == 4) {
+    if ((piece & 32) || (from & 7) != 4 || dy || ax != 2) return false;
+  }
+  else if (type == 5 ? ax != ay : type == 6 ? (dx && dy) : (dx && dy && ax != ay))
+    return false;
+  int step = (dy == 0 ? 0 : dy > 0 ? 8 : -8) + (dx == 0 ? 0 : dx > 0 ? 1 : -1);
+  for (int square = from + step; square != to; square += step)
+    if (AI_pieceAt(square)) return false;
+  return true;
+}
+
 // The caller moves the physical black piece only when AI_MOVE_READY is returned.
-byte AI_HvsC() {
+byte AI_HvsC(byte *human_rows) {
   for (byte i = 0; i < 4; i++) c[i] = mov[i];
   c[4] = 0;
 
@@ -180,6 +245,7 @@ byte AI_HvsC() {
   r = D(-I, I, Q, O, 1, 3);
   if (!(r > -I + 1)) return AI_GAME_OVER;
   if (k == 0x10) return AI_INVALID_MOVE;
+  AI_copyOccupancy(human_rows);
 
   K = I;
   N = 0;

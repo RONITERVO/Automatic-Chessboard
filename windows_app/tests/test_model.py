@@ -11,7 +11,7 @@ from model import (
     expected_occupancy,
     piece_move_matches,
 )
-from protocol import Telemetry
+from protocol import FirmwareInfo, SOFTWARE_VERSION, Telemetry
 
 
 class MonitorModelTests(unittest.TestCase):
@@ -29,11 +29,12 @@ class MonitorModelTests(unittest.TestCase):
         sensors = frozenset((expected - {removed}) | {extra})
         model = MonitorModel(connected=True, expected_squares=expected,
                              sensor_squares=sensors)
+        model.firmware = FirmwareInfo("ACB3", SOFTWARE_VERSION, "NANO", frozenset())
         model.mark_seen()
         self.assertEqual(model.missing_squares(), frozenset({removed}))
         self.assertEqual(model.unexpected_squares(), frozenset({extra}))
-        self.assertEqual(model.overall_health(), ("Physical/logical position differs", "warn"))
-        self.assertIn("differs from the logical game", model.guidance())
+        self.assertEqual(model.overall_health(), ("Reed diagnostics only", "good"))
+        self.assertIn("diagnostic only", model.guidance())
 
     def test_fault_has_priority(self):
         model = MonitorModel(connected=True)

@@ -41,23 +41,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(lines.feed(b"\nPING\n"), ["PING"])
 
     def test_event_fields(self):
-        event = parse_event("HELLO 5.0.1")
+        event = parse_event("HELLO 5.1.0")
         self.assertEqual(event.kind, "HELLO")
-        self.assertEqual(event.args, ("5.0.1",))
+        self.assertEqual(event.args, ("5.1.0",))
 
     def test_special_move_commands(self):
         self.assertEqual(start_game_command(True), "START W")
         self.assertEqual(start_game_command(False, app_board=True), "START B APP")
-        self.assertEqual(hello_command(), "HELLO 5.0.1")
+        self.assertEqual(hello_command(), "HELLO 5.1.0")
 
     def test_versioned_info_and_telemetry(self):
-        info = parse_info(parse_event("INFO ACB3 5.0.1 NANO"))
-        self.assertEqual(info.firmware, "5.0.1")
+        info = parse_info(parse_event("INFO ACB3 5.1.0 NANO"))
+        self.assertEqual(info.firmware, "5.1.0")
         self.assertTrue(info.compatible)
         self.assertIn("ESTOP", info.capabilities)
-        mks = parse_info(parse_event("INFO ACB3 5.0.1 MKS_GEN_L_V1"))
+        mks = parse_info(parse_event("INFO ACB3 5.1.0 MKS_GEN_L_V1"))
         self.assertEqual(mks.protocol, "ACB3")
-        self.assertEqual(mks.firmware, "5.0.1")
+        self.assertEqual(mks.firmware, "5.1.0")
         self.assertEqual(mks.hardware, "MKS_GEN_L_V1")
         self.assertTrue(mks.compatible)
         legacy = parse_info(parse_event("INFO ACB2 4.8.0 NANO"))
@@ -65,7 +65,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(legacy.firmware, "4.8.0")
         self.assertFalse(legacy.compatible)
         with self.assertRaises(ValueError):
-            parse_info(parse_event("INFO ACB3 5.0.1 UNKNOWN"))
+            parse_info(parse_event("INFO ACB3 5.1.0 UNKNOWN"))
         telemetry = parse_telemetry(
             parse_event("TELEM ACB3 17 1 1 0 0 5 6 1 1 1023 847 65")
         )
