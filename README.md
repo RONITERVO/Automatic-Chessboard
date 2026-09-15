@@ -19,7 +19,7 @@ The [immersive 3D simulator](https://ronitervo.github.io/Automatic-Chessboard/) 
 
 ## Demo
 
-<!-- The GitHub-hosted prototype video attachment is added in the follow-up commit. -->
+https://github.com/user-attachments/assets/5234de29-f910-4aed-a476-050bdca1a51d
 
 ## Hardware assumptions
 
