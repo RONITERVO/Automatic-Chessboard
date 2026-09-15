@@ -207,7 +207,7 @@ class GameController(
                 "HUMAN" -> status = if (appControlled) {
                     appMoveReady = sideToMoveIsHuman()
                     "Your move. Tap your source square, then the destination."
-                } else "Your move. Press Button A on the board when complete."
+                } else "Move your piece, press A to detect, then A again to confirm. B edits the proposal."
             }
             "MOVE" -> if (!appControlled) event.args.firstOrNull()?.let(::acceptHumanMove)
             "MOVING" -> status = "Carriage is moving. Keep hands clear."
@@ -295,7 +295,7 @@ class GameController(
         val matches = board.legalMoves().filter { it.toString().startsWith(reported.lowercase()) }
         if (matches.isEmpty()) {
             channel.sendCommand("REJECT")
-            status = "Illegal move $reported; restore the pieces physically."
+            status = "Illegal move $reported; press B on the board to correct the proposed move."
             publish()
             return
         }
@@ -311,13 +311,13 @@ class GameController(
     private fun commitHumanMove(move: Move) {
         if (!board.doMove(move, true)) {
             channel.sendCommand("REJECT")
-            status = "Move ${move} became invalid; restore the pieces."
+            status = "Move ${move} became invalid; correct the proposed move on the board."
             publish()
             return
         }
         moveList.add(move)
-        channel.sendCommand("ACCEPT")
-        if (isGameOver()) finishGame() else status = "Move accepted; waiting for computer turn."
+        channel.sendCommand(if (move.promotion != Piece.NONE) "ACCEPT ${move.toString().last()}" else "ACCEPT")
+        if (isGameOver()) finishGame() else startEngineThink()
         publish()
     }
 
@@ -375,7 +375,7 @@ class GameController(
         status = if (appControlled) {
             "Checking a fresh virtual board snapshot for collision-safe routing…"
         } else {
-            "Reading all 64 sensors for collision-safe routing…"
+            "Checking the software position for routing…"
         }
         channel.sendCommand("BOARD")
             .onSuccess { armRouteTimeout(ROUTE_CONTROL_TIMEOUT_MS, "BOARD snapshot") }

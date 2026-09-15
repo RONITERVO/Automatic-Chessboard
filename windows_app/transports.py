@@ -386,8 +386,6 @@ class SimulatorTransport:
                 self._trolley_x, self._trolley_y = 5, 6
                 self._sequence = 15 if self._app_board else 13
                 self._emit(f"OK START {'W' if self._human_white else 'B'}")
-                if not self._app_board:
-                    self._emit("SETUP PRESS A", 0.15)
                 self._emit(f"SESSION {'W' if self._human_white else 'B'}", 0.25 if self._app_board else 0.5)
                 self._sequence = 15 if self._app_board else (14 if self._human_white else 15)
                 self._emit("TURN HUMAN" if self._human_white else "TURN COMPUTER", 0.4 if self._app_board else 0.65)
@@ -403,7 +401,7 @@ class SimulatorTransport:
                 self._emit(f"MOVE {move.uci()}")
             except Exception as error:
                 self._emit(f"ERR SIMMOVE {error}")
-        elif upper == "ACCEPT" and self._pending_human:
+        elif (upper == "ACCEPT" or upper.startswith("ACCEPT ")) and self._pending_human:
             self._board.push(self._pending_human)
             self._pending_human = None
             self._sequence = 15
@@ -412,7 +410,7 @@ class SimulatorTransport:
         elif upper == "REJECT":
             self._pending_human = None
             self._physical_squares = set(self._board.piece_map())
-            self._sequence = 16
+            self._sequence = 14
             self._emit("OK REJECT")
         elif upper.startswith("PLAN "):
             try:

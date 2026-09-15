@@ -1,7 +1,7 @@
-# Firmware protocol 5.0.1
+# Firmware protocol 5.1.0
 
 The Nano uses newline-terminated printable ASCII at 9600 baud over USB and the
-HC-08 transparent BLE link. Version 5.0.1 is one coordinated firmware/companion
+HC-08 transparent BLE link. Version 5.1.0 is one coordinated firmware/companion
 contract; it does not negotiate old capability sets or fall back to old motion
 commands.
 
@@ -11,10 +11,10 @@ Each transport must establish its own match before sending a control or motion
 command:
 
 ```text
-> HELLO 5.0.1
-< HELLO 5.0.1
+> HELLO 5.1.0
+< HELLO 5.1.0
 > INFO
-< INFO ACB3 5.0.1 NANO
+< INFO ACB3 5.1.0 NANO
 ```
 
 The MKS build reports `MKS_GEN_L_V1`; simulators report `SIM`. A different `HELLO`
@@ -32,7 +32,8 @@ are not part of this protocol.
   `MKS_GEN_L_V1`, or `SIM`
 - `TELEM` → the live controller frame below.
 - `BOARD` → 16 hexadecimal digits, two per physical rank from rank 8 to rank 1;
-  each byte uses bit 0 for file a through bit 7 for file h.
+  each byte uses bit 0 for file a through bit 7 for file h. During games this is
+  software occupancy; idle diagnostics report raw reeds.
 - `GEOMETRY` → `GEOMETRY ACB3 file_pitch rank_pitch black_park white_park microsteps`
 - `ALIGN STATUS` → `ALIGN IDLE` or the active measurement report.
 - `BTTEST` and `SWTEST` are explicit diagnostics. `SWTEST` requires local user
@@ -44,8 +45,7 @@ Telemetry is:
 TELEM ACB3 sequence homed remote fault magnet x y a_released b_released b_raw free_ram uptime_s
 ```
 
-`remote` is `0` for standalone/idle, `1` for reed-authoritative companion play,
-and `2` for app-authoritative play. A reported trolley square is a calculated
+`remote` is `0` for standalone/idle and `1` for either companion input mode. A reported trolley square is a calculated
 coordinate, not encoder feedback. `free_ram` is the minimum free SRAM observed
 since boot, so temporary route-search stack peaks remain visible afterward.
 
@@ -54,14 +54,17 @@ multiple outstanding polls otherwise become stale and ambiguous.
 
 ## Session and direct controls
 
-- `START W` / `START B` begins reed-authoritative companion play.
+- `START W` / `START B` begins human-confirmed companion play from the standard position.
 - `START W APP` / `START B APP` begins app-authoritative play from the standard
   starting position. Reed input is ignored for that entire session.
 - `GAMEOVER ...` terminates the remote session and returns firmware to idle
   while leaving the result visible. The next `START` can therefore begin a new
   calibrated game directly; active states still reject `START` with `ERR BUSY`.
-- `ACCEPT`, `REJECT`, and `GAMEOVER ...` advance or terminate the remote game
-  state.
+- `MOVE <from><to>` is emitted after two physical A presses: detect, then confirm.
+- `ACCEPT` commits that human move to the software position. For promotion,
+  use `ACCEPT q`, `ACCEPT r`, `ACCEPT b`, or `ACCEPT n`.
+- `REJECT` returns to the square editor without changing the accepted position.
+- `GAMEOVER ...` terminates the game.
 - `STOP` ends the remote session on a best-effort basis.
 - `CALIBRATE` runs the production homing/reference routine and reports
   `CALIBRATED e6` only after success.
@@ -98,12 +101,13 @@ While the plan owns the board:
 
 - `DRAG e2e4` performs exactly one straight orthogonal square-centre run and
   returns `MOVED PIECE e2e4` only after the authoritative occupancy transition
-  is proven.
+  is recorded.
 - `REMOVE` removes the tracked captured piece to the full-height left bin and
-  returns `REMOVED` only after proof. The capture may already have been routed
+  returns `REMOVED` after successful motion and its software update. The capture may already have been routed
   by verified drags to an a-file exit; the Nano can also find a shortest empty
   orthogonal route itself.
-- `BOARD` proves the frame between every physical action.
+- `BOARD` reports the command-derived frame between actions; it never scans
+  reeds during a game. The host and Nano still check route invariants.
 - `COMMIT` accepts only the exact derived final occupancy and returns `DONE
   <from><to>`. If no physical state changed, it returns `PLAN CANCELLED`.
 

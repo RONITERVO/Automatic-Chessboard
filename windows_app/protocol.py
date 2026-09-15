@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-SOFTWARE_VERSION = "5.0.1"
+SOFTWARE_VERSION = "5.1.0"
 PROTOCOL_VERSION = "ACB3"
 CURRENT_CAPABILITIES = frozenset({
     "BOARD", "TELEM", "REMOTE", "ESTOP", "BTTEST", "SWTEST", "CALIBRATE",

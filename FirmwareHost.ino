@@ -74,7 +74,8 @@ void sendSensorSnapshot() {
   // In app-authoritative play the physical switches are deliberately ignored.
   // Mirror the Nano's independently tracked virtual occupancy so both ends can
   // still prove every route command against the same board state.
-  if (remote_mode == 2) copySensorTable(reed_sensor_status, reed_sensor_record);
+  if (remote_mode || sequence == player_white || sequence == player_black || sequence == manual_ai_wait)
+    copySensorTable(reed_sensor_status, reed_sensor_record);
   else scanSensors();
   Serial.print(F("BOARD "));
   const char hex[] = "0123456789ABCDEF";
@@ -216,12 +217,10 @@ boolean sensorSquareOccupied(byte file, byte rank) {
   return boardSquareOccupied(reed_sensor_record, 8 - rank, file - 1);
 }
 
-boolean remoteBoardMatchesExpected() {
-  if (remote_mode == 2) {
-    copySensorTable(reed_sensor_status, reed_sensor_record);
-    return true;
-  }
-  return physicalSensorsMatchExpected();
+// Route verification compares command-derived occupancy. Reed readings are
+// confined to human proposals and explicit idle diagnostics.
+void loadSoftwareOccupancy() {
+  copySensorTable(reed_sensor_status, reed_sensor_record);
 }
 
 void hostMotionFault(const __FlashStringHelper *message) {
@@ -263,11 +262,11 @@ void sendHostAlignment(const __FlashStringHelper *status, boolean details) {
     Serial.print(' ');
     printHostSquare(trolley_coordinate_X, trolley_coordinate_Y);
     Serial.print(' ');
-    Serial.print(lifted_count ? 'M' : 'H');
+    Serial.print(move_edit_stage ? 'M' : 'H');
     Serial.print(' ');
-    Serial.print((signed char)lifted_squares[0]);
+    Serial.print((signed char)alignment_offsets[0]);
     Serial.print(' ');
-    Serial.print((signed char)lifted_squares[1]);
+    Serial.print((signed char)alignment_offsets[1]);
   }
   Serial.println();
 }
@@ -289,9 +288,9 @@ void runHostAlignmentBegin(const char *square, boolean magnetic_marker) {
     return;
   }
 
-  lifted_squares[0] = 0;
-  lifted_squares[1] = 0;
-  lifted_count = magnetic_marker ? 1 : 0;
+  alignment_offsets[0] = 0;
+  alignment_offsets[1] = 0;
+  move_edit_stage = magnetic_marker ? 1 : 0;
   // Alignment intentionally invalidates the persisted square before any
   // offset is possible. A disconnect or power loss can therefore never make
   // an offset head look calibrated on the next boot.
@@ -313,13 +312,13 @@ void runHostAlignmentNudge(char axis, char sign) {
   }
   byte index = axis == 'X' ? 0 : 1;
   int delta = sign == '+' ? 1 : -1;
-  int proposed = (signed char)lifted_squares[index] + delta;
+  int proposed = (signed char)alignment_offsets[index] + delta;
   if (proposed < -60 || proposed > 60) {
     sendHostError(F("LIMIT"));
     return;
   }
 
-  setMagnet(lifted_count != 0);
+  setMagnet(move_edit_stage != 0);
   boolean moved = pulseCoreXYLine(index ? 0 : delta,
                                   index ? delta : 0, SPEED_FAST, true);
   setMagnet(false);
@@ -327,7 +326,7 @@ void runHostAlignmentNudge(char axis, char sign) {
     hostMotionFault(F("MOTION"));
     return;
   }
-  lifted_squares[index] = (byte)(signed char)proposed;
+  alignment_offsets[index] = (byte)(signed char)proposed;
   sendHostAlignment(F("ACTIVE"), true);
 }
 
@@ -337,8 +336,8 @@ void runHostAlignmentEnd() {
     return;
   }
   sequence = host_manual_motion;
-  boolean moved = pulseCoreXYLine(-(signed char)lifted_squares[0],
-                                  -(signed char)lifted_squares[1],
+  boolean moved = pulseCoreXYLine(-(signed char)alignment_offsets[0],
+                                  -(signed char)alignment_offsets[1],
                                   SPEED_FAST, true);
   setMagnet(false);
   if (!moved || motion_fault) {
@@ -447,12 +446,8 @@ void runHostPieceMove(const char *move, boolean routed) {
     return;
   }
 
-  if (remote_mode == 2) copySensorTable(reed_sensor_status, reed_sensor_record);
+  if (remote_mode) copySensorTable(reed_sensor_status, reed_sensor_record);
   else scanSensors();
-  if (routed && memcmp(reed_sensor_record.rows, reed_sensor_status.rows, 8)) {
-    sendHostError(F("PLAN STATE"));
-    return;
-  }
   if (!sensorSquareOccupied(from_file, from_rank)) {
     sendHostError(F("SOURCE EMPTY"));
     return;
@@ -496,10 +491,7 @@ void runHostPieceMove(const char *move, boolean routed) {
     }
     setBoardSquare(reed_sensor_status, 8 - from_rank, from_file - 1, false);
     setBoardSquare(reed_sensor_status, 8 - to_rank, to_file - 1, true);
-    if (!remoteBoardMatchesExpected()) {
-      hostMotionFault(F("SENSORS"));
-      return;
-    }
+    loadSoftwareOccupancy();
     byte source = (from_rank - 1) * 8 + from_file - 1;
     if (move_to == source)
       move_to = (to_rank - 1) * 8 + to_file - 1;
@@ -598,7 +590,7 @@ void beginRemoteRoutePlan(char *arguments) {
 
   // Fixed seven-byte payload: <from><to><mode><capture-square-or-->. Mode is
   // '-', a promotion piece q/r/b/n, or k/c for standard king/queen-side
-  // castling. The Nano independently rejects a stale physical sensor frame.
+  // castling. The Nano independently checks command-derived occupancy.
   char mode = arguments[4];
   char *capture_text = arguments + 5;
   boolean no_capture = capture_text[0] == '-' && capture_text[1] == '-';
@@ -615,10 +607,7 @@ void beginRemoteRoutePlan(char *arguments) {
     sendHostError(F("BAD PLAN"));
     return;
   }
-  if (!remoteBoardMatchesExpected()) {
-    sendHostError(F("PLAN STATE"));
-    return;
-  }
+  loadSoftwareOccupancy();
 
   copySensorTable(reed_sensor_status, turn_start_status);
   resetMoveTracker();
@@ -647,12 +636,14 @@ void __attribute__((noinline)) runRemoteCaptureRemoval() {
   if (sequence == remote_route_plan && move_to != NO_SQUARE) {
     byte file = (move_to & 7) + 1;
     byte rank = (move_to >> 3) + 1;
-    if (remoteBoardMatchesExpected() && captureRouteClear(file, rank)) {
+    loadSoftwareOccupancy();
+    if (captureRouteClear(file, rank)) {
       setBoardSquare(reed_sensor_status, 8 - rank, file - 1, false);
-      if (!removeCapturedPiece(file, rank) || !remoteBoardMatchesExpected()) {
-        hostMotionFault(F("SENSORS"));
+      if (!removeCapturedPiece(file, rank)) {
+        hostMotionFault(F("MOTION"));
         return;
       }
+      loadSoftwareOccupancy();
       move_to = NO_SQUARE;
       Serial.println(F("REMOVED"));
       return;
@@ -666,10 +657,7 @@ void commitRemoteRoutePlan() {
     sendHostError(F("NO PLAN"));
     return;
   }
-  if (!remoteBoardMatchesExpected()) {
-    sendHostError(F("FINAL SENSORS"));
-    return;
-  }
+  loadSoftwareOccupancy();
   if (recordMatchesTurnStart()) {
     syncSensorState();
     sequence = remote_wait_host;
@@ -680,6 +668,7 @@ void commitRemoteRoutePlan() {
     sendHostError(F("PLAN INCOMPLETE"));
     return;
   }
+  AI_applyRemoteMove(lastM, remote_promotion_piece);
   syncSensorState();
   finishRemoteComputerTurn();
 }
@@ -785,12 +774,17 @@ void processHostCommand(char *line, HostInputBuffer &buffer) {
     startRemoteSession(line[6] == 'W', line[7] != 0);
     return;
   }
-  if (strcmp(line, "ACCEPT") == 0) {
+  if (strcmp(line, "ACCEPT") == 0 ||
+      (strncmp(line, "ACCEPT ", 7) == 0 && line[7] && !line[8] &&
+       (line[7] == 'q' || line[7] == 'r' || line[7] == 'b' || line[7] == 'n'))) {
     if (!remote_mode || sequence != remote_wait_host ||
         !remote_human_move_pending) {
       sendHostError(F("NO MOVE"));
       return;
     }
+    AI_applyRemoteMove(mov, line[6] ? line[7] : 'q');
+    AI_copyOccupancy(reed_sensor_status.rows);
+    copySensorTable(reed_sensor_status, reed_sensor_record);
     remote_human_move_pending = false;
     lcd.clear();
     lcd.print(F("HOST THINKING"));
@@ -806,11 +800,9 @@ void processHostCommand(char *line, HostInputBuffer &buffer) {
       return;
     }
     remote_human_move_pending = false;
-    sequence = remote_undo_required;
-    lcd.clear();
-    lcd.print(F("INVALID MOVE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("UNDO B=STOP"));
+    sequence = remote_human;
+    move_edit_stage = 1;
+    showPendingMove();
     Serial.println(F("OK REJECT"));
     return;
   }
@@ -888,21 +880,8 @@ void processHostSerial() {
   processHostStream(bluetoothInput, bluetooth_host_input);
 }
 
-void showRemoteSetupCheck() {
-  lcd.clear();
-  lcd.print(F("SET START PIECES"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=READY B=STOP"));
-  Serial.println(F("SETUP PRESS A"));
-}
-
 void beginRemoteSession() {
-  if (remote_mode == 2) {
-    for (byte row = 0; row < 8; row++)
-      reed_sensor_status.rows[row] = (row < 2 || row > 5) ? 0xFF : 0;
-    copySensorTable(reed_sensor_status, reed_sensor_record);
-    copySensorTable(reed_sensor_status, turn_start_status);
-  }
+  seedStartingPosition();
   Serial.print(F("SESSION "));
   Serial.println(remote_human_white ? 'W' : 'B');
   if (remote_mode == 2) {
@@ -926,50 +905,14 @@ void waitForRemoteApp() {
 }
 
 void beginRemoteHumanTurn() {
-  copySensorTable(reed_sensor_status, turn_start_status);
-  resetMoveTracker();
+  beginHumanTurn();
   remote_human_move_pending = false;
   sequence = remote_human;
-  lcd.clear();
-  lcd.print(F("YOUR MOVE"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=SEND B=STOP"));
   Serial.println(F("TURN HUMAN"));
 }
 
-void showRemotePendingMove() {
-  pending_move_displayed = true;
-  lcd.clear();
-  lcd.print(F("SEND "));
-  printSquare(move_from);
-  lcd.print('-');
-  printSquare(move_to);
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=SEND B=STOP"));
-}
-
 void finishRemoteHumanTurn() {
-  if (sensor_tracking_error) {
-    sequence = remote_undo_required;
-    lcd.clear();
-    lcd.print(F("TOO MANY CHANGES"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("UNDO B=STOP"));
-    Serial.println(F("ERR TRACKING"));
-    return;
-  }
-  if (!human_move_ready) {
-    lcd.clear();
-    lcd.print(F("MOVE NOT READY"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("LIFT THEN PLACE"));
-    delay(1000);
-    lcd.clear();
-    lcd.print(F("YOUR MOVE"));
-    lcd.setCursor(0, 1);
-    lcd.print(F("A=SEND B=STOP"));
-    return;
-  }
+  if (!confirmHumanMove()) return;
 
   squareToMoveChars(move_from, move_to);
   remote_human_move_pending = true;
@@ -981,13 +924,6 @@ void finishRemoteHumanTurn() {
   lcd.print(F("B=STOP"));
   Serial.print(F("MOVE "));
   Serial.println(mov);
-}
-
-void showRemoteSensorMismatch() {
-  lcd.clear();
-  lcd.print(F("CHECK MOVED PIECE"));
-  lcd.setCursor(0, 1);
-  lcd.print(F("A=RETRY B=STOP"));
 }
 
 void finishRemoteComputerTurn() {

@@ -38,16 +38,14 @@ function writeOccupied(runtime, name, squares) {
 function submitHumanMove(runtime, chess, move) {
   const pieces = piecesFrom(chess);
   runtime.board.setPieces(pieces);
-  for (const name of ["reed_sensor_status", "reed_sensor_record"]) {
+  for (const name of ["reed_sensor_status", "reed_sensor_record", "turn_start_status"]) {
     writeOccupied(runtime, name, Object.keys(pieces));
   }
   const aiMoveSymbol = manifest.symbols.lastM;
   runtime.cpu.data.fill(0, aiMoveSymbol.address, aiMoveSymbol.address + aiMoveSymbol.size);
   writeByte(runtime, "sequence", 5);
   writeByte(runtime, "human_move_ready", 0);
-  writeByte(runtime, "sensor_tracking_error", 0);
-  writeByte(runtime, "pending_move_displayed", 0);
-  writeByte(runtime, "lifted_count", 0);
+  writeByte(runtime, "move_edit_stage", 0);
 
   runtime.runCycles(manifest.clockHz / 50);
   runtime.board.setPiece(move.from, null);
@@ -58,6 +56,9 @@ function submitHumanMove(runtime, chess, move) {
   runtime.runCycles(manifest.clockHz / 50);
   runtime.board.setPiece(move.to, `${move.color}${move.promotion ?? move.piece}`);
   runtime.runCycles(manifest.clockHz / 50);
+  assert.equal(runtime.state().humanMoveReady, false, "movement alone must not trigger a scan");
+  runtime.pressButton("A");
+  runtime.runCycles(manifest.clockHz / 4);
   assert.equal(runtime.state().humanMoveReady, true, `firmware did not track ${move.from}${move.to}`);
 
   runtime.pressButton("A");

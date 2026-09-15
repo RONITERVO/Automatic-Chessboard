@@ -28,12 +28,12 @@ const [hexText, manifest] = await Promise.all([
 const runtime = new AvrFirmwareRuntime(hexText, manifest);
 runtime.runCycles(manifest.clockHz * 4);
 const booted = runtime.state();
-assert.equal(booted.firmwareVersion, "5.0.1");
+assert.equal(booted.firmwareVersion, "5.1.0");
 assert.equal(booted.sequence, 1, "the production binary reaches its main menu");
 assert.match(booted.lcd[0], /A:GAME B:CAL/);
 assert.equal(booted.bluetoothConnected, false);
-assert.equal(booted.sensedOccupied.length, 0, "an empty simulated board leaves every reed input open");
-assert.ok(booted.serialLines.includes("READY 5.0.1"));
+assert.equal(booted.expectedOccupied.length, 32, "startup trusts the standard position even with no physical pieces");
+assert.ok(booted.serialLines.includes("READY 5.1.0"));
 
 runtime.placePiece("e2", "wp");
 assert.equal(runtime.state().pieces.e2, "wp", "individual setup pieces close their real simulated reed channel");

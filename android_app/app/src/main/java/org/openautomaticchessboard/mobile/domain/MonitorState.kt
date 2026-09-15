@@ -33,8 +33,6 @@ data class MonitorState(
             telemetry?.motionFault == true -> "Motion fault" to HealthLevel.BAD
             telemetry?.let { !it.buttonAReleased || !it.buttonBReleased } == true -> "Limit/button active" to HealthLevel.WARN
             motionExpected -> "Motion in progress" to HealthLevel.WARN
-            sensorSquares != null && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
-                "Physical/logical position differs" to HealthLevel.WARN
             firmware == null -> "Firmware identity unavailable" to HealthLevel.WARN
             !firmware.compatible -> "App/firmware version mismatch" to HealthLevel.BAD
             "TELEM" in firmware.capabilities && telemetry == null -> "Waiting for telemetry" to HealthLevel.WARN
@@ -43,6 +41,9 @@ data class MonitorState(
                 "Sensor data stale" to HealthLevel.WARN
             lastError.isNotBlank() -> "Board warning: $lastError" to HealthLevel.WARN
             age > 5 -> "Updates delayed" to HealthLevel.WARN
+            sensorSquares != null && telemetry?.remoteMode != true &&
+                telemetry?.sequence !in setOf(5, 6, 8) && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
+                "Reed diagnostics only" to HealthLevel.GOOD
             else -> "Ready" to HealthLevel.GOOD
         }
     }
@@ -52,8 +53,9 @@ data class MonitorState(
         telemetry?.motionFault == true -> "Cut physical motor power and inspect the mechanism locally."
         telemetry?.let { !it.buttonAReleased || !it.buttonBReleased } == true ->
             "A limit or button is active. Inspect it before calibration or movement."
-        sensorSquares != null && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
-            "Physical sensors differ from the game. Correct or synchronize the position before play."
+        sensorSquares != null && telemetry?.remoteMode != true &&
+                telemetry?.sequence !in setOf(5, 6, 8) && (missingSquares().isNotEmpty() || unexpectedSquares().isNotEmpty()) ->
+            "Raw reeds are diagnostic only. Games trust the standard position; confirm each detected human move."
         telemetry == null -> "Connect and refresh safely to read the board state."
         else -> sequenceGuidance[telemetry.sequence]
             ?: "Follow the board LCD and keep the mechanism in view before motion."
@@ -64,7 +66,7 @@ data class MonitorState(
         val sequenceNames = mapOf(
             0 to "Starting", 1 to "Main menu / idle", 2 to "Position recovery", 3 to "Calibrating",
             4 to "Checking start position", 5 to "Human playing White", 6 to "Human playing Black",
-            7 to "Waiting for undo", 8 to "Checking computer move", 9 to "Game over",
+            7 to "Waiting for undo", 8 to "Manual computer move", 9 to "Game over",
             10 to "Motion fault", 11 to "Reserved", 12 to "Board alignment",
             13 to "Remote setup check", 14 to "Remote human turn", 15 to "Waiting for computer move",
             16 to "Remote undo required", 17 to "Checking remote move",
@@ -80,12 +82,12 @@ data class MonitorState(
             10 to "Motion stopped. Inspect locally before fault recovery.",
             12 to "The app is measuring board alignment. Keep hands clear and follow its prompts.",
             13 to "Arrange starting pieces and press physical Button A.",
-            14 to "Make your move, then press physical Button A.",
+            14 to "Move your piece, press A to detect, then A again to confirm. B edits the proposal.",
             15 to "The phone may send the next legal computer move.",
             16 to "Invalid move: restore the physical position.",
             18 to "Replace the promoted pawn, then press physical Button A.",
             19 to "The app requested direct movement. Keep hands clear.",
-            20 to "The phone is executing a sensor-verified route. Keep hands clear.",
+            20 to "The phone is executing a software-tracked route. Keep hands clear.",
         )
     }
 }

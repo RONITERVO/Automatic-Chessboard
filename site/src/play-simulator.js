@@ -324,8 +324,8 @@ export function createPlaySimulator({ panel, board, status, history, announce })
       return count < 32 ? [`PLACE START PIECES · ${count}/32`, count > 0, "pieces"] : ["PRESS A · CHECK 32", false, "A"];
     }
     if (state.sequence === 5) return state.humanMoveReady
-      ? ["PRESS A · END TURN", false, "A"]
-      : ["MOVE A WHITE PIECE", true, "move"];
+      ? [state.moveEditStage ? "PRESS A · SET SQUARE" : "PRESS A · CONFIRM MOVE", false, "A"]
+      : ["PRESS A · DETECT MOVE", false, "A"];
     if (state.sequence === 6) return ["ARDUINO MOVING", true, "wait"];
     if (state.sequence === 8 && /^[a-h][1-8][a-h][1-8]$/.test(state.aiMove)) {
       const from = state.aiMove.slice(0, 2);

@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-SOFTWARE_VERSION = "5.0.1"
+SOFTWARE_VERSION = "5.1.0"
 HELLO_COMMAND = f"HELLO {SOFTWARE_VERSION}"
 SAFE_COMMANDS = frozenset({HELLO_COMMAND, "INFO", "TELEM", "BOARD"})
 INFO_PATTERN = re.compile(r"^INFO ACB3 (\S+) (NANO|MKS_GEN_L_V1)$")
@@ -143,7 +143,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="Nano USB serial port, for example COM7")
     parser.add_argument("--samples", type=int, default=20)
-    parser.add_argument("--settle-seconds", type=float, default=1.0)
+    parser.add_argument("--settle-seconds", type=float, default=6.0)
     parser.add_argument(
         "--allow-reset",
         action="store_true",

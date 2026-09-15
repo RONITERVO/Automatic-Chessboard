@@ -46,32 +46,12 @@ void copySensorTable(const BoardState &source, BoardState &destination) {
   memcpy(destination.rows, source.rows, sizeof(destination.rows));
 }
 
-byte countOccupied(const BoardState &table) {
-  byte occupied = 0;
-  for (byte row = 0; row < 8; row++) {
-    byte bits = table.rows[row];
-    while (bits) {
-      bits &= bits - 1;
-      occupied++;
-    }
-  }
-  return occupied;
-}
-
-boolean startingPositionIsValid() {
-  scanSensors();
-  for (byte row = 0; row < 8; row++) {
-    byte expected = (row < 2 || row > 5) ? 0xFF : 0;
-    if (reed_sensor_record.rows[row] != expected) return false;
-  }
-  syncSensorState();
-  return true;
-}
-
-boolean physicalSensorsMatchExpected() {
-  scanSensors();
-  return memcmp(reed_sensor_record.rows, reed_sensor_status.rows,
-                sizeof(reed_sensor_record.rows)) == 0;
+void seedStartingPosition() {
+  for (byte row = 0; row < 8; row++)
+    reed_sensor_status.rows[row] = (row < 2 || row > 5) ? 0xFF : 0;
+  copySensorTable(reed_sensor_status, reed_sensor_record);
+  copySensorTable(reed_sensor_status, turn_start_status);
+  resetMoveTracker();
 }
 
 boolean recordMatchesTurnStart() {
@@ -80,67 +60,68 @@ boolean recordMatchesTurnStart() {
 }
 
 void resetMoveTracker() {
-  lifted_squares[0] = NO_SQUARE;
-  lifted_squares[1] = NO_SQUARE;
-  lifted_count = 0;
+  move_edit_stage = 0;
   move_from = NO_SQUARE;
   move_to = NO_SQUARE;
   human_move_ready = false;
-  sensor_tracking_error = false;
-  pending_move_displayed = false;
 }
 
-void updateSensorsAndTrackMove() {
+// Only called by the human's first confirm press. Noise never changes the
+// authoritative board. Rank plausible moves by source/destination evidence;
+// unrelated missing/extra reeds do not veto a move or end a game.
+void detectHumanMove() {
   scanSensors();
-  for (byte row = 0; row < 8; row++) {
-    for (byte column = 0; column < 8; column++) {
-      boolean old_occupied = boardSquareOccupied(reed_sensor_status,
-                                                  row, column);
-      boolean new_occupied = boardSquareOccupied(reed_sensor_record,
-                                                  row, column);
-      if (old_occupied == new_occupied) continue;
-
-      byte square = row * 8 + column;
-      last_sensor_square = square;
-      last_sensor_occupied = new_occupied;
-
-      if (!human_move_ready) {
-        if (old_occupied && !new_occupied) recordLift(square);
-        else if (!old_occupied && new_occupied) recordPlacement(square);
+  resetMoveTracker();
+  signed char best = -1;
+  for (byte from = 0; from < 64; from++) {
+    for (byte to = 0; to < 64; to++) {
+      if (!AI_movePossible(from, to, !remote_mode || remote_human_white)) continue;
+      boolean source_empty = !boardSquareOccupied(reed_sensor_record, from >> 3, from & 7);
+      boolean target_full = boardSquareOccupied(reed_sensor_record, to >> 3, to & 7);
+      boolean target_was_full = boardSquareOccupied(turn_start_status, to >> 3, to & 7);
+      signed char score = source_empty * 4 + target_full * (target_was_full ? 1 : 3);
+      if (score > best) {
+        best = score;
+        move_from = from;
+        move_to = to;
       }
-      setBoardSquare(reed_sensor_status, row, column, new_occupied);
     }
   }
+  human_move_ready = move_from != NO_SQUARE;
 }
 
-void recordLift(byte square) {
-  for (byte i = 0; i < lifted_count; i++) {
-    if (lifted_squares[i] == square) return;
+// B enters correction, then cycles source and destination; A chooses each
+// square and returns to the explicit move preview. No reed reading is needed
+// for correction, so even a completely missed switch remains recoverable.
+void editHumanMove() {
+  if (!human_move_ready) {
+    move_from = 63;
+    move_to = 0;
+    move_edit_stage = 1;
+    human_move_ready = true;
   }
-  if (lifted_count >= 2) {
-    sensor_tracking_error = true;
-    return;
+  if (!move_edit_stage) move_edit_stage = 1;
+  else if (move_edit_stage == 1) {
+    do { move_from = (move_from + 1) & 63; }
+    while (!(AI_pieceAt(move_from) & ((!remote_mode || remote_human_white) ? 8 : 16)));
   }
-  lifted_squares[lifted_count++] = square;
+  else {
+    do { move_to = (move_to + 1) & 63; }
+    while (move_to == move_from);
+  }
+  showPendingMove();
 }
 
-void recordPlacement(byte destination) {
-  if (lifted_count == 0) return;
-
-  byte source = NO_SQUARE;
-  // Captures are performed by lifting the moving piece first. Prefer that
-  // first lift so en-passant (whose captured pawn is not on the destination)
-  // is reported correctly; fall back for a lift-and-replace gesture.
-  for (byte i = 0; i < lifted_count; i++) {
-    byte candidate = lifted_squares[i];
-    if (candidate != destination) {
-      source = candidate;
-      break;
-    }
+boolean confirmHumanMove() {
+  if (!human_move_ready) {
+    detectHumanMove();
+    showPendingMove();
+    return false;
   }
-  if (source == NO_SQUARE) return;
-
-  move_from = source;
-  move_to = destination;
-  human_move_ready = true;
+  if (move_edit_stage) {
+    move_edit_stage = move_edit_stage == 1 ? 2 : 0;
+    showPendingMove();
+    return false;
+  }
+  return true;
 }

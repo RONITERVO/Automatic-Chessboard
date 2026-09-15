@@ -241,7 +241,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         fun update() {
             val state = monitorState
             board.pieces = gameState.pieces
-            board.sensors = if (gameState.active && gameState.appControlled) null else state.sensorSquares
+            board.sensors = if (gameState.active) null else state.sensorSquares
             board.flipped = !gameState.humanWhite
             board.trolley = trolleyPosition(state)
             val (label, level) = state.health()
@@ -254,7 +254,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
                 "Carriage ${fileRank(t.trolleyX, t.trolleyY)}  •  Magnet ${if (t.magnetOn) "COMMANDED ON" else "off"}\n" +
                 "A ${released(t.buttonAReleased)}  •  B ${released(t.buttonBReleased)}  •  A6 ${t.buttonBRaw}\n" +
                 "Free RAM ${t.freeRam} B  •  Uptime ${t.uptimeSeconds}s\n" +
-                "Sensors ${state.sensorSquares?.size ?: "—"}  •  missing ${state.missingSquares().size}  •  extra ${state.unexpectedSquares().size}"
+                (if (gameState.active) "Software position: ${gameState.pieces.size} pieces" else "Sensors ${state.sensorSquares?.size ?: "—"}  •  missing ${state.missingSquares().size}  •  extra ${state.unexpectedSquares().size}")
         }
         monitorUpdater = { update() }
         update()
@@ -265,7 +265,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val board = ChessboardView(this).apply {
             pieces = gameState.pieces
-            sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            sensors = if (gameState.active) null else monitorState.sensorSquares
             selectedSquares = gameState.selectedSquares
             onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
             flipped = !gameState.humanWhite
@@ -291,7 +291,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
         ))
         playUpdater = {
             board.pieces = gameState.pieces
-            board.sensors = if (gameState.active && gameState.appControlled) null else monitorState.sensorSquares
+            board.sensors = if (gameState.active) null else monitorState.sensorSquares
             board.selectedSquares = gameState.selectedSquares
             board.onSquareTapped = if (gameState.active && gameState.appControlled) game::selectAppSquare else null
             board.flipped = !gameState.humanWhite
@@ -300,7 +300,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             side.white.background = rounded(if (gameState.humanWhite) ACCENT_DARK else SURFACE)
             side.black.background = rounded(if (!gameState.humanWhite) ACCENT_DARK else SURFACE)
             val appMoves = prefs.getBoolean("app_controlled_play", false)
-            side.mode.text = if (appMoves) "Moves: App" else "Moves: Reeds"
+            side.mode.text = if (appMoves) "Moves: App" else "Moves: Human"
             side.mode.background = rounded(if (appMoves) ACCENT_DARK else SURFACE)
             history.text = historyPageText()
         }
@@ -323,7 +323,7 @@ class MainActivity : Activity(), BoardRepository.Observer {
             }
         }
         val mode = button(
-            if (prefs.getBoolean("app_controlled_play", false)) "Moves: App" else "Moves: Reeds"
+            if (prefs.getBoolean("app_controlled_play", false)) "Moves: App" else "Moves: Human"
         ) {
             if (!gameState.active) {
                 val enabled = !prefs.getBoolean("app_controlled_play", false)

@@ -192,14 +192,12 @@ class MotionlessRouteExecutor:
     def begin(self, command: str) -> str:
         if self.active or self.fault:
             raise RouteProtocolError("NOT READY")
-        if self.observed != self.expected:
-            raise RouteProtocolError("PLAN STATE")
         request = PlanRequest.parse(command)
-        if request.capture is not None and request.capture not in self.observed:
+        if request.capture is not None and request.capture not in self.expected:
             raise RouteProtocolError("PLAN STATE")
 
         self.plan = request
-        self.turn_start = self.observed
+        self.turn_start = self.expected
         self.final_expected = request.final_occupancy(self.turn_start)
         self.capture_pending = request.capture is not None
         self.capture_square = request.capture
@@ -209,15 +207,12 @@ class MotionlessRouteExecutor:
         capture = self.capture_square
         if not self.capture_pending or capture is None:
             raise RouteProtocolError("CAPTURE")
-        if self.observed != self.expected or not capture_has_exit(self.observed, capture):
+        if not capture_has_exit(self.expected, capture):
             raise RouteProtocolError("CAPTURE")
         next_expected = set(self.expected)
         next_expected.remove(capture)
         self.expected = frozenset(next_expected)
         self.observed = self.expected if observed_after is None else frozenset(observed_after)
-        if self.observed != self.expected:
-            self._latch_sensor_fault()
-            raise RouteProtocolError("SENSORS")
         self.capture_pending = False
         self.capture_square = None
         return "REMOVED"
@@ -225,13 +220,11 @@ class MotionlessRouteExecutor:
     def drag(self, command: str, observed_after: Iterable[int] | None = None) -> str:
         if not self.active:
             raise RouteProtocolError("NO PLAN")
-        if self.observed != self.expected:
-            raise RouteProtocolError("PLAN STATE")
 
         request = DragRequest.parse(command)
-        if request.source not in self.observed:
+        if request.source not in self.expected:
             raise RouteProtocolError("SOURCE EMPTY")
-        if request.target in self.observed:
+        if request.target in self.expected:
             raise RouteProtocolError("TARGET FULL")
         if any(square in self.expected for square in request.path[1:-1]):
             raise RouteProtocolError("ROUTE BLOCKED")
@@ -241,9 +234,6 @@ class MotionlessRouteExecutor:
         next_expected.add(request.target)
         self.expected = frozenset(next_expected)
         self.observed = self.expected if observed_after is None else frozenset(observed_after)
-        if self.observed != self.expected:
-            self._latch_sensor_fault()
-            raise RouteProtocolError("SENSORS")
         if request.source == self.capture_square:
             self.capture_square = request.target
         return f"MOVED PIECE {square_name(request.source)}{square_name(request.target)}"
@@ -251,12 +241,10 @@ class MotionlessRouteExecutor:
     def commit(self) -> str:
         if not self.active:
             raise RouteProtocolError("NO PLAN")
-        if self.observed != self.expected:
-            raise RouteProtocolError("FINAL SENSORS")
-        if self.observed == self.turn_start:
+        if self.expected == self.turn_start:
             self._clear_plan()
             return "PLAN CANCELLED"
-        if self.capture_pending or self.observed != self.final_expected:
+        if self.capture_pending or self.expected != self.final_expected:
             raise RouteProtocolError("PLAN INCOMPLETE")
         uci = self.plan.uci
         self._clear_plan()
@@ -277,7 +265,3 @@ class MotionlessRouteExecutor:
         self.final_expected = None
         self.capture_pending = False
         self.capture_square = None
-
-    def _latch_sensor_fault(self) -> None:
-        self.fault = True
-        self._clear_plan()

@@ -529,7 +529,7 @@ class AutomaticChessboardApp:
         ttk.Radiobutton(game, text="Human plays Black", variable=self.human_side,
                         value="Black").grid(row=0, column=1, sticky="w")
         self.game_input_mode = tk.StringVar(value=self.settings.get("game_input_mode", "Reed"))
-        ttk.Radiobutton(game, text="Verified reed switches", variable=self.game_input_mode,
+        ttk.Radiobutton(game, text="Human: detect then confirm", variable=self.game_input_mode,
                         value="Reed").grid(row=1, column=0, sticky="w", pady=(7, 0))
         ttk.Radiobutton(game, text="Move by tapping app", variable=self.game_input_mode,
                         value="App").grid(row=1, column=1, sticky="w", pady=(7, 0))
@@ -1368,8 +1368,8 @@ class AutomaticChessboardApp:
         else:
             for key in ("carriage", "magnet", "limit_a", "limit_b", "ram", "uptime"):
                 self.state_values[key].set("Unknown")
-        if self.sensorless_game and self.session_active:
-            self.state_values["sensors"].set("Ignored · app-authoritative board")
+        if self.session_active:
+            self.state_values["sensors"].set("Software-tracked board")
         elif self.model.sensor_squares is None:
             self.state_values["sensors"].set("Not read")
         else:
@@ -1966,11 +1966,11 @@ class AutomaticChessboardApp:
         move = self._resolve_human_move(text)
         if move is None:
             self._send("REJECT")
-            self.game_status.set(f"Illegal move {text}; restore the pieces physically.")
+            self.game_status.set(f"Illegal move {text}; press B on the board to correct the proposed move.")
             return
         self.board.push(move)
         self._render()
-        self._send("ACCEPT")
+        self._send(f"ACCEPT {chess.piece_symbol(move.promotion)}" if move.promotion else "ACCEPT")
         if self.board.is_game_over(claim_draw=True):
             self._finish_game()
         else:
@@ -2133,7 +2133,7 @@ class AutomaticChessboardApp:
         self.game_status.set(
             "Checking a fresh virtual app/Nano board state before collision-safe routing..."
             if self.sensorless_game else
-            "Reading all 64 sensors before collision-safe route planning..."
+            "Checking the software position before route planning..."
         )
         self._dispatch_route_snapshot()
 
@@ -2451,7 +2451,7 @@ class AutomaticChessboardApp:
         self.model.expected_squares = expected_occupancy(self.board)
         telemetry = self.model.telemetry
         carriage = (telemetry.trolley_x, telemetry.trolley_y) if telemetry else None
-        sensor_overlay = None if self.sensorless_game and self.session_active else self.model.sensor_squares
+        sensor_overlay = None if self.session_active else self.model.sensor_squares
         if hasattr(self, "board_canvas"):
             self.board_canvas.set_state(self.board, sensor_overlay,
                                         self.human_color == chess.BLACK, carriage)

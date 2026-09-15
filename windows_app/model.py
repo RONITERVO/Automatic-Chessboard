@@ -19,7 +19,7 @@ SEQUENCE_NAMES = {
     5: "Human playing White",
     6: "Human playing Black",
     7: "Waiting for move undo",
-    8: "Checking computer move",
+    8: "Manual computer move",
     9: "Game over",
     10: "Motion fault",
     11: "Reserved",
@@ -40,17 +40,17 @@ SEQUENCE_GUIDANCE = {
     3: "Calibration is moving the carriage. Keep the board clear.",
     4: "Arrange all pieces in their starting squares and follow the LCD prompt.",
     7: "Restore the previous physical position, then confirm on the board.",
-    8: "The board is checking the piece moved by the carriage.",
+    8: "Complete the manual move shown on the LCD, then press A.",
     10: "Motion was stopped. Inspect the mechanism locally before clearing the fault.",
     12: "The companion is measuring board alignment. Keep hands clear and follow its prompts.",
     13: "Arrange starting pieces and press physical Button A.",
-    14: "Make the human move, then press physical Button A.",
+    14: "Move your piece, press A to detect, then A again to confirm. B edits the proposal.",
     15: "Windows may send the next legal computer move.",
     16: "The reported move was invalid. Restore the pieces physically.",
     17: "The board is checking the completed automatic move.",
     18: "Replace the promoted pawn, then press physical Button A.",
     19: "The companion requested direct movement. Keep hands clear.",
-    20: "The companion is executing a sensor-verified route. Keep hands clear.",
+    20: "The companion is executing a software-tracked route. Keep hands clear.",
 }
 
 
@@ -178,9 +178,11 @@ class MonitorModel:
         if self.telemetry and (not self.telemetry.button_a_released or
                                not self.telemetry.button_b_released):
             return "A limit or button is active. Inspect it locally before calibration or movement."
-        if self.sensor_squares is not None and (self.missing_squares() or self.unexpected_squares()):
-            return ("The sensor pattern differs from the logical game. Use the coloured squares to correct "
-                    "or synchronize the position before starting play.")
+        if (self.sensor_squares is not None and
+                not (self.telemetry and (self.telemetry.remote_mode or self.telemetry.sequence in {5, 6, 8})) and
+                (self.missing_squares() or self.unexpected_squares())):
+            return ("Raw reed readings are diagnostic only. Games trust the standard starting position; "
+                    "you confirm each detected human move.")
         if not self.telemetry:
             return "Connect and run a safe refresh to read the board state."
         return SEQUENCE_GUIDANCE.get(
@@ -199,8 +201,6 @@ class MonitorModel:
         if self.telemetry and (not self.telemetry.button_a_released or
                                not self.telemetry.button_b_released):
             return "A limit/button is active", "warn"
-        if self.sensor_squares is not None and (self.missing_squares() or self.unexpected_squares()):
-            return "Physical/logical position differs", "warn"
         if self.firmware is None:
             return "Connected — firmware identity unavailable", "warn"
         if not self.firmware.compatible:
@@ -211,4 +211,8 @@ class MonitorModel:
             return "Waiting for sensor snapshot", "warn"
         if age > 5:
             return "Updates delayed", "warn"
+        if (self.sensor_squares is not None and
+                not (self.telemetry and (self.telemetry.remote_mode or self.telemetry.sequence in {5, 6, 8})) and
+                (self.missing_squares() or self.unexpected_squares())):
+            return "Reed diagnostics only", "good"
         return "Ready", "good"
