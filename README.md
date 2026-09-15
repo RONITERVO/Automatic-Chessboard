@@ -17,6 +17,10 @@ attribution](ATTRIBUTION.md) and the repository's
 
 The [immersive 3D simulator](https://ronitervo.github.io/Automatic-Chessboard/) presents the complete assembly, chess pieces, setup process, physical controls, LCD, Arduino signal flow, wiring, and full-history replay in one shared React Three Fiber world. Visitors can use mouse, touch, or supported WebXR hands/controllers at real-world scale while the compiled production Nano HEX drives power-on, calibration, reed sensing, Micro-Max decisions, STEP/DIR motion, and magnet control. The standalone experience exposes Bluetooth as disconnected and never requests a real device. It is published automatically from `site/` after changes reach `main`.
 
+## Demo
+
+<!-- The GitHub-hosted prototype video attachment is added in the follow-up commit. -->
+
 ## Hardware assumptions
 
 The sketch uses the pin assignments and motion calibration in `global.h`. The
